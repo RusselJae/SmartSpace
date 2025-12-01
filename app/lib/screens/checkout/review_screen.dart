@@ -1,4 +1,6 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'models.dart';
 import 'success_screen.dart';
@@ -37,26 +39,72 @@ class ReviewScreen extends StatelessWidget {
     }();
 
     return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(middle: Text('Review Order')),
+      navigationBar: CupertinoNavigationBar(
+        middle: Text('Review Order', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+      ),
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text('Items (placeholder)'),
+            Text('Items (placeholder)', style: GoogleFonts.poppins(fontSize: 16)),
             const SizedBox(height: 12),
-            Text('Deliver to: ${address.fullName}, ${address.addressLine1}, ${address.city} ${address.postalCode}'),
+            Text(
+              'Deliver to: ${address.fullName}, ${address.addressLine1}, ${address.city} ${address.postalCode}',
+              style: GoogleFonts.poppins(fontSize: 15),
+            ),
             const SizedBox(height: 6),
-            Text('Delivery: ${delivery.dateLabel} ${delivery.slotLabel}'),
+            Text(
+              'Delivery: ${delivery.dateLabel} ${delivery.slotLabel}',
+              style: GoogleFonts.poppins(fontSize: 15),
+            ),
             const SizedBox(height: 6),
-            Text('Payment: $paymentLabel'),
+            Text(
+              'Payment: $paymentLabel',
+              style: GoogleFonts.poppins(fontSize: 15),
+            ),
             const SizedBox(height: 24),
-            const Text('Order Summary (placeholder):'),
+            Text(
+              'Order Summary (placeholder):',
+              style: GoogleFonts.poppins(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                decoration: TextDecoration.none,
+              ),
+            ),
             const SizedBox(height: 6),
-            const Text('Subtotal: \$899'),
-            const Text('Shipping: \$20'),
-            const Text('Total: \$919'),
+            Text(
+              'Subtotal: ₱899',
+              style: GoogleFonts.poppins(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            Text(
+              'Shipping: ₱20',
+              style: GoogleFonts.poppins(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            Text(
+              'Total: ₱919',
+              style: GoogleFonts.poppins(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                decoration: TextDecoration.none,
+              ),
+            ),
             const SizedBox(height: 24),
-            CupertinoButton.filled(onPressed: () => _placeOrder(context), child: const Text('Place Order')),
+            CupertinoButton.filled(
+              onPressed: () => _placeOrder(context),
+              child: Text('Place Order', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            ),
           ],
         ),
       ),

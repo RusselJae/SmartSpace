@@ -58,13 +58,19 @@ class _Field extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: CupertinoColors.secondarySystemGroupedBackground,
+        color: const Color(0xFFF8F8F8),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: CupertinoColors.separator.withValues(alpha: 0.1),
+          width: 1,
+        ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: CupertinoTextField(
         controller: controller,
         placeholder: placeholder,
+        placeholderStyle: const TextStyle(color: CupertinoColors.placeholderText),
+        style: const TextStyle(color: Color(0xFF6D4C41)),
         obscureText: obscureText,
         decoration: null,
       ),

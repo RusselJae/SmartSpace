@@ -1,13 +1,48 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+/// Filter data class to hold all filter values
+class FilterData {
+  final double minPrice;
+  final double maxPrice;
+  final Set<String> styles;
+  final Set<String> materials;
+  final Set<Color> colors;
+  final String size;
+
+  const FilterData({
+    required this.minPrice,
+    required this.maxPrice,
+    required this.styles,
+    required this.materials,
+    required this.colors,
+    required this.size,
+  });
+
+  /// Returns true if any filters are active (not default values)
+  bool get hasActiveFilters {
+    return minPrice > 50 ||
+        maxPrice < 900 ||
+        styles.isNotEmpty ||
+        materials.isNotEmpty ||
+        colors.isNotEmpty ||
+        size != 'M';
+  }
+}
 
 class FiltersSheet extends StatefulWidget {
-  const FiltersSheet({super.key});
+  const FiltersSheet({super.key, this.initialFilters});
 
-  static Future<void> show(BuildContext context) {
-    return showCupertinoModalPopup(
+  /// Initial filter values to pre-populate the sheet
+  final FilterData? initialFilters;
+
+  /// Shows the filters sheet and returns the applied filter data
+  static Future<FilterData?> show(BuildContext context, {FilterData? initialFilters}) {
+    return showCupertinoModalPopup<FilterData>(
       context: context,
       barrierColor: const Color(0x66000000),
-      builder: (context) => const FiltersSheet(),
+      builder: (context) => FiltersSheet(initialFilters: initialFilters),
     );
   }
 
@@ -21,18 +56,29 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
   late final Animation<Offset> _slide;
 
   // Price range (simple two-value slider surrogate)
-  double _minPrice = 50;
-  double _maxPrice = 900;
+  // Initialize from initialFilters if provided, otherwise use defaults
+  late double _minPrice;
+  late double _maxPrice;
 
   // Style and material chips
-  final Set<String> _styles = <String>{};
-  final Set<String> _materials = <String>{};
-  final Set<Color> _colors = <Color>{};
-  String _size = 'M';
+  late final Set<String> _styles;
+  late final Set<String> _materials;
+  late final Set<Color> _colors;
+  late String _size;
 
   @override
   void initState() {
     super.initState();
+    
+    // Initialize filter values from initialFilters or defaults
+    final initial = widget.initialFilters;
+    _minPrice = initial?.minPrice ?? 50;
+    _maxPrice = initial?.maxPrice ?? 900;
+    _styles = Set<String>.from(initial?.styles ?? <String>{});
+    _materials = Set<String>.from(initial?.materials ?? <String>{});
+    _colors = Set<Color>.from(initial?.colors ?? <Color>{});
+    _size = initial?.size ?? 'M';
+    
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 380),
@@ -83,16 +129,39 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Filters', style: TextStyle(inherit: true, fontSize: 18, fontWeight: FontWeight.w700)),
+                      Text(
+                        'Filters',
+                        style: GoogleFonts.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
                       CupertinoButton(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                         onPressed: _reset,
-                        child: const Text('Reset'),
+                        child: Text(
+                          'Reset',
+                          style: GoogleFonts.poppins(
+                            color: Colors.black,
+                            fontSize: 16,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 6),
-                  const Text('Price range', style: TextStyle(inherit: true)),
+                  Text(
+                    'Price range',
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -105,7 +174,15 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text('\$${_minPrice.toStringAsFixed(0)}', style: const TextStyle(inherit: true)),
+                      Text(
+                        '₱${_minPrice.toStringAsFixed(0)}',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.normal,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
                     ],
                   ),
                   Row(
@@ -119,11 +196,27 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text('\$${_maxPrice.toStringAsFixed(0)}', style: const TextStyle(inherit: true)),
+                      Text(
+                        '₱${_maxPrice.toStringAsFixed(0)}',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.normal,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  const Text('Style', style: TextStyle(inherit: true)),
+                  Text(
+                    'Style',
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
                   const SizedBox(height: 6),
                   _Chips(
                     options: const ['Modern', 'Classic', 'Minimal', 'Industrial'],
@@ -131,7 +224,15 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                     onToggle: (s) => setState(() => _styles.toggle(s)),
                   ),
                   const SizedBox(height: 8),
-                  const Text('Material', style: TextStyle(inherit: true)),
+                  Text(
+                    'Material',
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
                   const SizedBox(height: 6),
                   _Chips(
                     options: const ['Wood', 'Metal', 'Fabric', 'Leather'],
@@ -139,18 +240,31 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                     onToggle: (s) => setState(() => _materials.toggle(s)),
                   ),
                   const SizedBox(height: 8),
-                  const Text('Color', style: TextStyle(inherit: true)),
+                  Text(
+                    'Color',
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
+                      // Color palette: light brown to brown and orange tones
+                      // Removed all dark brown variations for a warmer aesthetic
                       for (final c in const [
-                        Color(0xFF4E342E), // dark brown
-                        Color(0xFF6D4C41), // brown
+                        Color(0xFFD7CCC8), // very light brown
                         Color(0xFFBCAAA4), // light brown
-                        Color(0xFF000000),
-                        Color(0xFFFFFFFF),
+                        Color(0xFFA1887F), // medium-light brown
+                        Color(0xFF8D6E63), // medium brown
+                        Color(0xFF6D4C41), // brown
+                        Color(0xFFFFB74D), // light orange
+                        Color(0xFFFF9800), // orange
+                        Color(0xFFF57C00), // deeper orange
                       ])
                         _ColorDot(
                           color: c,
@@ -166,7 +280,15 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                     ],
                   ),
                   const SizedBox(height: 8),
-                  const Text('Size', style: TextStyle(inherit: true)),
+                  Text(
+                    'Size',
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -175,9 +297,18 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                           padding: const EdgeInsets.only(right: 8),
                           child: CupertinoButton(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            color: _size == s ? const Color(0xFFBCAAA4) : CupertinoColors.systemGrey5,
+                            // Light brown when inactive, normal brown when active
+                            color: _size == s ? const Color(0xFF8D6E63) : const Color(0xFFBCAAA4),
                             onPressed: () => setState(() => _size = s),
-                            child: Text(s, style: const TextStyle(inherit: true, color: Color(0xFF4E342E))),
+                            child: Text(
+                              s,
+                              style: GoogleFonts.poppins(
+                                color: Colors.black,
+                                fontSize: 16,
+                                fontWeight: FontWeight.normal,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
                           ),
                         ),
                     ],
@@ -187,16 +318,63 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                     children: [
                       Expanded(
                         child: CupertinoButton(
-                          color: CupertinoColors.systemGrey5,
+                          // Light brown for cancel button
+                          color: const Color(0xFFBCAAA4),
                           onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancel'),
+                          child: Text(
+                            'Cancel',
+                            style: GoogleFonts.poppins(
+                              color: Colors.black,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: CupertinoButton.filled(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Apply Filters'),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF8D6E63), Color(0xFFFF9800)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFFF9800).withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: CupertinoButton(
+                            padding: EdgeInsets.zero,
+                            borderRadius: BorderRadius.circular(12),
+                            onPressed: () {
+                            // Return the filter data when Apply is clicked
+                            final filterData = FilterData(
+                              minPrice: _minPrice,
+                              maxPrice: _maxPrice,
+                              styles: Set<String>.from(_styles),
+                              materials: Set<String>.from(_materials),
+                              colors: Set<Color>.from(_colors),
+                              size: _size,
+                            );
+                            Navigator.of(context).pop(filterData);
+                          },
+                          child: Text(
+                            'Apply Filters',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                        ),
                         ),
                       ),
                     ],
@@ -226,9 +404,18 @@ class _Chips extends StatelessWidget {
         for (final o in options)
           CupertinoButton(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            color: selected.contains(o) ? const Color(0xFFBCAAA4) : CupertinoColors.systemGrey5,
+            // Light brown when inactive, normal brown when active
+            color: selected.contains(o) ? const Color(0xFF8D6E63) : const Color(0xFFBCAAA4),
             onPressed: () => onToggle(o),
-            child: Text(o, style: const TextStyle(inherit: true, color: Color(0xFF4E342E))),
+            child: Text(
+              o,
+              style: GoogleFonts.poppins(
+                color: Colors.black,
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                decoration: TextDecoration.none,
+              ),
+            ),
           ),
       ],
     );
@@ -252,8 +439,8 @@ class _ColorDot extends StatelessWidget {
           color: color,
           shape: BoxShape.circle,
           border: Border.all(
-            color: selected ? const Color(0xFF4E342E) : CupertinoColors.separator,
-            width: 2,
+            color: selected ? const Color(0xFF8D6E63) : CupertinoColors.separator,
+            width: 2.5,
           ),
         ),
       ),

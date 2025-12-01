@@ -1,4 +1,6 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'models.dart';
 import 'delivery_screen.dart';
@@ -44,7 +46,12 @@ class _AddressScreenState extends State<AddressScreen> {
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(middle: Text('Delivery Address')),
+      navigationBar: CupertinoNavigationBar(
+        middle: Text(
+          'Delivery Address',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+      ),
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -56,17 +63,41 @@ class _AddressScreenState extends State<AddressScreen> {
                   color: const Color(0x1FFF3B30),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(_error!, style: const TextStyle(color: CupertinoColors.systemRed)),
+                child: Text(
+                  _error!,
+                  style: GoogleFonts.poppins(
+                    color: Colors.black,
+                    fontSize: 16,
+                    fontWeight: FontWeight.normal,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
             ],
-            const Text('Contact Information', style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(
+              'Contact Information',
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+                decoration: TextDecoration.none,
+              ),
+            ),
             const SizedBox(height: 8),
             _CupertinoField(controller: _name, placeholder: 'Full name *'),
             const SizedBox(height: 12),
             _CupertinoField(controller: _phone, placeholder: 'Phone number *', keyboardType: TextInputType.phone),
             const SizedBox(height: 20),
-            const Text('Address', style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(
+              'Address',
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+                decoration: TextDecoration.none,
+              ),
+            ),
             const SizedBox(height: 8),
             _CupertinoField(controller: _line1, placeholder: 'Address line 1 *'),
             const SizedBox(height: 12),
@@ -76,7 +107,15 @@ class _AddressScreenState extends State<AddressScreen> {
             const SizedBox(height: 12),
             _CupertinoField(controller: _postal, placeholder: 'Postal code *'),
             const SizedBox(height: 20),
-            const Text('Summary', style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(
+              'Summary',
+              style: GoogleFonts.poppins(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+                decoration: TextDecoration.none,
+              ),
+            ),
             const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
@@ -104,7 +143,13 @@ class _AddressScreenState extends State<AddressScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            CupertinoButton.filled(onPressed: _next, child: const Text('Continue')),
+            CupertinoButton.filled(
+              onPressed: _next,
+              child: Text(
+                'Continue',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              ),
+            ),
           ],
         ),
       ),
@@ -127,13 +172,23 @@ class _CupertinoField extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: CupertinoColors.secondarySystemGroupedBackground,
+        color: const Color(0xFFF8F8F8),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: CupertinoColors.separator.withValues(alpha: 0.1),
+          width: 1,
+        ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: CupertinoTextField(
         controller: controller,
         placeholder: placeholder,
+        placeholderStyle: GoogleFonts.poppins(
+          color: CupertinoColors.placeholderText,
+          fontSize: 15,
+          decoration: TextDecoration.none,
+        ),
+        style: const TextStyle(color: Color(0xFF6D4C41)),
         keyboardType: keyboardType,
         decoration: null,
         onChanged: (_) {
@@ -155,9 +210,30 @@ class _SummaryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SizedBox(width: 90, child: Text(label, style: const TextStyle(color: CupertinoColors.inactiveGray))),
+        SizedBox(
+          width: 90,
+          child: Text(
+            label,
+            style: GoogleFonts.poppins(
+              color: Colors.black,
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
         const SizedBox(width: 8),
-        Expanded(child: Text(value)),
+        Expanded(
+          child: Text(
+            value,
+            style: GoogleFonts.poppins(
+              color: Colors.black,
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
       ],
     );
   }

@@ -1,265 +1,904 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math';
+import 'dart:typed_data';
 
-import 'package:mysql1/mysql1.dart';
+import 'package:http/http.dart' as http;
 
-import '../config/database_config.dart';
+import '../config/api_config.dart';
+import '../models/address_entry.dart';
+import '../models/admin.dart';
+import '../models/cart_item.dart';
 import '../models/order_record.dart';
 import '../models/product.dart';
+import '../models/review.dart';
 import '../models/user.dart';
 
-/// Service that persists products, users, and orders either in MySQL or in-memory.
+/// Service that now talks to the Node.js API and falls back to mock data if needed.
 class MySQLDatabaseService {
   static final MySQLDatabaseService _instance = MySQLDatabaseService._internal();
   factory MySQLDatabaseService() => _instance;
   MySQLDatabaseService._internal();
 
-  MySqlConnection? _connection;
+  final http.Client _client = http.Client();
   final Random _random = Random();
+  bool _useApi = false;
 
   final List<Product> _mockProducts = [];
   final List<User> _mockUsers = [];
   final List<OrderRecord> _mockOrders = [];
+  final Map<String, List<CartItem>> _mockCartByUser = {};
+
+  bool get isConnected => _useApi;
+
+  String get connectionStatus {
+    if (_useApi) {
+      return 'Connected to API at ${ApiConfig.baseUrl}';
+    }
+    return 'Using mock data (API unavailable)';
+  }
 
   Future<void> initialize() async {
-    try {
-      final settings = ConnectionSettings(
-        host: DatabaseConfig.host,
-        port: DatabaseConfig.port,
-        user: DatabaseConfig.username,
-        password: DatabaseConfig.password,
-        db: DatabaseConfig.database,
-        timeout: Duration(seconds: DatabaseConfig.timeout),
-      );
-      _connection = await MySqlConnection.connect(settings);
-      await _createTables();
-      await _seedIfEmpty();
-      developer.log('Connected to MySQL');
-    } catch (e) {
-      developer.log('MySQL unavailable, using mock data: $e');
+    _useApi = await _checkApiAvailability();
+    if (!_useApi) {
+      developer.log('API unavailable, using mock data');
       _initializeMockData();
     }
   }
 
-  Future<void> _createTables() async {
-    if (_connection == null) return;
-    await _connection!.query('''
-      CREATE TABLE IF NOT EXISTS products (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(255),
-        description TEXT,
-        price DECIMAL(10,2),
-        category VARCHAR(120),
-        style VARCHAR(120),
-        material VARCHAR(120),
-        color VARCHAR(80),
-        size VARCHAR(50),
-        model_path VARCHAR(500),
-        image_urls TEXT,
-        rating DECIMAL(3,2) DEFAULT 0,
-        review_count INT DEFAULT 0,
-        is_popular TINYINT(1) DEFAULT 0,
-        is_new_arrival TINYINT(1) DEFAULT 0,
-        in_stock TINYINT(1) DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    ''');
-
-    await _connection!.query('''
-      CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(50) PRIMARY KEY,
-        email VARCHAR(255) UNIQUE,
-        full_name VARCHAR(255),
-        phone_number VARCHAR(30),
-        addresses TEXT,
-        wishlist_product_ids TEXT,
-        order_ids TEXT,
-        preferred_style VARCHAR(120),
-        min_budget DECIMAL(10,2),
-        max_budget DECIMAL(10,2),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    ''');
-
-    await _connection!.query('''
-      CREATE TABLE IF NOT EXISTS orders (
-        id VARCHAR(50) PRIMARY KEY,
-        user_id VARCHAR(50),
-        product_ids TEXT,
-        total_amount DECIMAL(10,2),
-        status VARCHAR(20),
-        shipping_address TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      )
-    ''');
+  /// Manually retry API connection (useful for troubleshooting)
+  Future<bool> retryConnection() async {
+    developer.log('🔄 Retrying API connection...');
+    _useApi = await _checkApiAvailability();
+    if (!_useApi) {
+      developer.log('API still unavailable after retry');
+      _initializeMockData();
+    }
+    return _useApi;
   }
 
-  Future<void> _seedIfEmpty() async {
-    if (_connection == null) return;
-    final products = await _connection!.query('SELECT COUNT(*) as count FROM products');
-    if ((products.first['count'] as int) == 0) {
-      await _insertSampleProducts();
+  Future<bool> _checkApiAvailability() async {
+    final uri = _buildUri('/health');
+    developer.log('🔍 Checking API availability at: $uri');
+    try {
+      final response = await _client.get(uri).timeout(ApiConfig.timeout);
+      developer.log('📡 API response status: ${response.statusCode}');
+      developer.log('📡 API response body: ${response.body}');
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        developer.log('📦 Decoded response: $decoded');
+        
+        // Check if response has the expected format
+        if (decoded['success'] == true) {
+          final data = decoded['data'] as Map<String, dynamic>?;
+          if (data != null) {
+            final dbStatus = data['database'] as String?;
+            developer.log('🗄️ Database status: $dbStatus');
+            final isConnected = dbStatus == 'connected';
+            if (isConnected) {
+              developer.log('✅ API is connected and database is ready');
+            } else {
+              developer.log('❌ API responded but database is disconnected');
+              developer.log('💡 Check backend logs - MySQL connection might be failing');
+            }
+            return isConnected;
+          } else {
+            developer.log('⚠️ API responded but missing data field');
+            developer.log('💡 Response format: $decoded');
+            // If it's the root route response, try to be helpful
+            if (decoded.containsKey('message')) {
+              developer.log('💡 You might be hitting the root route instead of /api/health');
+              developer.log('💡 Make sure you\'re using: ${ApiConfig.baseUrl}/health');
+            }
+          }
+        } else {
+          developer.log('❌ API returned success: false');
+        }
+      } else {
+        developer.log('❌ API returned status code: ${response.statusCode}');
+      }
+    } catch (error) {
+      developer.log('❌ API health check failed: $error');
+      developer.log('💡 Make sure backend is running at ${ApiConfig.baseUrl}');
+      developer.log('💡 Test in browser: ${ApiConfig.baseUrl}/health');
     }
-    final users = await _connection!.query('SELECT COUNT(*) as count FROM users');
-    if ((users.first['count'] as int) == 0) {
-      await _insertSampleUsers();
-    }
-    final orders = await _connection!.query('SELECT COUNT(*) as count FROM orders');
-    if ((orders.first['count'] as int) == 0) {
-      await _insertSampleOrders();
-    }
+    return false;
   }
 
-  Future<void> _insertSampleProducts() async {
-    if (_connection == null) return;
-    final data = [
-      _productMap('Modern Dining Chair', 'Dining', 299.99),
-      _productMap('Executive Office Chair', 'Office', 599.99),
-      _productMap('Minimalist Lounge Chair', 'Living Room', 449.99),
-    ];
-    for (final product in data) {
-      await _connection!.query('''
-        INSERT INTO products (
-          id, name, description, price, category, style, material, color, size,
-          model_path, image_urls, rating, review_count, is_popular, is_new_arrival, in_stock
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ''', [
-        product['id'],
-        product['name'],
-        product['description'],
-        product['price'],
-        product['category'],
-        product['style'],
-        product['material'],
-        product['color'],
-        product['size'],
-        product['model_path'],
-        product['image_urls'],
-        product['rating'],
-        product['review_count'],
-        product['is_popular'],
-        product['is_new_arrival'],
-        product['in_stock'],
-      ]);
-    }
+  Uri _buildUri(String path) {
+    final normalizedBase = ApiConfig.baseUrl.endsWith('/')
+        ? ApiConfig.baseUrl.substring(0, ApiConfig.baseUrl.length - 1)
+        : ApiConfig.baseUrl;
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    return Uri.parse('$normalizedBase$normalizedPath');
   }
 
-  Future<void> _insertSampleUsers() async {
-    if (_connection == null) return;
-    final users = [
-      {
-        'id': 'u1',
-        'email': 'jane.appleseed@example.com',
-        'full_name': 'Jane Appleseed',
-        'phone_number': '+1 555 0100',
-        'addresses': jsonEncode(['123 Maple St, Springfield']),
-        'wishlist_product_ids': jsonEncode(['p1']),
-        'order_ids': jsonEncode(['o1']),
-        'preferred_style': 'Modern',
-        'min_budget': 100,
-        'max_budget': 2000,
-      },
-      {
-        'id': 'u2',
-        'email': 'marcus.tan@example.com',
-        'full_name': 'Marcus Tan',
-        'phone_number': '+65 8000 1234',
-        'addresses': jsonEncode(['55 River Valley Rd, Singapore']),
-        'wishlist_product_ids': jsonEncode(['p2']),
-        'order_ids': jsonEncode(['o2']),
-        'preferred_style': 'Minimal',
-        'min_budget': 200,
-        'max_budget': 5000,
-      },
-    ];
-    for (final user in users) {
-      await _connection!.query('''
-        INSERT INTO users (
-          id, email, full_name, phone_number, addresses, wishlist_product_ids, order_ids,
-          preferred_style, min_budget, max_budget
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ''', [
-        user['id'],
-        user['email'],
-        user['full_name'],
-        user['phone_number'],
-        user['addresses'],
-        user['wishlist_product_ids'],
-        user['order_ids'],
-        user['preferred_style'],
-        user['min_budget'],
-        user['max_budget'],
-      ]);
+  Map<String, String> get _jsonHeaders => {'Content-Type': 'application/json'};
+
+  Future<dynamic> _sendRequest({
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+  }) async {
+    final uri = _buildUri(path);
+    final encodedBody = body == null ? null : jsonEncode(body);
+    late http.Response response;
+    switch (method) {
+      case 'GET':
+        response = await _client.get(uri).timeout(ApiConfig.timeout);
+        break;
+      case 'POST':
+        response =
+            await _client.post(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+        break;
+      case 'PUT':
+        response =
+            await _client.put(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+        break;
+      case 'PATCH':
+        response =
+            await _client.patch(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+        break;
+      case 'DELETE':
+        response = await _client.delete(uri, headers: _jsonHeaders).timeout(ApiConfig.timeout);
+        break;
+      default:
+        throw UnsupportedError('Unsupported HTTP method $method');
     }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('API request failed (${response.statusCode}): ${response.body}');
+    }
+
+    if (response.statusCode == 204 || response.body.isEmpty) {
+      return null;
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is Map<String, dynamic>) {
+      if (decoded['success'] == false) {
+        throw Exception(decoded['message']?.toString() ?? 'API request failed');
+      }
+      if (decoded.containsKey('data')) {
+        return decoded['data'];
+      }
+    }
+    return decoded;
   }
 
-  Future<void> _insertSampleOrders() async {
-    if (_connection == null) return;
-    final orders = [
-      {
-        'id': 'o1',
-        'user_id': 'u1',
-        'product_ids': jsonEncode(['p1', 'p2']),
-        'total_amount': 899.98,
-        'status': 'pending',
-        'shipping_address': jsonEncode({'line1': '123 Maple St', 'city': 'Springfield', 'country': 'USA'}),
-      },
-      {
-        'id': 'o2',
-        'user_id': 'u2',
-        'product_ids': jsonEncode(['p3']),
-        'total_amount': 449.99,
-        'status': 'confirmed',
-        'shipping_address': jsonEncode({'line1': '55 River Valley Rd', 'city': 'Singapore', 'country': 'SG'}),
-      },
-    ];
-    for (final order in orders) {
-      await _connection!.query('''
-        INSERT INTO orders (id, user_id, product_ids, total_amount, status, shipping_address)
-        VALUES (?, ?, ?, ?, ?, ?)
-      ''', [
-        order['id'],
-        order['user_id'],
-        order['product_ids'],
-        order['total_amount'],
-        order['status'],
-        order['shipping_address'],
-      ]);
+  List<Map<String, dynamic>> _asMapList(dynamic value, String context) {
+    if (value is List) {
+      return value
+          .whereType<Map<String, dynamic>>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
     }
+    throw Exception('Invalid $context payload');
   }
 
-  Map<String, dynamic> _productMap(String name, String category, double price) {
+  Map<String, dynamic> _asMap(dynamic value, String context) {
+    if (value is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(value);
+    }
+    throw Exception('Invalid $context payload');
+  }
+
+  Map<String, dynamic> _productPayload({
+    required String name,
+    required String description,
+    required double price,
+    required String category,
+    required String style,
+    required String material,
+    required String color,
+    required String size,
+    required String modelPath,
+    required List<String> imageUrls,
+    int? inventoryQty,
+    required bool isPopular,
+    required bool isNewArrival,
+    required bool inStock,
+  }) {
     return {
-      'id': _generateId('p'),
       'name': name,
-      'description': '$name description',
+      'description': description,
       'price': price,
       'category': category,
-      'style': 'Modern',
-      'material': 'Wood',
-      'color': 'Brown',
-      'size': 'M',
-      'model_path': 'assets/chair.glb',
-      'image_urls': jsonEncode([]),
-      'rating': 4.5,
-      'review_count': 24,
-      'is_popular': 1,
-      'is_new_arrival': 1,
-      'in_stock': 1,
+      'style': style,
+      'material': material,
+      'color': color,
+      'size': size,
+      'modelPath': modelPath,
+      'imageUrls': imageUrls,
+      if (inventoryQty != null) 'inventoryQty': inventoryQty,
+      'isPopular': isPopular,
+      'isNewArrival': isNewArrival,
+      'inStock': inStock,
     };
+  }
+
+  CartItem _cartItemFromMap(Map<String, dynamic> map) {
+    final productMap = _asMap(map['product'], 'cart.product');
+    final product = Product.fromJson(productMap);
+    return CartItem(
+      id: map['id'] as String?,
+      product: product,
+      quantity: (map['quantity'] as num?)?.toInt() ?? 1,
+      unitPrice: (map['unitPrice'] as num?)?.toDouble() ?? product.price,
+      notes: map['notes'] as String?,
+    );
+  }
+
+  List<CartItem> _mockCartForUser(String userId) {
+    return _mockCartByUser.putIfAbsent(userId, () => <CartItem>[]);
+  }
+
+  Product _findMockProduct(String productId) {
+    if (_mockProducts.isEmpty) {
+      _initializeMockData();
+    }
+    return _mockProducts.firstWhere(
+      (product) => product.id == productId,
+      orElse: () => throw Exception('Product not found'),
+    );
+  }
+
+  Future<List<Product>> getAllProducts() async {
+    if (!_useApi) {
+      developer.log('⚠️ Using MOCK data for products (API not connected)');
+      _initializeMockData();
+      return List.unmodifiable(_mockProducts);
+    }
+    developer.log('📡 Fetching products from API...');
+    final data = await _sendRequest(method: 'GET', path: '/products');
+    final list = _asMapList(data, 'products');
+    final products = list.map(Product.fromJson).toList();
+    developer.log('✅ Loaded ${products.length} products from database');
+    return products;
+  }
+
+  Future<List<Product>> getPopularProducts() async {
+    final products = await getAllProducts();
+    return products.where((product) => product.isPopular).toList();
+  }
+
+  Future<List<Product>> getNewArrivalProducts() async {
+    final products = await getAllProducts();
+    return products.where((product) => product.isNewArrival).toList();
+  }
+
+  Future<Product> createProduct({
+    required String name,
+    required String description,
+    required double price,
+    required String category,
+    required String style,
+    required String material,
+    required String color,
+    required String size,
+    required String modelPath,
+    List<String> imageUrls = const [],
+    int? inventoryQty,
+    bool isPopular = false,
+    bool isNewArrival = false,
+    bool inStock = true,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ Creating product in MOCK MODE - data will NOT be saved to database!');
+      developer.log('💡 Make sure your backend is running at ${ApiConfig.baseUrl}');
+      final product = Product(
+        id: _generateId('p'),
+        name: name,
+        description: description,
+        price: price,
+        category: category,
+        style: style,
+        material: material,
+        color: color,
+        size: size,
+        modelPath: modelPath,
+        imageUrls: List.unmodifiable(imageUrls),
+        rating: 0,
+        reviewCount: 0,
+        isPopular: isPopular,
+        isNewArrival: isNewArrival,
+        inStock: inStock,
+        inventoryQty: inventoryQty ?? (inStock ? 10 : 0),
+        createdAt: DateTime.now(),
+      );
+      _mockProducts.insert(0, product);
+      return product;
+    }
+    developer.log('✅ Creating product via API at ${ApiConfig.baseUrl}');
+    final payload = _productPayload(
+      name: name,
+      description: description,
+      price: price,
+      category: category,
+      style: style,
+      material: material,
+      color: color,
+      size: size,
+      modelPath: modelPath,
+      imageUrls: imageUrls,
+      inventoryQty: inventoryQty,
+      isPopular: isPopular,
+      isNewArrival: isNewArrival,
+      inStock: inStock,
+    );
+    final data = await _sendRequest(method: 'POST', path: '/products', body: payload);
+    final map = _asMap(data, 'product');
+    return Product.fromJson(map);
+  }
+
+  Future<Product?> updateProduct(Product product) async {
+    if (!_useApi) {
+      final index = _mockProducts.indexWhere((item) => item.id == product.id);
+      if (index != -1) {
+        _mockProducts[index] = product;
+        return product;
+      }
+      return null;
+    }
+    final payload = _productPayload(
+      name: product.name,
+      description: product.description,
+      price: product.price,
+      category: product.category,
+      style: product.style,
+      material: product.material,
+      color: product.color,
+      size: product.size,
+      modelPath: product.modelPath,
+      imageUrls: product.imageUrls,
+      inventoryQty: product.inventoryQty,
+      isPopular: product.isPopular,
+      isNewArrival: product.isNewArrival,
+      inStock: product.inStock,
+    );
+    final data = await _sendRequest(method: 'PUT', path: '/products/${product.id}', body: payload);
+    final map = _asMap(data, 'product');
+    return Product.fromJson(map);
+  }
+
+  Future<void> deleteProduct(String id) async {
+    if (!_useApi) {
+      _mockProducts.removeWhere((product) => product.id == id);
+      return;
+    }
+    await _sendRequest(method: 'DELETE', path: '/products/$id');
+  }
+
+  Future<List<User>> getAllUsers() async {
+    if (!_useApi) {
+      developer.log('⚠️ Using MOCK data for users (API not connected)');
+      _initializeMockData();
+      return List.unmodifiable(_mockUsers);
+    }
+    developer.log('📡 Fetching users from API...');
+    final data = await _sendRequest(method: 'GET', path: '/users');
+    final list = _asMapList(data, 'users');
+    final users = list.map(User.fromJson).toList();
+    developer.log('✅ Loaded ${users.length} users from database');
+    return users;
+  }
+
+  Future<User> createUser({
+    required String email,
+    required String fullName,
+    String? username,
+    String? phoneNumber,
+    String? gender,
+  }) async {
+    if (!_useApi) {
+      final user = User(
+        id: _generateId('u'),
+        email: email,
+        fullName: fullName,
+        username: username ?? _suggestUsername(fullName, email),
+        phoneNumber: phoneNumber,
+        gender: gender,
+        addresses: const [],
+        wishlistProductIds: const [],
+        orderIds: const [],
+        createdAt: DateTime.now(),
+        lastLoginAt: DateTime.now(),
+      );
+      _mockUsers.insert(0, user);
+      return user;
+    }
+    final payload = {
+      'email': email,
+      'fullName': fullName,
+      if (username != null && username.isNotEmpty) 'username': username,
+      if (phoneNumber != null) 'phoneNumber': phoneNumber,
+      if (gender != null && gender.isNotEmpty) 'gender': gender,
+    };
+    final data = await _sendRequest(method: 'POST', path: '/users', body: payload);
+    final map = _asMap(data, 'user');
+    return User.fromJson(map);
+  }
+
+  Future<User> updateUser({
+    required String userId,
+    String? fullName,
+    String? username,
+    String? phoneNumber,
+    String? gender,
+    DateTime? dateOfBirth,
+    String? avatarUrl,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ Updating user in MOCK MODE - data will NOT be saved to database!');
+      final existing = _mockUsers.firstWhere((u) => u.id == userId, orElse: () => throw Exception('User not found'));
+      final updated = existing.copyWith(
+        fullName: fullName ?? existing.fullName,
+        username: username ?? existing.username,
+        phoneNumber: phoneNumber ?? existing.phoneNumber,
+        gender: gender ?? existing.gender,
+        dateOfBirth: dateOfBirth ?? existing.dateOfBirth,
+        avatarUrl: avatarUrl ?? existing.avatarUrl,
+      );
+      final index = _mockUsers.indexWhere((u) => u.id == userId);
+      if (index != -1) {
+        _mockUsers[index] = updated;
+      }
+      return updated;
+    }
+    final payload = <String, dynamic>{};
+    if (fullName != null) payload['fullName'] = fullName;
+    if (username != null) payload['username'] = username;
+    if (phoneNumber != null) payload['phoneNumber'] = phoneNumber;
+    if (gender != null) payload['gender'] = gender;
+    if (dateOfBirth != null) payload['dateOfBirth'] = dateOfBirth.toIso8601String();
+    if (avatarUrl != null) payload['avatarUrl'] = avatarUrl;
+    final data = await _sendRequest(method: 'PATCH', path: '/users/$userId', body: payload);
+    final map = _asMap(data, 'user');
+    return User.fromJson(map);
+  }
+
+  Future<String> uploadAvatar({
+    required String userId,
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ Upload avatar in MOCK MODE - returning placeholder URL');
+      return 'https://placehold.co/200x200?text=${Uri.encodeComponent(userId)}';
+    }
+    final uri = _buildUri('/users/$userId/avatar');
+    final request = http.MultipartRequest('POST', uri);
+    final multipart = http.MultipartFile.fromBytes(
+      'avatar',
+      bytes,
+      filename: fileName,
+    );
+    request.files.add(multipart);
+    final streamed = await request.send().timeout(ApiConfig.timeout);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to upload avatar: ${response.body}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid avatar upload response');
+    }
+    if (decoded['success'] == false) {
+      throw Exception(decoded['message']?.toString() ?? 'Failed to upload avatar');
+    }
+    final data = decoded['data'];
+    if (data is! Map<String, dynamic>) {
+      throw Exception('Invalid avatar upload payload');
+    }
+    final url = data['url'] as String?;
+    if (url == null || url.isEmpty) {
+      throw Exception('Avatar upload response missing url');
+    }
+    return url;
+  }
+
+  Future<List<CartItem>> getCartItems(String userId) async {
+    if (!_useApi) {
+      final cart = List<CartItem>.from(_mockCartForUser(userId));
+      return List.unmodifiable(cart);
+    }
+    final data = await _sendRequest(method: 'GET', path: '/cart/$userId');
+    final list = _asMapList(data, 'cart items');
+    return list.map(_cartItemFromMap).toList();
+  }
+
+  Future<CartItem> addCartItem({
+    required String userId,
+    required String productId,
+    int quantity = 1,
+    String? notes,
+  }) async {
+    if (!_useApi) {
+      final cart = _mockCartForUser(userId);
+      final product = _findMockProduct(productId);
+      final index = cart.indexWhere((item) => item.product.id == productId);
+      if (index == -1) {
+        final item = CartItem(
+          id: _generateId('cart'),
+          product: product,
+          quantity: quantity,
+          unitPrice: product.price,
+          notes: notes,
+        );
+        cart.add(item);
+        return item;
+      }
+      final updated = cart[index].copyWith(
+        quantity: cart[index].quantity + quantity,
+        notes: notes ?? cart[index].notes,
+      );
+      cart[index] = updated;
+      return updated;
+    }
+    final payload = {
+      'userId': userId,
+      'productId': productId,
+      'quantity': quantity,
+      if (notes != null) 'notes': notes,
+    };
+    final data = await _sendRequest(method: 'POST', path: '/cart', body: payload);
+    final map = _asMap(data, 'cart item');
+    return _cartItemFromMap(map);
+  }
+
+  Future<CartItem?> setCartItemQuantity({
+    required String userId,
+    required String productId,
+    required int quantity,
+    String? notes,
+  }) async {
+    if (!_useApi) {
+      final cart = _mockCartForUser(userId);
+      final index = cart.indexWhere((item) => item.product.id == productId);
+      if (index == -1) return null;
+      if (quantity <= 0) {
+        cart.removeAt(index);
+        return null;
+      }
+      final updated = cart[index].copyWith(
+        quantity: quantity,
+        notes: notes ?? cart[index].notes,
+      );
+      cart[index] = updated;
+      return updated;
+    }
+    final payload = {
+      'userId': userId,
+      'productId': productId,
+      'quantity': quantity,
+      if (notes != null) 'notes': notes,
+    };
+    final data = await _sendRequest(method: 'PATCH', path: '/cart', body: payload);
+    if (data == null) return null;
+    final map = _asMap(data, 'cart item');
+    return _cartItemFromMap(map);
+  }
+
+  Future<void> removeCartItem({
+    required String userId,
+    required String productId,
+  }) async {
+    if (!_useApi) {
+      final cart = _mockCartForUser(userId);
+      cart.removeWhere((item) => item.product.id == productId);
+      return;
+    }
+    await _sendRequest(method: 'DELETE', path: '/cart/$userId/$productId');
+  }
+
+  Future<void> clearCart(String userId) async {
+    if (!_useApi) {
+      _mockCartByUser[userId] = [];
+      return;
+    }
+    await _sendRequest(method: 'DELETE', path: '/cart/$userId');
+  }
+
+  Future<List<OrderRecord>> getAllOrders() async {
+    if (!_useApi) {
+      developer.log('⚠️ Using MOCK data for orders (API not connected)');
+      _initializeMockData();
+      return List.unmodifiable(_mockOrders);
+    }
+    developer.log('📡 Fetching orders from API...');
+    final data = await _sendRequest(method: 'GET', path: '/orders');
+    final list = _asMapList(data, 'orders');
+    final orders = list.map(OrderRecord.fromJson).toList();
+    developer.log('✅ Loaded ${orders.length} orders from database');
+    return orders;
+  }
+
+  Future<void> updateOrderStatus(String orderId, String status) async {
+    if (!_useApi) {
+      final index = _mockOrders.indexWhere((order) => order.id == orderId);
+      if (index != -1) {
+        final existing = _mockOrders[index];
+        _mockOrders[index] = OrderRecord(
+          id: existing.id,
+          userId: existing.userId,
+          userName: existing.userName,
+          productIds: existing.productIds,
+          totalAmount: existing.totalAmount,
+          status: status,
+          shippingAddress: existing.shippingAddress,
+          createdAt: existing.createdAt,
+          updatedAt: DateTime.now(),
+        );
+      }
+      return;
+    }
+    await _sendRequest(
+      method: 'PATCH',
+      path: '/orders/$orderId/status',
+      body: {'status': status},
+    );
+  }
+
+  Future<OrderRecord> createOrder({
+    required String userId,
+    required String userName,
+    required List<String> productIds,
+    required double totalAmount,
+    required Map<String, dynamic> shippingAddress,
+    String status = 'pending',
+  }) async {
+    if (!_useApi) {
+      return _createLocalOrder(
+        userId: userId,
+        userName: userName,
+        productIds: productIds,
+        totalAmount: totalAmount,
+        status: status,
+        shippingAddress: shippingAddress,
+      );
+    }
+
+    final payload = {
+      'userId': userId,
+      'userName': userName,
+      'productIds': productIds,
+      'totalAmount': totalAmount,
+      'status': status,
+      'shippingAddress': shippingAddress,
+    };
+    try {
+      final data = await _sendRequest(method: 'POST', path: '/orders', body: payload);
+      final map = _asMap(data, 'order');
+      return OrderRecord.fromJson(map);
+    } catch (error) {
+      developer.log('❌ Failed to create order via API: $error');
+      developer.log('⚠️ Falling back to local order creation');
+      return _createLocalOrder(
+        userId: userId,
+        userName: userName,
+        productIds: productIds,
+        totalAmount: totalAmount,
+        status: status,
+        shippingAddress: shippingAddress,
+      );
+    }
+  }
+
+  OrderRecord _createLocalOrder({
+    required String userId,
+    required String userName,
+    required List<String> productIds,
+    required double totalAmount,
+    required String status,
+    required Map<String, dynamic> shippingAddress,
+  }) {
+    final order = OrderRecord(
+      id: _generateId('o'),
+      userId: userId,
+      userName: userName,
+      productIds: List.unmodifiable(productIds),
+      totalAmount: totalAmount,
+      status: status,
+      shippingAddress: Map<String, dynamic>.from(shippingAddress),
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    _mockOrders.insert(0, order);
+    return order;
+  }
+
+  Future<List<AddressEntry>> getAddresses(String userId) async {
+    if (!_useApi) {
+      developer.log('⚠️ Using MOCK data for addresses (API not connected)');
+      return [];
+    }
+    developer.log('📡 Fetching addresses from API for user: $userId');
+    final data = await _sendRequest(method: 'GET', path: '/addresses/$userId');
+    final list = _asMapList(data, 'addresses');
+    final addresses = list.map((map) => AddressEntry.fromJson(map)).toList();
+    developer.log('✅ Loaded ${addresses.length} addresses from database for user: $userId');
+    return addresses;
+  }
+
+  Future<AddressEntry> createAddress({
+    required String userId,
+    required String fullName,
+    required String phoneNumber,
+    required String region,
+    required String street,
+    String? postalCode,
+    String label = 'Home',
+    bool isDefault = false,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ Creating address in MOCK MODE - data will NOT be saved to database!');
+      return AddressEntry(
+        id: _generateId('addr'),
+        fullName: fullName,
+        phoneNumber: phoneNumber,
+        region: region,
+        postalCode: postalCode ?? '',
+        street: street,
+        label: label,
+        isDefault: isDefault,
+      );
+    }
+    developer.log('✅ Creating address via API for user: $userId');
+    final payload = {
+      'userId': userId,
+      'fullName': fullName,
+      'phoneNumber': phoneNumber,
+      'region': region,
+      'street': street,
+      if (postalCode != null) 'postalCode': postalCode,
+      'label': label,
+      'isDefault': isDefault,
+    };
+    final data = await _sendRequest(method: 'POST', path: '/addresses', body: payload);
+    final map = _asMap(data, 'address');
+    return AddressEntry.fromJson(map);
+  }
+
+  Future<AddressEntry> updateAddress({
+    required String addressId,
+    required String userId,
+    String? fullName,
+    String? phoneNumber,
+    String? region,
+    String? street,
+    String? postalCode,
+    String? label,
+    bool? isDefault,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ Updating address in MOCK MODE - data will NOT be saved to database!');
+      return AddressEntry(
+        id: addressId,
+        fullName: fullName ?? '',
+        phoneNumber: phoneNumber ?? '',
+        region: region ?? '',
+        postalCode: postalCode ?? '',
+        street: street ?? '',
+        label: label ?? 'Home',
+        isDefault: isDefault ?? false,
+      );
+    }
+    developer.log('✅ Updating address via API: $addressId');
+    final payload = <String, dynamic>{
+      'userId': userId,
+      if (fullName != null) 'fullName': fullName,
+      if (phoneNumber != null) 'phoneNumber': phoneNumber,
+      if (region != null) 'region': region,
+      if (street != null) 'street': street,
+      if (postalCode != null) 'postalCode': postalCode,
+      if (label != null) 'label': label,
+      if (isDefault != null) 'isDefault': isDefault,
+    };
+    final data = await _sendRequest(method: 'PATCH', path: '/addresses/$addressId', body: payload);
+    final map = _asMap(data, 'address');
+    return AddressEntry.fromJson(map);
+  }
+
+  Future<void> deleteAddress(String addressId, String userId) async {
+    if (!_useApi) {
+      developer.log('⚠️ Deleting address in MOCK MODE - data will NOT be saved to database!');
+      return;
+    }
+    developer.log('✅ Deleting address via API: $addressId');
+    await _sendRequest(
+      method: 'DELETE',
+      path: '/addresses/$addressId',
+      body: {'userId': userId},
+    );
+  }
+
+  Future<List<Review>> getAllReviews() async {
+    if (!_useApi) {
+      developer.log('⚠️ Using MOCK data for reviews (API not connected)');
+      return _getMockReviews();
+    }
+    developer.log('📡 Fetching reviews from API...');
+    final data = await _sendRequest(method: 'GET', path: '/reviews');
+    final list = _asMapList(data, 'reviews');
+    final reviews = list.map(Review.fromJson).toList();
+    developer.log('✅ Loaded ${reviews.length} reviews from database');
+    return reviews;
+  }
+
+  Future<Review> createReview({
+    required String productId,
+    required String productName,
+    required String userId,
+    required String userName,
+    required int rating,
+    required String content,
+  }) async {
+    if (!_useApi) {
+      return Review(
+        id: _generateId('r'),
+        productId: productId,
+        productName: productName,
+        userId: userId,
+        userName: userName,
+        rating: rating,
+        content: content,
+        status: 'pending',
+        createdAt: DateTime.now(),
+      );
+    }
+    final payload = {
+      'productId': productId,
+      'productName': productName,
+      'userId': userId,
+      'userName': userName,
+      'rating': rating,
+      'content': content,
+    };
+    final data = await _sendRequest(method: 'POST', path: '/reviews', body: payload);
+    final map = _asMap(data, 'review');
+    return Review.fromJson(map);
+  }
+
+  Future<void> updateReviewStatus(String reviewId, String status) async {
+    if (!_useApi) {
+      return;
+    }
+    await _sendRequest(
+      method: 'PATCH',
+      path: '/reviews/$reviewId/status',
+      body: {'status': status},
+    );
+  }
+
+  Future<void> deleteReview(String reviewId) async {
+    if (!_useApi) {
+      return;
+    }
+    await _sendRequest(method: 'DELETE', path: '/reviews/$reviewId');
+  }
+
+  String _suggestUsername(String fullName, String email) {
+    final normalizedName = fullName.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    if (normalizedName.isNotEmpty) {
+      return normalizedName.length >= 3 ? normalizedName : '$normalizedName${_random.nextInt(999)}';
+    }
+    final emailPrefix = email.split('@').first.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    if (emailPrefix.isNotEmpty) {
+      return emailPrefix;
+    }
+    return 'user_${_random.nextInt(9999)}';
   }
 
   String _generateId(String prefix) {
     final millis = DateTime.now().millisecondsSinceEpoch;
-    final rand = _random.nextInt(9999);
+    final rand = _random.nextInt(9999).toString().padLeft(4, '0');
     return '$prefix$millis$rand';
   }
 
   void _initializeMockData() {
-    if (_mockProducts.isNotEmpty) return;
+    if (_mockProducts.isNotEmpty) {
+      return;
+    }
     final now = DateTime.now();
     _mockProducts.addAll([
       Product(
@@ -279,6 +918,7 @@ class MySQLDatabaseService {
         isPopular: true,
         isNewArrival: false,
         inStock: true,
+        inventoryQty: 15,
         createdAt: now.subtract(const Duration(days: 30)),
       ),
       Product(
@@ -298,334 +938,193 @@ class MySQLDatabaseService {
         isPopular: true,
         isNewArrival: true,
         inStock: true,
+        inventoryQty: 8,
         createdAt: now.subtract(const Duration(days: 5)),
       ),
     ]);
+    if (_mockUsers.isEmpty) {
+      _mockUsers.addAll([
+        User(
+          id: 'u1',
+          email: 'jane.appleseed@example.com',
+          fullName: 'Jane Appleseed',
+          username: 'jane_appleseed',
+          phoneNumber: '+1 555 0100',
+          gender: 'female',
+          addresses: const ['123 Maple St, Springfield'],
+          wishlistProductIds: const ['p1'],
+          orderIds: const ['o1'],
+          preferredStyle: 'Modern',
+          minBudget: 100,
+          maxBudget: 2000,
+          createdAt: now.subtract(const Duration(days: 40)),
+          lastLoginAt: now.subtract(const Duration(hours: 3)),
+        ),
+        User(
+          id: 'u2',
+          email: 'marcus.tan@example.com',
+          fullName: 'Marcus Tan',
+          username: 'marcus_tan',
+          phoneNumber: '+65 8000 1234',
+          gender: 'male',
+          addresses: const ['55 River Valley Rd, Singapore'],
+          wishlistProductIds: const ['p2'],
+          orderIds: const ['o2'],
+          preferredStyle: 'Minimal',
+          minBudget: 200,
+          maxBudget: 5000,
+          createdAt: now.subtract(const Duration(days: 60)),
+          lastLoginAt: now.subtract(const Duration(hours: 10)),
+        ),
+      ]);
+    }
+    if (_mockOrders.isEmpty) {
+      _mockOrders.addAll([
+        OrderRecord(
+          id: 'o1',
+          userId: 'u1',
+          userName: 'Jane Appleseed',
+          productIds: const ['p1', 'p2'],
+          totalAmount: 899.98,
+          status: 'pending',
+          shippingAddress: const {'line1': '123 Maple St', 'city': 'Springfield', 'country': 'USA'},
+          createdAt: now.subtract(const Duration(days: 2)),
+          updatedAt: now.subtract(const Duration(days: 1)),
+        ),
+        OrderRecord(
+          id: 'o2',
+          userId: 'u2',
+          userName: 'Marcus Tan',
+          productIds: const ['p2'],
+          totalAmount: 599.99,
+          status: 'confirmed',
+          shippingAddress: const {'line1': '55 River Valley Rd', 'city': 'Singapore', 'country': 'SG'},
+          createdAt: now.subtract(const Duration(days: 4)),
+          updatedAt: now.subtract(const Duration(days: 3)),
+        ),
+      ]);
+    }
+    if (_mockCartByUser.isEmpty && _mockProducts.isNotEmpty) {
+      _mockCartByUser['u1'] = [
+        CartItem(
+          id: _generateId('cart'),
+          product: _mockProducts[0],
+          quantity: 1,
+          unitPrice: _mockProducts[0].price,
+        ),
+        if (_mockProducts.length > 2)
+          CartItem(
+            id: _generateId('cart'),
+            product: _mockProducts[2],
+            quantity: 2,
+            unitPrice: _mockProducts[2].price,
+          ),
+      ];
+    }
+  }
 
-    _mockUsers.addAll([
-      User(
-        id: 'u1',
-        email: 'jane.appleseed@example.com',
-        fullName: 'Jane Appleseed',
-        phoneNumber: '+1 555 0100',
-        addresses: const ['123 Maple St, Springfield'],
-        wishlistProductIds: const ['p1'],
-        orderIds: const ['o1'],
-        preferredStyle: 'Modern',
-        minBudget: 100,
-        maxBudget: 2000,
-        createdAt: now.subtract(const Duration(days: 40)),
-        lastLoginAt: now.subtract(const Duration(hours: 3)),
-      ),
-      User(
-        id: 'u2',
-        email: 'marcus.tan@example.com',
-        fullName: 'Marcus Tan',
-        phoneNumber: '+65 8000 1234',
-        addresses: const ['55 River Valley Rd, Singapore'],
-        wishlistProductIds: const ['p2'],
-        orderIds: const ['o2'],
-        preferredStyle: 'Minimal',
-        minBudget: 200,
-        maxBudget: 5000,
-        createdAt: now.subtract(const Duration(days: 60)),
-        lastLoginAt: now.subtract(const Duration(hours: 10)),
-      ),
-    ]);
-
-    _mockOrders.addAll([
-      OrderRecord(
-        id: 'o1',
+  List<Review> _getMockReviews() {
+    final now = DateTime.now();
+    return [
+      Review(
+        id: 'r1',
+        productId: 'p1',
+        productName: 'Modern Dining Chair',
         userId: 'u1',
         userName: 'Jane Appleseed',
-        productIds: const ['p1', 'p2'],
-        totalAmount: 899.98,
-        status: 'pending',
-        shippingAddress: const {'line1': '123 Maple St', 'city': 'Springfield', 'country': 'USA'},
-        createdAt: now.subtract(const Duration(days: 2)),
-        updatedAt: now.subtract(const Duration(days: 1)),
+        rating: 5,
+        content: 'Incredible craftsmanship. The chair is both beautiful and comfortable.',
+        status: 'published',
+        createdAt: now.subtract(const Duration(days: 5)),
       ),
-      OrderRecord(
-        id: 'o2',
+      Review(
+        id: 'r2',
+        productId: 'p2',
+        productName: 'Executive Office Chair',
         userId: 'u2',
         userName: 'Marcus Tan',
-        productIds: const ['p2'],
-        totalAmount: 599.99,
-        status: 'confirmed',
-        shippingAddress: const {'line1': '55 River Valley Rd', 'city': 'Singapore', 'country': 'SG'},
-        createdAt: now.subtract(const Duration(days: 4)),
-        updatedAt: now.subtract(const Duration(days: 3)),
+        rating: 4,
+        content: 'Sturdy and elegant. Great for long work sessions.',
+        status: 'published',
+        createdAt: now.subtract(const Duration(days: 3)),
       ),
-    ]);
+      Review(
+        id: 'r3',
+        productId: 'p1',
+        productName: 'Modern Dining Chair',
+        userId: 'u2',
+        userName: 'Marcus Tan',
+        rating: 2,
+        content: 'Arrived with scratches on the legs. Otherwise decent quality.',
+        status: 'flagged',
+        createdAt: now.subtract(const Duration(days: 1)),
+      ),
+    ];
   }
 
-  Future<List<Product>> getAllProducts() async {
-    if (_connection == null) {
-      _initializeMockData();
-      return List.unmodifiable(_mockProducts);
+  // ============================================================================
+  // Admin Management Methods
+  // ============================================================================
+
+  /// Fetches all admins from the API.
+  /// Returns an empty list if API is unavailable (no mock fallback for security).
+  Future<List<Admin>> getAllAdmins() async {
+    if (!_useApi) {
+      developer.log('⚠️ Admin management requires API connection');
+      return const [];
     }
-    final results = await _connection!.query('SELECT * FROM products ORDER BY created_at DESC');
-    return results.map(_productFromRow).toList();
+    developer.log('📡 Fetching admins from API...');
+    final data = await _sendRequest(method: 'GET', path: '/admins');
+    final list = _asMapList(data, 'admins');
+    final admins = list.map(Admin.fromJson).toList();
+    developer.log('✅ Loaded ${admins.length} admins from database');
+    return admins;
   }
 
-  Future<List<Product>> getPopularProducts() async {
-    if (_connection == null) {
-      _initializeMockData();
-      return _mockProducts.where((p) => p.isPopular).toList();
-    }
-    final results = await _connection!.query('SELECT * FROM products WHERE is_popular = 1');
-    return results.map(_productFromRow).toList();
-  }
-
-  Future<List<Product>> getNewArrivalProducts() async {
-    if (_connection == null) {
-      _initializeMockData();
-      return _mockProducts.where((p) => p.isNewArrival).toList();
-    }
-    final results = await _connection!.query('SELECT * FROM products WHERE is_new_arrival = 1 ORDER BY created_at DESC');
-    return results.map(_productFromRow).toList();
-  }
-
-  Future<Product> createProduct({
-    required String name,
-    required String description,
-    required double price,
-    required String category,
-    required String style,
-    required String material,
-    required String color,
-    required String size,
-    required String modelPath,
-    List<String> imageUrls = const [],
-    bool isPopular = false,
-    bool isNewArrival = false,
-    bool inStock = true,
+  /// Creates a new admin account.
+  /// 
+  /// Requires: email, password (min 6 chars), and fullName.
+  /// Password is hashed on the backend before storage.
+  Future<Admin> createAdmin({
+    required String email,
+    required String password,
+    required String fullName,
   }) async {
-    final product = Product(
-      id: _generateId('p'),
-      name: name,
-      description: description,
-      price: price,
-      category: category,
-      style: style,
-      material: material,
-      color: color,
-      size: size,
-      modelPath: modelPath,
-      imageUrls: List.unmodifiable(imageUrls),
-      rating: 0,
-      reviewCount: 0,
-      isPopular: isPopular,
-      isNewArrival: isNewArrival,
-      inStock: inStock,
-      createdAt: DateTime.now(),
+    if (!_useApi) {
+      throw Exception('Admin creation requires API connection');
+    }
+    final payload = {
+      'email': email.trim(),
+      'password': password,
+      'fullName': fullName.trim(),
+    };
+    final data = await _sendRequest(method: 'POST', path: '/admins', body: payload);
+    final map = _asMap(data, 'admin');
+    return Admin.fromJson(map);
+  }
+
+  /// Updates an admin's information.
+  /// 
+  /// SECURITY: Email and password cannot be updated through this method.
+  /// Only fullName can be updated.
+  Future<Admin> updateAdmin({
+    required String adminId,
+    String? fullName,
+  }) async {
+    if (!_useApi) {
+      throw Exception('Admin update requires API connection');
+    }
+    final payload = <String, dynamic>{};
+    if (fullName != null) {
+      payload['fullName'] = fullName.trim();
+    }
+    final data = await _sendRequest(
+      method: 'PATCH',
+      path: '/admins/$adminId',
+      body: payload,
     );
-
-    if (_connection == null) {
-      _mockProducts.insert(0, product);
-      return product;
-    }
-
-    await _connection!.query('''
-      INSERT INTO products (
-        id, name, description, price, category, style, material, color, size,
-        model_path, image_urls, rating, review_count, is_popular, is_new_arrival, in_stock
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', [
-      product.id,
-      product.name,
-      product.description,
-      product.price,
-      product.category,
-      product.style,
-      product.material,
-      product.color,
-      product.size,
-      product.modelPath,
-      jsonEncode(product.imageUrls),
-      product.rating,
-      product.reviewCount,
-      product.isPopular,
-      product.isNewArrival,
-      product.inStock,
-    ]);
-
-    return product;
-  }
-
-  Future<Product?> updateProduct(Product product) async {
-    if (_connection == null) {
-      final index = _mockProducts.indexWhere((p) => p.id == product.id);
-      if (index != -1) {
-        _mockProducts[index] = product;
-        return product;
-      }
-      return null;
-    }
-
-    await _connection!.query('''
-      UPDATE products SET
-        name = ?, description = ?, price = ?, category = ?, style = ?, material = ?,
-        color = ?, size = ?, model_path = ?, image_urls = ?, is_popular = ?, is_new_arrival = ?, in_stock = ?
-      WHERE id = ?
-    ''', [
-      product.name,
-      product.description,
-      product.price,
-      product.category,
-      product.style,
-      product.material,
-      product.color,
-      product.size,
-      product.modelPath,
-      jsonEncode(product.imageUrls),
-      product.isPopular,
-      product.isNewArrival,
-      product.inStock,
-      product.id,
-    ]);
-    return product;
-  }
-
-  Future<void> deleteProduct(String id) async {
-    if (_connection == null) {
-      _mockProducts.removeWhere((p) => p.id == id);
-      return;
-    }
-    await _connection!.query('DELETE FROM products WHERE id = ?', [id]);
-  }
-
-  Future<List<User>> getAllUsers() async {
-    if (_connection == null) {
-      _initializeMockData();
-      return List.unmodifiable(_mockUsers);
-    }
-    final results = await _connection!.query('SELECT * FROM users ORDER BY created_at DESC');
-    return results.map(_userFromRow).toList();
-  }
-
-  Future<List<OrderRecord>> getAllOrders() async {
-    if (_connection == null) {
-      _initializeMockData();
-      return List.unmodifiable(_mockOrders);
-    }
-    final results = await _connection!.query('''
-      SELECT o.*, u.full_name AS user_name
-      FROM orders o
-      LEFT JOIN users u ON o.user_id = u.id
-      ORDER BY o.created_at DESC
-    ''');
-    return results.map(_orderFromRow).toList();
-  }
-
-  Future<void> updateOrderStatus(String orderId, String status) async {
-    if (_connection == null) {
-      final index = _mockOrders.indexWhere((o) => o.id == orderId);
-      if (index != -1) {
-        final existing = _mockOrders[index];
-        _mockOrders[index] = OrderRecord(
-          id: existing.id,
-          userId: existing.userId,
-          userName: existing.userName,
-          productIds: existing.productIds,
-          totalAmount: existing.totalAmount,
-          status: status,
-          shippingAddress: existing.shippingAddress,
-          createdAt: existing.createdAt,
-          updatedAt: DateTime.now(),
-        );
-      }
-      return;
-    }
-    await _connection!.query('UPDATE orders SET status = ? WHERE id = ?', [status, orderId]);
-  }
-
-  Product _productFromRow(ResultRow row) {
-    return Product(
-      id: row['id'] as String,
-      name: row['name'] as String,
-      description: row['description'] as String? ?? '',
-      price: (row['price'] as num).toDouble(),
-      category: row['category'] as String,
-      style: row['style'] as String? ?? '',
-      material: row['material'] as String? ?? '',
-      color: row['color'] as String? ?? '',
-      size: row['size'] as String? ?? '',
-      modelPath: row['model_path'] as String? ?? 'assets/chair.glb',
-      imageUrls: _decodeStringList(row['image_urls']),
-      rating: (row['rating'] as num?)?.toDouble() ?? 0,
-      reviewCount: row['review_count'] as int? ?? 0,
-      isPopular: _asBool(row['is_popular']),
-      isNewArrival: _asBool(row['is_new_arrival']),
-      inStock: _asBool(row['in_stock']),
-      createdAt: row['created_at'] as DateTime? ?? DateTime.now(),
-    );
-  }
-
-  User _userFromRow(ResultRow row) {
-    return User(
-      id: row['id'] as String,
-      email: row['email'] as String,
-      fullName: row['full_name'] as String,
-      phoneNumber: row['phone_number'] as String?,
-      addresses: _decodeStringList(row['addresses']),
-      wishlistProductIds: _decodeStringList(row['wishlist_product_ids']),
-      orderIds: _decodeStringList(row['order_ids']),
-      preferredStyle: row['preferred_style'] as String? ?? '',
-      minBudget: (row['min_budget'] as num?)?.toDouble() ?? 0,
-      maxBudget: (row['max_budget'] as num?)?.toDouble() ?? 0,
-      createdAt: row['created_at'] as DateTime? ?? DateTime.now(),
-      lastLoginAt: row['last_login_at'] as DateTime? ?? DateTime.now(),
-    );
-  }
-
-  OrderRecord _orderFromRow(ResultRow row) {
-    return OrderRecord(
-      id: row['id'] as String,
-      userId: row['user_id'] as String,
-      userName: row['user_name'] as String? ?? '',
-      productIds: _decodeStringList(row['product_ids']),
-      totalAmount: (row['total_amount'] as num).toDouble(),
-      status: row['status'] as String,
-      shippingAddress: _decodeMap(row['shipping_address']),
-      createdAt: row['created_at'] as DateTime? ?? DateTime.now(),
-      updatedAt: row['updated_at'] as DateTime? ?? DateTime.now(),
-    );
-  }
-
-  List<String> _decodeStringList(dynamic value) {
-    if (value == null) return [];
-    if (value is String && value.isNotEmpty) {
-      final decoded = jsonDecode(value);
-      if (decoded is List) {
-        return decoded.map((e) => e.toString()).toList();
-      }
-    }
-    if (value is List) {
-      return value.map((e) => e.toString()).toList();
-    }
-    return [];
-  }
-
-  Map<String, dynamic> _decodeMap(dynamic value) {
-    if (value == null) return {};
-    if (value is String && value.isNotEmpty) {
-      final decoded = jsonDecode(value);
-      if (decoded is Map) {
-        return decoded.map((key, val) => MapEntry(key.toString(), val));
-      }
-    }
-    if (value is Map<String, dynamic>) {
-      return value;
-    }
-    return {};
-  }
-
-  bool _asBool(dynamic value) {
-    if (value is bool) return value;
-    if (value is int) return value == 1;
-    if (value is String) return value == '1' || value.toLowerCase() == 'true';
-    return false;
+    final map = _asMap(data, 'admin');
+    return Admin.fromJson(map);
   }
 }
 

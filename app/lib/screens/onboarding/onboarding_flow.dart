@@ -1,19 +1,15 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../shell/tab_shell.dart';
 
 /// =============================================================
 /// OnboardingFlow
 ///
-/// A minimal, focused onboarding flow that introduces the app and
-/// collects initial consent. For now, this is a single screen with
-/// a primary call-to-action that advances into the main app shell.
-///
-/// Design notes (Apple HIG):
-/// - Clear hierarchy with a bold title, supportive subtitle, and a
-///   single prominent primary button.
-/// - Generous spacing and contrast to keep content breathable.
-/// - Motion kept subtle; navigation uses native transitions.
+/// A modern, clean onboarding flow with centered content and
+/// an illustration at the top. Introduces the app and guides
+/// users to get started.
 /// =============================================================
 class OnboardingFlow extends StatelessWidget {
   const OnboardingFlow({super.key});
@@ -26,57 +22,99 @@ class OnboardingFlow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = CupertinoTheme.of(context);
+    const Color kBrown = Color(0xFF8D6E63);
+    const Color kLight = Color(0xFFF4E6D4);
 
     return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text('Welcome'),
-      ),
+      backgroundColor: Colors.white,
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          padding: const EdgeInsets.symmetric(horizontal: 32.0),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
-              const SizedBox(height: 32),
-              Text(
-                'Design your space in AR',
-                style: theme.textTheme.navLargeTitleTextStyle,
-                textAlign: TextAlign.left,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Browse furniture, preview in your room, and check out in minutes.',
-                style: theme.textTheme.textStyle.copyWith(
-                  color: CupertinoColors.secondaryLabel,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 32),
-              // Placeholder for profile preferences & budget range; when
-              // implementing, present segmented controls and sliders here.
+              // Illustration/Image at the top
               Container(
+                width: 200,
+                height: 200,
                 decoration: BoxDecoration(
-                  color: CupertinoColors.systemGroupedBackground,
-                  borderRadius: BorderRadius.circular(12),
+                  color: kLight.withValues(alpha: 0.3),
+                  shape: BoxShape.circle,
                 ),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('Profile setup placeholder'),
-                    SizedBox(height: 8),
-                    Text('Style preferences, budget range, and camera permissions.'),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // AR/3D Icon Illustration
+                    Container(
+                      width: 140,
+                      height: 140,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            kBrown.withValues(alpha: 0.1),
+                            kBrown.withValues(alpha: 0.2),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      child: Icon(
+                        CupertinoIcons.cube_box_fill,
+                        size: 70,
+                        color: kBrown,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              const Spacer(),
-              CupertinoButton.filled(
-                onPressed: () => _goToApp(context),
-                child: const Text('Get Started'),
+              const SizedBox(height: 40),
+              // Centered Title
+              Text(
+                'Design your space\nin AR',
+                style: GoogleFonts.poppins(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black,
+                  height: 1.2,
+                  decoration: TextDecoration.none,
+                ),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              // Centered Subtitle
+              Text(
+                'Browse furniture and preview in your room',
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.black,
+                  height: 1.4,
+                  decoration: TextDecoration.none,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 48),
+              // Get Started Button
+              SizedBox(
+                width: double.infinity,
+                child: CupertinoButton.filled(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  borderRadius: BorderRadius.circular(16),
+                  color: kBrown,
+                  onPressed: () => _goToApp(context),
+                  child: Text(
+                    'Get Started',
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -84,5 +122,6 @@ class OnboardingFlow extends StatelessWidget {
     );
   }
 }
+
 
 

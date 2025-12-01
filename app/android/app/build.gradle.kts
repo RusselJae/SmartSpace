@@ -42,3 +42,8 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Pull in the official ARCore runtime so our availability checks compile.
+    implementation("com.google.ar:core:1.44.0")
+}

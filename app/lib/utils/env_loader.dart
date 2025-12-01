@@ -1,4 +1,5 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:developer' as developer;
 
 /// Utility class for loading and managing environment variables
@@ -10,13 +11,36 @@ class EnvLoader {
     if (_isLoaded) return;
     
     try {
-      await dotenv.load(fileName: ".env");
-      _isLoaded = true;
-      developer.log('✅ Environment variables loaded successfully');
+      // For web, try loading from assets, but don't fail if not found
+      if (kIsWeb) {
+        try {
+          await dotenv.load(fileName: ".env");
+          _isLoaded = true;
+          developer.log('✅ Environment variables loaded successfully (web)');
+        } catch (webError) {
+          // On web, .env might not be available - use defaults gracefully
+          developer.log('⚠️  .env file not available on web (this is normal)');
+          developer.log('📝 Using default configuration values');
+          _isLoaded = true; // Mark as loaded to prevent retries
+        }
+      } else {
+        // For mobile/desktop, load normally
+        await dotenv.load(fileName: ".env");
+        _isLoaded = true;
+        developer.log('✅ Environment variables loaded successfully');
+      }
     } catch (e) {
-      developer.log('⚠️  Could not load .env file: $e');
-      developer.log('📝 Using default configuration values');
-      developer.log('💡 Create a .env file based on env.example for custom configuration');
+      // Suppress 404 errors for web - they're expected if .env isn't in assets
+      final errorStr = e.toString();
+      if (kIsWeb && errorStr.contains('404')) {
+        developer.log('⚠️  .env file not found in web assets (using defaults)');
+        developer.log('💡 For web, configure API_BASE_URL in code or use build-time variables');
+      } else {
+        developer.log('⚠️  Could not load .env file: $e');
+        developer.log('📝 Using default configuration values');
+        developer.log('💡 Create a .env file based on env.example for custom configuration');
+      }
+      _isLoaded = true; // Mark as loaded to prevent retries
     }
   }
   

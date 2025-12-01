@@ -1,7 +1,10 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 import '../../services/wishlist_service.dart';
 import '../../models/product.dart';
+import '../../widgets/toast.dart';
 import '../views/product_detail.dart';
 
 /// =============================================================
@@ -36,7 +39,8 @@ class _WishlistScreenState extends State<WishlistScreen> {
   }
 
   void _open(Product product) {
-    Navigator.of(context).push(
+    // Use rootNavigator to hide tab bar when navigating to product detail
+    Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(builder: (_) => ProductDetailScreen(product: product)),
     );
   }
@@ -46,20 +50,42 @@ class _WishlistScreenState extends State<WishlistScreen> {
     final items = _wishlist.items;
 
     return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text('Wishlist'),
+      backgroundColor: Colors.white,
+      navigationBar: CupertinoNavigationBar(
+        backgroundColor: Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: CupertinoColors.separator.withValues(alpha: 0.1),
+            width: 0.5,
+          ),
+        ),
+        middle: Text('Wishlist', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
       ),
       child: SafeArea(
         child: items.isEmpty
-            ? const Center(child: Text('Your saved items will appear here.'))
+            ? Center(
+                child: Text(
+                  'Your saved items will appear here.',
+                  style: GoogleFonts.poppins(
+                    color: Colors.black,
+                    fontSize: 16,
+                    fontWeight: FontWeight.normal,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+              )
             : ListView.separated(
-                padding: const EdgeInsets.all(16),
+                // Add bottom padding to prevent content from being blocked by tab bar
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
                 itemBuilder: (context, index) {
                   final product = items[index];
                   return _WishlistRow(
                     product: product,
                     onOpen: () => _open(product),
-                    onRemove: () => _wishlist.remove(product.id),
+                    onRemove: () {
+                      _wishlist.remove(product.id);
+                      Toast.info(context, '${product.name} removed from wishlist');
+                    },
                   );
                 },
                 separatorBuilder: (_, __) => const SizedBox(height: 12),
@@ -116,10 +142,13 @@ class _WishlistRow extends StatelessWidget {
                     product.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
-                  Text('\$${product.price.toStringAsFixed(0)}', style: const TextStyle(color: Color(0xFF6D4C41))),
+                  Text(
+                    '₱${product.price.toStringAsFixed(0)}',
+                    style: GoogleFonts.poppins(color: const Color(0xFF6D4C41)),
+                  ),
                 ],
               ),
             ),

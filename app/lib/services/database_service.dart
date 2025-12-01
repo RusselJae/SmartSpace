@@ -44,6 +44,7 @@ class DatabaseService {
         isPopular: true,
         isNewArrival: false,
         inStock: true,
+        inventoryQty: 15,
         createdAt: now.subtract(const Duration(days: 30)),
       ),
       Product(
@@ -63,6 +64,7 @@ class DatabaseService {
         isPopular: true,
         isNewArrival: true,
         inStock: true,
+        inventoryQty: 8,
         createdAt: now.subtract(const Duration(days: 5)),
       ),
       Product(
@@ -82,6 +84,7 @@ class DatabaseService {
         isPopular: false,
         isNewArrival: true,
         inStock: true,
+        inventoryQty: 12,
         createdAt: now.subtract(const Duration(days: 8)),
       ),
       Product(
@@ -101,6 +104,7 @@ class DatabaseService {
         isPopular: false,
         isNewArrival: false,
         inStock: true,
+        inventoryQty: 20,
         createdAt: now.subtract(const Duration(days: 60)),
       ),
       Product(
@@ -120,6 +124,7 @@ class DatabaseService {
         isPopular: true,
         isNewArrival: false,
         inStock: true,
+        inventoryQty: 25,
         createdAt: now.subtract(const Duration(days: 45)),
       ),
       Product(
@@ -139,6 +144,7 @@ class DatabaseService {
         isPopular: false,
         isNewArrival: true,
         inStock: true,
+        inventoryQty: 10,
         createdAt: now.subtract(const Duration(days: 3)),
       ),
       Product(
@@ -158,6 +164,7 @@ class DatabaseService {
         isPopular: true,
         isNewArrival: false,
         inStock: true,
+        inventoryQty: 5,
         createdAt: now.subtract(const Duration(days: 90)),
       ),
       Product(
@@ -177,6 +184,7 @@ class DatabaseService {
         isPopular: false,
         isNewArrival: true,
         inStock: true,
+        inventoryQty: 18,
         createdAt: now.subtract(const Duration(days: 12)),
       ),
       Product(
@@ -196,6 +204,7 @@ class DatabaseService {
         isPopular: true,
         isNewArrival: true,
         inStock: true,
+        inventoryQty: 30,
         createdAt: now.subtract(const Duration(days: 1)),
       ),
       Product(
@@ -215,6 +224,7 @@ class DatabaseService {
         isPopular: false,
         isNewArrival: false,
         inStock: true,
+        inventoryQty: 14,
         createdAt: now.subtract(const Duration(days: 75)),
       ),
     ]);
@@ -228,6 +238,7 @@ class DatabaseService {
         id: 'u1',
         email: 'john.doe@example.com',
         fullName: 'John Doe',
+        username: 'john_doe',
         phoneNumber: '+1234567890',
         addresses: ['123 Main St, City, State 12345'],
         wishlistProductIds: ['p1', 'p3', 'p7'],

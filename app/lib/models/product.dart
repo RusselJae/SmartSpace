@@ -15,6 +15,7 @@ class Product {
   final bool isPopular;
   final bool isNewArrival;
   final bool inStock;
+  final int inventoryQty;
   final DateTime createdAt;
 
   const Product({
@@ -34,6 +35,7 @@ class Product {
     required this.isPopular,
     required this.isNewArrival,
     required this.inStock,
+    required this.inventoryQty,
     required this.createdAt,
   });
 
@@ -55,6 +57,7 @@ class Product {
       isPopular: json['isPopular'] as bool,
       isNewArrival: json['isNewArrival'] as bool,
       inStock: json['inStock'] as bool,
+      inventoryQty: (json['inventoryQty'] ?? json['inventory_qty'] ?? 0) as int,
       createdAt: DateTime.parse(json['createdAt'] as String),
     );
   }
@@ -77,6 +80,7 @@ class Product {
       'isPopular': isPopular,
       'isNewArrival': isNewArrival,
       'inStock': inStock,
+      'inventoryQty': inventoryQty,
       'createdAt': createdAt.toIso8601String(),
     };
   }
@@ -98,6 +102,7 @@ class Product {
     bool? isPopular,
     bool? isNewArrival,
     bool? inStock,
+    int? inventoryQty,
     DateTime? createdAt,
   }) {
     return Product(
@@ -117,6 +122,7 @@ class Product {
       isPopular: isPopular ?? this.isPopular,
       isNewArrival: isNewArrival ?? this.isNewArrival,
       inStock: inStock ?? this.inStock,
+      inventoryQty: inventoryQty ?? this.inventoryQty,
       createdAt: createdAt ?? this.createdAt,
     );
   }

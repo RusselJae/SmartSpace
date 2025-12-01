@@ -31,14 +31,26 @@ dependencies:
   flutter:
     sdk: flutter
 
+  flutter_localizations:
+    sdk: flutter
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   google_fonts: ^6.3.2
   model_viewer_plus: ^1.7.2
   device_info_plus: ^10.1.0
-  mysql1: ^0.20.0
   flutter_dotenv: ^5.1.0
+  http: ^1.2.1
+  file_picker: ^8.0.5
+  image_picker: ^1.0.7
+  image: ^4.1.7
+  path: ^1.8.3
+  googleapis: ^12.0.0
+  googleapis_auth: ^2.0.0
+  vector_math: ^2.1.4
+  intl: ^0.20.2
+  shared_preferences: ^2.2.3
 
 dev_dependencies:
   flutter_test:
@@ -63,8 +75,17 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
+  # Note: Flutter doesn't support wildcards in pubspec.yaml, so each .glb file
+  # must be listed individually. When adding new models, just add a new line:
+  # - assets/your_new_model.glb
   assets:
     - assets/chair.glb
+    - assets/glass_dining_table.glb
+    - assets/loft_bed.glb
+    - assets/wooden_dining_table.glb
+    - assets/wooden_drawer.glb
+    - assets/wooden_sideboard.glb
+    - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

@@ -92,7 +92,8 @@ class _PaymentPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return CupertinoButton(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      color: selected ? CupertinoColors.activeBlue : CupertinoColors.systemGrey5,
+      // Light brown when inactive, normal brown when active
+      color: selected ? const Color(0xFF8D6E63) : const Color(0xFFBCAAA4),
       onPressed: onTap,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -114,13 +115,19 @@ class _CupertinoField extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: CupertinoColors.secondarySystemGroupedBackground,
+        color: const Color(0xFFF8F8F8),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: CupertinoColors.separator.withValues(alpha: 0.1),
+          width: 1,
+        ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: CupertinoTextField(
         controller: controller,
         placeholder: placeholder,
+        placeholderStyle: const TextStyle(color: CupertinoColors.placeholderText),
+        style: const TextStyle(color: Color(0xFF6D4C41)),
         decoration: null,
       ),
     );

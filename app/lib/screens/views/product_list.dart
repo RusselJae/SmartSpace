@@ -1,23 +1,130 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 import '../../widgets/filters_sheet.dart';
 import '../../models/product.dart';
 import 'product_detail.dart';
 import '../../services/wishlist_service.dart';
 
-class ProductListScreen extends StatelessWidget {
+/// Product list screen with search and filter functionality.
+/// Follows Apple HIG principles with clean layouts and smooth interactions.
+class ProductListScreen extends StatefulWidget {
   const ProductListScreen({super.key, required this.title, this.products});
   final String title;
   final List<Product>? products;
 
   @override
+  State<ProductListScreen> createState() => _ProductListScreenState();
+}
+
+class _ProductListScreenState extends State<ProductListScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  final WishlistService _wishlist = WishlistService();
+  
+  // Search and filter state
+  String _searchQuery = '';
+  FilterData? _activeFilters;
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen to search text changes for real-time filtering
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Opens the filters sheet and applies the returned filter data
+  Future<void> _openFilters() async {
+    final result = await FiltersSheet.show(context, initialFilters: _activeFilters);
+    if (result != null && mounted) {
+      setState(() {
+        _activeFilters = result;
+      });
+    }
+  }
+
+  /// Applies search query and filters to the product list
+  List<Product> get _filteredProducts {
+    var items = widget.products ?? const <Product>[];
+    
+    // Apply search query if present
+    if (_searchQuery.isNotEmpty) {
+      items = items.where((product) {
+        return product.name.toLowerCase().contains(_searchQuery) ||
+               product.description.toLowerCase().contains(_searchQuery) ||
+               product.category.toLowerCase().contains(_searchQuery) ||
+               product.style.toLowerCase().contains(_searchQuery) ||
+               product.material.toLowerCase().contains(_searchQuery);
+      }).toList();
+    }
+    
+    // Apply filters if active
+    if (_activeFilters != null && _activeFilters!.hasActiveFilters) {
+      items = items.where((product) {
+        // Price range filter
+        if (product.price < _activeFilters!.minPrice || 
+            product.price > _activeFilters!.maxPrice) {
+          return false;
+        }
+        
+        // Style filter
+        if (_activeFilters!.styles.isNotEmpty && 
+            !_activeFilters!.styles.contains(product.style)) {
+          return false;
+        }
+        
+        // Material filter
+        if (_activeFilters!.materials.isNotEmpty && 
+            !_activeFilters!.materials.contains(product.material)) {
+          return false;
+        }
+        
+        // Size filter
+        if (_activeFilters!.size != 'M' && product.size != _activeFilters!.size) {
+          return false;
+        }
+        
+        // Color filter - check if product color matches any selected color
+        // This is a simplified check - you may need to adjust based on your color matching logic
+        if (_activeFilters!.colors.isNotEmpty) {
+          // For now, we'll skip color filtering as it requires more complex matching
+          // You can implement color matching logic here if needed
+        }
+        
+        return true;
+      }).toList();
+    }
+    
+    return items;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final items = products ?? const <Product>[];
-    final wishlist = WishlistService();
+    final items = _filteredProducts;
 
     return CupertinoPageScaffold(
-      navigationBar: CupertinoNavigationBar(middle: Text(title)),
+      backgroundColor: Colors.white,
+      navigationBar: CupertinoNavigationBar(
+        backgroundColor: Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: CupertinoColors.separator.withValues(alpha: 0.1),
+            width: 0.5,
+          ),
+        ),
+        middle: Text(widget.title, style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+      ),
       child: SafeArea(
         bottom: false,
         child: CustomScrollView(
@@ -27,35 +134,79 @@ class ProductListScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16.0),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: CupertinoColors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x14000000),
-                        blurRadius: 8,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
+                    color: const Color(0xFFF8F8F8),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: CupertinoColors.separator.withValues(alpha: 0.1),
+                      width: 1,
+                    ),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Row(
                     children: [
-                      const Icon(CupertinoIcons.search, color: CupertinoColors.black),
-                      const SizedBox(width: 8),
-                      const Expanded(
+                      Icon(
+                        CupertinoIcons.search,
+                        color: const Color(0xFF6D4C41).withValues(alpha: 0.5),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
                         child: CupertinoTextField(
+                          controller: _searchController,
                           placeholder: 'Search products',
+                          placeholderStyle: GoogleFonts.poppins(color: CupertinoColors.placeholderText),
                           decoration: null,
-                          padding: EdgeInsets.symmetric(vertical: 10),
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          suffix: _searchQuery.isNotEmpty
+                              ? CupertinoButton(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: Size.zero,
+                                  onPressed: () {
+                                    _searchController.clear();
+                                  },
+                                  child: Icon(
+                                    CupertinoIcons.clear_circled_solid,
+                                    size: 18,
+                                    color: const Color(0xFF6D4C41).withValues(alpha: 0.5),
+                                  ),
+                                )
+                              : null,
                         ),
                       ),
-                      CupertinoButton(
-                        padding: const EdgeInsets.all(6),
-                        minimumSize: Size.zero,
-                        borderRadius: BorderRadius.circular(20),
-                        color: const Color(0xFFBCAAA4),
-                        onPressed: () => FiltersSheet.show(context),
-                        child: const Icon(CupertinoIcons.slider_horizontal_3, color: Color(0xFF4E342E)),
+                      const SizedBox(width: 8),
+                      // Filter button with indicator if filters are active
+                      Stack(
+                        children: [
+                          CupertinoButton(
+                            padding: const EdgeInsets.all(6),
+                            minimumSize: Size.zero,
+                            borderRadius: BorderRadius.circular(20),
+                            color: _activeFilters?.hasActiveFilters == true
+                                ? const Color(0xFFFF9800)
+                                : const Color(0xFFBCAAA4),
+                            onPressed: _openFilters,
+                            child: Icon(
+                              CupertinoIcons.slider_horizontal_3,
+                              color: _activeFilters?.hasActiveFilters == true
+                                  ? Colors.white
+                                  : const Color(0xFF8D6E63),
+                            ),
+                          ),
+                          // Badge indicator when filters are active
+                          if (_activeFilters?.hasActiveFilters == true)
+                            Positioned(
+                              right: 0,
+                              top: 0,
+                              child: Container(
+                                width: 8,
+                                height: 8,
+                                decoration: const BoxDecoration(
+                                  color: CupertinoColors.systemRed,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),
@@ -63,9 +214,19 @@ class ProductListScreen extends StatelessWidget {
               ),
             ),
             if (items.isEmpty)
-              const SliverFillRemaining(
+              SliverFillRemaining(
                 hasScrollBody: false,
-                child: Center(child: Text('No products found')),
+                child: Center(
+                  child: Text(
+                    'No products found',
+                    style: GoogleFonts.poppins(
+                      color: Colors.black,
+                      fontSize: 16,
+                      fontWeight: FontWeight.normal,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ),
               )
             else
               SliverPadding(
@@ -77,7 +238,8 @@ class ProductListScreen extends StatelessWidget {
                       return CupertinoButton(
                         padding: EdgeInsets.zero,
                         onPressed: () {
-                          Navigator.of(context).push(
+                          // Use rootNavigator to hide tab bar when navigating to product detail
+                          Navigator.of(context, rootNavigator: true).push(
                             CupertinoPageRoute(
                               builder: (_) => ProductDetailScreen(product: product),
                             ),
@@ -123,9 +285,9 @@ class ProductListScreen extends StatelessWidget {
                                     top: 8,
                                     right: 8,
                                     child: _OverlayIconButton(
-                                      icon: wishlist.isWishlisted(product.id) ? CupertinoIcons.heart_solid : CupertinoIcons.heart,
+                                      icon: _wishlist.isWishlisted(product.id) ? CupertinoIcons.heart_solid : CupertinoIcons.heart,
                                       onPressed: () {
-                                        wishlist.toggle(product);
+                                        _wishlist.toggle(product);
                                         HapticFeedback.selectionClick();
                                       },
                                     ),
@@ -137,7 +299,7 @@ class ProductListScreen extends StatelessWidget {
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 child: Text(
                                   product.name,
-                                  style: const TextStyle(inherit: true, fontWeight: FontWeight.w600),
+                                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -146,8 +308,8 @@ class ProductListScreen extends StatelessWidget {
                               Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 child: Text(
-                                    '\$${product.price.toStringAsFixed(0)}',
-                                  style: const TextStyle(inherit: true, color: Color(0xFF6D4C41)),
+                                  '₱${product.price.toStringAsFixed(0)}',
+                                  style: GoogleFonts.poppins(color: const Color(0xFF6D4C41)),
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -186,7 +348,7 @@ class _OverlayIconButton extends StatelessWidget {
       color: const Color(0xFFBCAAA4),
       borderRadius: BorderRadius.circular(18),
       onPressed: onPressed,
-      child: Icon(icon, size: 18, color: const Color(0xFF4E342E)),
+      child: Icon(icon, size: 18, color: const Color(0xFF8D6E63)),
     );
   }
 }

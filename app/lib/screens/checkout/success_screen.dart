@@ -1,4 +1,6 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// Order confirmation
 class SuccessScreen extends StatelessWidget {
@@ -7,20 +9,55 @@ class SuccessScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(middle: Text('Order Placed')),
+      navigationBar: CupertinoNavigationBar(
+        middle: Text(
+          'Order Placed',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+      ),
       child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(CupertinoIcons.check_mark_circled_solid, size: 64, color: CupertinoColors.activeGreen),
-            const SizedBox(height: 12),
-            const Text('Your order is confirmed!'),
-            const SizedBox(height: 24),
-            CupertinoButton(
-              onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
-              child: const Text('Back to Home'),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                CupertinoIcons.check_mark_circled_solid,
+                size: 80,
+                color: CupertinoColors.activeGreen,
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Thanks for your order!',
+                style: GoogleFonts.poppins(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black,
+                  decoration: TextDecoration.none,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Your order has been confirmed and will be processed shortly.',
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.black,
+                  decoration: TextDecoration.none,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              CupertinoButton.filled(
+                onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                child: Text(
+                  'Back to Home',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

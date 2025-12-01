@@ -45,7 +45,8 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
                 final selected = i == _selectedDateIndex;
                 return CupertinoButton(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  color: selected ? CupertinoColors.activeBlue : CupertinoColors.systemGrey5,
+                  // Light brown when inactive, normal brown when active
+                  color: selected ? const Color(0xFF8D6E63) : const Color(0xFFBCAAA4),
                   onPressed: () => setState(() => _selectedDateIndex = i),
                   child: Text(_dates[i]),
                 );
@@ -60,7 +61,8 @@ class _DeliveryScreenState extends State<DeliveryScreen> {
                 final selected = i == _selectedSlotIndex;
                 return CupertinoButton(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  color: selected ? CupertinoColors.activeBlue : CupertinoColors.systemGrey5,
+                  // Light brown when inactive, normal brown when active
+                  color: selected ? const Color(0xFF8D6E63) : const Color(0xFFBCAAA4),
                   onPressed: () => setState(() => _selectedSlotIndex = i),
                   child: Text(_slots[i]),
                 );

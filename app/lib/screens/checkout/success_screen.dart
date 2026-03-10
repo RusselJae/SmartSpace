@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../shell/tab_shell.dart';
 
 /// Order confirmation
 class SuccessScreen extends StatelessWidget {
@@ -50,7 +51,18 @@ class SuccessScreen extends StatelessWidget {
               ),
               const SizedBox(height: 32),
               CupertinoButton.filled(
-                onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                onPressed: () {
+                  // Check if we can pop before trying to navigate
+                  if (Navigator.of(context).canPop()) {
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                  } else {
+                    // If we can't pop, navigate to home using root navigator
+                    Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
+                      TabShell.route,
+                      (route) => false,
+                    );
+                  }
+                },
                 child: Text(
                   'Back to Home',
                   style: GoogleFonts.poppins(fontWeight: FontWeight.w600),

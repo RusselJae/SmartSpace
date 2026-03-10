@@ -63,12 +63,20 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
     }
   }
 
-  /// Filters reviews by status and search query.
+  /// Filters reviews by rating (lowest to highest rated products).
+  /// Filters by selected rating level and search query.
   List<Review> get _filtered {
-    var filtered = _filter == 'all'
-        ? _reviews
-        : _reviews.where((r) => r.status == _filter).toList();
+    var filtered = _reviews;
     
+    // Filter by rating if not 'all'
+    if (_filter != 'all') {
+      final ratingFilter = int.tryParse(_filter);
+      if (ratingFilter != null) {
+        filtered = filtered.where((r) => r.rating == ratingFilter).toList();
+      }
+    }
+    
+    // Apply search query filter
     if (_searchQuery.isNotEmpty) {
       filtered = filtered.where((review) {
         return review.productName.toLowerCase().contains(_searchQuery) ||
@@ -77,34 +85,10 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
       }).toList();
     }
     
+    // Sort by rating from low to high (lowest rated products first)
+    filtered.sort((a, b) => a.rating.compareTo(b.rating));
+    
     return filtered;
-  }
-
-  /// Updates review status with user feedback.
-  Future<void> _updateReviewStatus(Review review, String status) async {
-    try {
-      await _db.updateReviewStatus(review.id, status);
-      if (!mounted) return;
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Review ${status == 'published' ? 'approved' : status == 'rejected' ? 'rejected' : 'updated'}'),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-      
-      await _loadReviews();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update review: $e'),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
   }
 
   /// Shows detailed review information in a centered modal dialog.
@@ -113,7 +97,6 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
       context: context,
       builder: (context) => _ReviewDetailsDialog(
         review: review,
-        onStatusUpdate: (status) => _updateReviewStatus(review, status),
       ),
     );
   }
@@ -121,38 +104,16 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
-    final pendingCount = _reviews.where((r) => r.status == 'pending').length;
-    final flaggedCount = _reviews.where((r) => r.status == 'flagged').length;
-    
+    // NOTE:
+    // Admin reviews are now *read‑only*. We keep filters/search so admins can
+    // quickly inspect feedback, but there are no approval/reject actions.
+    // Reviews are filtered by rating (lowest to highest) to prioritize low-rated products.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AdminToolbar(
           title: 'Customer Reviews',
-          actions: [
-            if (pendingCount > 0)
-              AdminToolbarAction(
-                label: 'Approve All ($pendingCount)',
-                icon: Icons.check_circle_outline,
-                primary: true,
-                onPressed: () {
-                  // Batch approve functionality
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Batch approve coming soon')),
-                  );
-                },
-              ),
-            AdminToolbarAction(
-              label: 'Export',
-              icon: Icons.download_outlined,
-              primary: false,
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Export functionality coming soon')),
-                );
-              },
-            ),
-          ],
+          actions: const [],
           trailing: IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadReviews,
@@ -175,34 +136,6 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
                   Expanded(
                     child: Text(
                       _error!,
-                      style: const TextStyle(
-                        color: Colors.black,
-                        fontSize: 16,
-                        fontWeight: FontWeight.normal,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        if (flaggedCount > 0)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withAlpha(30),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.flag_outlined, color: Colors.orange),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '$flaggedCount ${flaggedCount == 1 ? 'review' : 'reviews'} flagged for review',
                       style: const TextStyle(
                         color: Colors.black,
                         fontSize: 16,
@@ -250,10 +183,11 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
           child: SegmentedButton<String>(
             segments: const [
               ButtonSegment<String>(value: 'all', label: Text('All')),
-              ButtonSegment<String>(value: 'pending', label: Text('Pending')),
-              ButtonSegment<String>(value: 'published', label: Text('Published')),
-              ButtonSegment<String>(value: 'flagged', label: Text('Flagged')),
-              ButtonSegment<String>(value: 'rejected', label: Text('Rejected')),
+              ButtonSegment<String>(value: '1', label: Text('1⭐')),
+              ButtonSegment<String>(value: '2', label: Text('2⭐')),
+              ButtonSegment<String>(value: '3', label: Text('3⭐')),
+              ButtonSegment<String>(value: '4', label: Text('4⭐')),
+              ButtonSegment<String>(value: '5', label: Text('5⭐')),
             ],
             selected: {_filter},
             onSelectionChanged: (Set<String> values) {
@@ -313,15 +247,6 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
                                 return _ReviewsTableRow(
                                   review: review,
                                   onTap: () => _showReviewDetails(review),
-                                  onApprove: review.status != 'published'
-                                      ? () => _updateReviewStatus(review, 'published')
-                                      : null,
-                                  onReject: review.status != 'rejected'
-                                      ? () => _updateReviewStatus(review, 'rejected')
-                                      : null,
-                                  onFlag: review.status != 'flagged'
-                                      ? () => _updateReviewStatus(review, 'flagged')
-                                      : null,
                                 );
                               },
                             ),
@@ -364,16 +289,10 @@ class _ReviewsTableRow extends StatelessWidget {
   const _ReviewsTableRow({
     required this.review,
     required this.onTap,
-    this.onApprove,
-    this.onReject,
-    this.onFlag,
   });
 
   final Review review;
   final VoidCallback onTap;
-  final VoidCallback? onApprove;
-  final VoidCallback? onReject;
-  final VoidCallback? onFlag;
 
   Color _statusColor(String status) {
     switch (status) {
@@ -454,32 +373,6 @@ class _ReviewsTableRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Wrap(
-              spacing: 4,
-              children: [
-                if (onApprove != null)
-                  IconButton(
-                    icon: const Icon(Icons.check_circle_outline, size: 18),
-                    color: const Color(0xFF27AE60),
-                    tooltip: 'Approve',
-                    onPressed: onApprove,
-                  ),
-                if (onReject != null)
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    color: Colors.redAccent,
-                    tooltip: 'Reject',
-                    onPressed: onReject,
-                  ),
-                if (onFlag != null)
-                  IconButton(
-                    icon: const Icon(Icons.flag_outlined, size: 18),
-                    color: Colors.orange,
-                    tooltip: 'Flag',
-                    onPressed: onFlag,
-                  ),
-              ],
-            ),
           ],
         ),
       ),
@@ -487,15 +380,13 @@ class _ReviewsTableRow extends StatelessWidget {
   }
 }
 
-/// Centered dialog showing detailed review information with moderation actions.
+/// Centered dialog showing detailed review information (read‑only).
 class _ReviewDetailsDialog extends StatelessWidget {
   const _ReviewDetailsDialog({
     required this.review,
-    required this.onStatusUpdate,
   });
 
   final Review review;
-  final ValueChanged<String> onStatusUpdate;
 
   @override
   Widget build(BuildContext context) {
@@ -597,39 +488,9 @@ class _ReviewDetailsDialog extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: () {
-                              onStatusUpdate('published');
-                              Navigator.of(context).pop();
-                            },
-                            icon: const Icon(Icons.check_circle_outline, size: 20),
-                            label: const Text('Approve'),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFF27AE60),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              onStatusUpdate('rejected');
-                              Navigator.of(context).pop();
-                            },
-                            icon: const Icon(Icons.close, size: 20),
-                            label: const Text('Reject'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.redAccent,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                    // Read‑only admin view: no approve / reject actions. Admins
+                    // can inspect the full review details, but all moderation
+                    // happens automatically at creation time.
                   ],
                 ),
               ),

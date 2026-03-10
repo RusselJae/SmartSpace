@@ -6,8 +6,11 @@ import 'pages/admins_admin_page.dart';
 import 'pages/orders_admin_page.dart';
 import 'pages/products_admin_page.dart';
 import 'pages/reviews_admin_page.dart';
+import 'pages/settings_admin_page.dart';
 import 'pages/users_admin_page.dart';
 import '../../services/admin_auth_service.dart';
+import '../../widgets/toast.dart';
+import '../../widgets/loading_screen.dart';
 
 class AdminShell extends StatefulWidget {
   const AdminShell({super.key});
@@ -18,7 +21,7 @@ class AdminShell extends StatefulWidget {
   State<AdminShell> createState() => _AdminShellState();
 }
 
-typedef _AdminViewBuilder = Widget Function(VoidCallback goToReviews);
+typedef _AdminViewBuilder = Widget Function(VoidCallback goToReviews, VoidCallback goToOrders);
 
 class _AdminDestination {
   const _AdminDestination({required this.label, required this.icon, required this.builder});
@@ -36,32 +39,40 @@ class _AdminShellState extends State<AdminShell> {
     _AdminDestination(
       label: 'Overview',
       icon: Icons.auto_graph_outlined,
-      builder: (goToReviews) => AdminDashboardPage(onOpenReviews: goToReviews),
+      builder: (goToReviews, goToOrders) => AdminDashboardPage(
+        onOpenReviews: goToReviews,
+        onOpenOrders: goToOrders,
+      ),
     ),
     _AdminDestination(
       label: 'Products',
       icon: Icons.chair_alt_outlined,
-      builder: (_) => const ProductsAdminPage(),
+      builder: (_, __) => const ProductsAdminPage(),
     ),
     _AdminDestination(
       label: 'Orders',
       icon: Icons.shopping_bag_outlined,
-      builder: (_) => const OrdersAdminPage(),
+      builder: (_, __) => const OrdersAdminPage(),
     ),
     _AdminDestination(
       label: 'Reviews',
       icon: Icons.reviews_outlined,
-      builder: (_) => const ReviewsAdminPage(),
+      builder: (_, __) => const ReviewsAdminPage(),
     ),
     _AdminDestination(
       label: 'Users',
       icon: Icons.group_outlined,
-      builder: (_) => const UsersAdminPage(),
+      builder: (_, __) => const UsersAdminPage(),
     ),
     _AdminDestination(
       label: 'Admins',
       icon: Icons.admin_panel_settings_outlined,
-      builder: (_) => const AdminsAdminPage(),
+      builder: (_, __) => const AdminsAdminPage(),
+    ),
+    _AdminDestination(
+      label: 'Settings',
+      icon: Icons.settings_outlined,
+      builder: (_, __) => const SettingsAdminPage(),
     ),
   ];
 
@@ -99,7 +110,10 @@ class _AdminShellState extends State<AdminShell> {
       );
     }
     final bool wide = MediaQuery.of(context).size.width >= 1100;
-    final Widget currentPage = _destinations[_index].builder(() => _selectTab(3));
+    final Widget currentPage = _destinations[_index].builder(
+      () => _selectTab(3), // Go to Reviews
+      () => _selectTab(2), // Go to Orders
+    );
 
     return Theme(
       data: buildAdminTheme(),
@@ -222,92 +236,56 @@ class _SideRail extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
             child: Row(
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(14),
+                // Logo image
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image.asset(
+                    'assets/images/logo.jpg',
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(Icons.view_in_ar_rounded, color: Colors.white),
+                    ),
                   ),
-                  child: const Icon(Icons.view_in_ar_rounded, color: Colors.white),
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'SmartSpace',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    Text(
-                      'Admin console',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: Colors.grey[600]),
-                    ),
-                  ],
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Wood Home Furniture Trading',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        'Admin console',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Colors.grey[600]),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF111827),
-                borderRadius: BorderRadius.circular(22),
-              ),
-              child: Row(
-                children: [
-                  const CircleAvatar(
-                    radius: 18,
-                    backgroundColor: Colors.white24,
-                    child: Icon(Icons.person, color: Colors.white),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Admin',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                        Text(
-                          'SmartSpace',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.white70,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.logout, size: 18, color: Colors.white),
-                    tooltip: 'Logout',
-                    onPressed: () async {
-                      await AdminAuthService().signOut();
-                      if (!context.mounted) return;
-                      if (Navigator.of(context).canPop()) {
-                        Navigator.of(context).popUntil((route) => route.isFirst);
-                      }
-                      if (!context.mounted) return;
-                      Navigator.of(context).pushReplacementNamed('/admin/login');
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -351,6 +329,54 @@ class _SideRail extends StatelessWidget {
               },
             ),
           ),
+          // Logout button at the bottom with same design as other navigation buttons
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () async {
+                  await AdminAuthService().signOut();
+                  if (!context.mounted) return;
+                  // Show loading screen before navigating to login
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                      builder: (_) => const LoadingScreen(
+                        message: 'Signing out...',
+                        nextRoute: '/admin/login',
+                      ),
+                    ),
+                    (route) => false,
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.logout,
+                        color: Colors.grey[800],
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Logout',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Colors.grey[800],
+                              fontWeight: FontWeight.w500,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -379,7 +405,7 @@ class _AdminHeaderState extends State<_AdminHeader> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('SmartSpace / ${widget.title}', style: Theme.of(context).textTheme.labelLarge),
+                  Text('Wood Home Furniture Trading / ${widget.title}', style: Theme.of(context).textTheme.labelLarge),
                   Text(
                     widget.title,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
@@ -387,10 +413,69 @@ class _AdminHeaderState extends State<_AdminHeader> {
                 ],
               ),
               const Spacer(),
-              CircleAvatar(
-                backgroundColor: AdminPalette.brown,
-                radius: 18,
-                child: const Text('SA', style: TextStyle(color: Colors.white, fontSize: 12)),
+              // Notifications button
+              IconButton(
+                icon: Stack(
+                  children: [
+                    const Icon(Icons.notifications_outlined, size: 24),
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                onPressed: () {
+                  // TODO: Implement notifications
+                  Toast.info(context, 'Notifications coming soon');
+                },
+                tooltip: 'Notifications',
+              ),
+              const SizedBox(width: 8),
+              // Account dropdown
+              PopupMenuButton<String>(
+                offset: const Offset(0, 50),
+                child: CircleAvatar(
+                  backgroundColor: AdminPalette.brown,
+                  radius: 18,
+                  child: const Text('SA', style: TextStyle(color: Colors.white, fontSize: 12)),
+                ),
+                itemBuilder: (BuildContext context) => [
+                  PopupMenuItem<String>(
+                    value: 'profile',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.person_outline, size: 20),
+                        const SizedBox(width: 12),
+                        Text('Profile Information', style: Theme.of(context).textTheme.bodyMedium),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'settings',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.settings_outlined, size: 20),
+                        const SizedBox(width: 12),
+                        Text('Settings', style: Theme.of(context).textTheme.bodyMedium),
+                      ],
+                    ),
+                  ),
+                ],
+                onSelected: (String value) {
+                  if (value == 'profile') {
+                    Toast.info(context, 'Profile Information coming soon');
+                  } else if (value == 'settings') {
+                    Toast.info(context, 'Settings coming soon');
+                  }
+                },
               ),
             ],
           ),

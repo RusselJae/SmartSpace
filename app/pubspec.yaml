@@ -46,11 +46,14 @@ dependencies:
   image_picker: ^1.0.7
   image: ^4.1.7
   path: ^1.8.3
+  qr_flutter: ^4.1.0
   googleapis: ^12.0.0
   googleapis_auth: ^2.0.0
   vector_math: ^2.1.4
   intl: ^0.20.2
   shared_preferences: ^2.2.3
+  firebase_core: ^3.6.0
+  firebase_storage: ^12.3.2
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +65,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -80,11 +84,14 @@ flutter:
   # - assets/your_new_model.glb
   assets:
     - assets/chair.glb
-    - assets/glass_dining_table.glb
+    - assets/glasss_dining_table.glb
     - assets/loft_bed.glb
     - assets/wooden_dining_table.glb
     - assets/wooden_drawer.glb
     - assets/wooden_sideboard.glb
+    - assets/philippines_addresses_sample.json
+    - assets/images/logo.jpg
+    - assets/images/qrcode.jpg
     - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
@@ -112,3 +119,12 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# Flutter Launcher Icons configuration
+# Automatically generates app icons for Android (and other platforms) from a single source image
+flutter_launcher_icons:
+  android: true
+  ios: false  # Set to true if you want iOS icons generated too
+  image_path: "assets/images/logo.jpg"
+  adaptive_icon_background: "#FFFBF7"  # Light cream background matching app theme
+  adaptive_icon_foreground: "assets/images/logo.jpg"

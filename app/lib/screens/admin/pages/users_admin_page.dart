@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../models/user.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
+import '../../../widgets/toast.dart';
 
 /// User management page with search, filtering, and detailed user views.
 /// Follows Apple HIG with clean layouts and smooth interactions.
@@ -107,18 +108,11 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
         gender: null,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User created successfully'), backgroundColor: Colors.green),
-      );
+      Toast.success(context, 'User created successfully');
       await _loadUsers();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to create user: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      Toast.error(context, 'Failed to create user: $e');
     }
   }
 
@@ -128,6 +122,28 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        AdminToolbar(
+          title: 'Customers',
+          actions: const [],
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withAlpha(30),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.redAccent),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+                ],
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Row(
@@ -179,28 +195,6 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
             ],
           ),
         ),
-        AdminToolbar(
-          title: 'Customers',
-          actions: const [],
-        ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withAlpha(30),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.redAccent),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
-                ],
-              ),
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           child: Row(
@@ -625,9 +619,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
   void _submit() {
     if (_email.text.trim().isEmpty || _fullName.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Email and full name are required')),
-      );
+      Toast.warning(context, 'Email and full name are required');
       return;
     }
     final addresses = _addresses.text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();

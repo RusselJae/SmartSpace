@@ -15,6 +15,9 @@ class User {
   final double maxBudget;
   final DateTime createdAt;
   final DateTime lastLoginAt;
+  final bool emailVerified;
+  final String? verificationToken;
+  final DateTime? verificationTokenExpires;
 
   const User({
     required this.id,
@@ -33,11 +36,38 @@ class User {
     this.maxBudget = 0,
     required this.createdAt,
     required this.lastLoginAt,
+    this.emailVerified = false,
+    this.verificationToken,
+    this.verificationTokenExpires,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
     DateTime? parseDate(String? value) =>
         value == null ? null : DateTime.tryParse(value);
+    
+    // Helper to safely parse boolean values
+    // MySQL returns 0/1 as int, JSON might return bool, int, or string
+    // This handles all possible formats from backend
+    bool parseBoolean(dynamic value) {
+      if (value == null) return false;
+      if (value is bool) return value;
+      // Handle int (0/1 from MySQL)
+      if (value is int) return value != 0;
+      // Handle num (in case it's a double or num)
+      if (value is num) return value != 0;
+      // Handle string representations
+      if (value is String) {
+        final lower = value.toLowerCase().trim();
+        return lower == 'true' || lower == '1' || lower == 'yes';
+      }
+      // Fallback: try to convert to string and check
+      try {
+        final str = value.toString().toLowerCase().trim();
+        return str == 'true' || str == '1' || str == 'yes';
+      } catch (_) {
+        return false;
+      }
+    }
 
     return User(
       id: json['id'] as String,
@@ -57,6 +87,9 @@ class User {
       maxBudget: (json['maxBudget'] as num?)?.toDouble() ?? 0,
       createdAt: parseDate(json['createdAt'] as String?) ?? DateTime.now(),
       lastLoginAt: parseDate(json['lastLoginAt'] as String?) ?? DateTime.now(),
+      emailVerified: parseBoolean(json['emailVerified']),
+      verificationToken: json['verificationToken'] as String?,
+      verificationTokenExpires: parseDate(json['verificationTokenExpires'] as String?),
     );
   }
 
@@ -78,6 +111,9 @@ class User {
       'maxBudget': maxBudget,
       'createdAt': createdAt.toIso8601String(),
       'lastLoginAt': lastLoginAt.toIso8601String(),
+      'emailVerified': emailVerified,
+      'verificationToken': verificationToken,
+      'verificationTokenExpires': verificationTokenExpires?.toIso8601String(),
     };
   }
 
@@ -98,6 +134,9 @@ class User {
     double? maxBudget,
     DateTime? createdAt,
     DateTime? lastLoginAt,
+    bool? emailVerified,
+    String? verificationToken,
+    DateTime? verificationTokenExpires,
   }) {
     return User(
       id: id ?? this.id,
@@ -116,6 +155,9 @@ class User {
       maxBudget: maxBudget ?? this.maxBudget,
       createdAt: createdAt ?? this.createdAt,
       lastLoginAt: lastLoginAt ?? this.lastLoginAt,
+      emailVerified: emailVerified ?? this.emailVerified,
+      verificationToken: verificationToken ?? this.verificationToken,
+      verificationTokenExpires: verificationTokenExpires ?? this.verificationTokenExpires,
     );
   }
 }

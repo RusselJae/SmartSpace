@@ -1,77 +1,131 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 
 /// Toast notification utility for showing messages
+/// 
+/// Designed following Apple's Human Interface Guidelines with a sleek,
+/// modern aesthetic. Features a two-section layout with header (icon, title,
+/// timestamp, close button) and message body, positioned in the top right corner.
 class Toast {
+  /// Shows a custom toast notification
+  /// 
+  /// [context] - Build context for overlay access
+  /// [message] - Main message to display
+  /// [title] - Optional title (defaults to message type)
+  /// [duration] - How long the toast should be visible
+  /// [accentColor] - Accent color for icon and borders (defaults based on type)
+  /// [icon] - Icon to display in the header
   static void show(
     BuildContext context,
     String message, {
-    Duration duration = const Duration(seconds: 2),
-    Color? backgroundColor,
-    Color? textColor,
+    String? title,
+    Duration duration = const Duration(seconds: 4),
+    Color? accentColor,
     IconData? icon,
   }) {
     final overlay = Overlay.of(context);
-    final overlayEntry = OverlayEntry(
+    late OverlayEntry overlayEntry;
+    
+    // Dismiss callback that removes the overlay entry
+    void dismiss() {
+      overlayEntry.remove();
+    }
+    
+    overlayEntry = OverlayEntry(
       builder: (context) => _ToastWidget(
         message: message,
+        title: title,
         duration: duration,
-        backgroundColor: backgroundColor ?? const Color(0xFF8D6E63),
-        textColor: textColor ?? Colors.white,
+        accentColor: accentColor ?? const Color(0xFF8D6E63),
         icon: icon,
+        onDismiss: dismiss,
       ),
     );
 
     overlay.insert(overlayEntry);
 
     Future.delayed(duration, () {
-      overlayEntry.remove();
+      if (overlayEntry.mounted) {
+        overlayEntry.remove();
+      }
     });
   }
 
-  static void success(BuildContext context, String message) {
+  /// Shows a success toast with green accent color
+  /// 
+  /// Uses a checkmark icon and green accent to indicate successful operations
+  static void success(BuildContext context, String message, {String? title}) {
     show(
       context,
       message,
-      backgroundColor: const Color(0xFF4CAF50),
+      title: title ?? 'Success',
+      accentColor: const Color(0xFF4CAF50), // Green for success
       icon: CupertinoIcons.check_mark_circled_solid,
     );
   }
 
-  static void error(BuildContext context, String message) {
+  /// Shows an error toast with red accent color
+  /// 
+  /// Uses an exclamation icon and red accent to indicate errors
+  static void error(BuildContext context, String message, {String? title}) {
     show(
       context,
       message,
-      backgroundColor: const Color(0xFFF44336),
+      title: title ?? 'Error',
+      accentColor: const Color(0xFFF44336), // Red for errors
       icon: CupertinoIcons.exclamationmark_circle_fill,
     );
   }
 
-  static void info(BuildContext context, String message) {
+  /// Shows an info toast with brown accent color
+  /// 
+  /// Uses an info icon and brown accent for informational messages
+  static void info(BuildContext context, String message, {String? title}) {
     show(
       context,
       message,
-      backgroundColor: const Color(0xFF8D6E63),
+      title: title ?? 'Info',
+      accentColor: const Color(0xFF8D6E63), // Brown for info
       icon: CupertinoIcons.info_circle_fill,
+    );
+  }
+
+  /// Shows a warning toast with orange accent color
+  /// 
+  /// Uses a warning icon and orange accent for warnings
+  static void warning(BuildContext context, String message, {String? title}) {
+    show(
+      context,
+      message,
+      title: title ?? 'Warning',
+      accentColor: const Color(0xFFFF9800), // Orange for warnings
+      icon: CupertinoIcons.exclamationmark_triangle_fill,
     );
   }
 }
 
+/// Internal widget that renders the toast notification
+/// 
+/// Implements a two-section design with header and body, following
+/// Apple's Human Interface Guidelines for modern, sleek notifications.
 class _ToastWidget extends StatefulWidget {
   const _ToastWidget({
     required this.message,
+    this.title,
     required this.duration,
-    required this.backgroundColor,
-    required this.textColor,
+    required this.accentColor,
     this.icon,
+    required this.onDismiss,
   });
 
   final String message;
+  final String? title;
   final Duration duration;
-  final Color backgroundColor;
-  final Color textColor;
+  final Color accentColor;
   final IconData? icon;
+  final VoidCallback onDismiss;
 
   @override
   State<_ToastWidget> createState() => _ToastWidgetState();
@@ -82,21 +136,30 @@ class _ToastWidgetState extends State<_ToastWidget>
   late AnimationController _controller;
   late Animation<Offset> _slideAnimation;
   late Animation<double> _fadeAnimation;
+  late Animation<double> _scaleAnimation;
+  final DateTime _timestamp = DateTime.now();
 
   @override
   void initState() {
     super.initState();
+    
+    // Spring animation controller for smooth, natural motion
+    // Following Apple HIG principles for fluid animations
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 400),
       vsync: this,
     );
+
+    // Slide animation from right (top right corner entry)
     _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, -1),
+      begin: const Offset(1.0, 0), // Start from right
       end: Offset.zero,
     ).animate(CurvedAnimation(
       parent: _controller,
-      curve: Curves.easeOut,
+      curve: Curves.easeOutCubic, // Smooth easing
     ));
+
+    // Fade animation for smooth appearance
     _fadeAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
@@ -105,11 +168,25 @@ class _ToastWidgetState extends State<_ToastWidget>
       curve: Curves.easeOut,
     ));
 
+    // Subtle scale animation for polish
+    _scaleAnimation = Tween<double>(
+      begin: 0.95,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+    ));
+
+    // Start animation
     _controller.forward();
 
+    // Auto-dismiss after duration (with fade out)
     Future.delayed(widget.duration - const Duration(milliseconds: 300), () {
       if (mounted) {
-        _controller.reverse();
+        _controller.reverse().then((_) {
+          // Remove from overlay after animation completes
+          widget.onDismiss();
+        });
       }
     });
   }
@@ -120,54 +197,169 @@ class _ToastWidgetState extends State<_ToastWidget>
     super.dispose();
   }
 
+  /// Formats the timestamp as a relative time string
+  /// 
+  /// Returns "just now", "X mins ago", etc. for user-friendly display
+  String _formatTimestamp() {
+    final now = DateTime.now();
+    final difference = now.difference(_timestamp);
+
+    if (difference.inSeconds < 60) {
+      return 'just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes} min${difference.inMinutes == 1 ? '' : 's'} ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours} hour${difference.inHours == 1 ? '' : 's'} ago';
+    } else {
+      return DateFormat('MMM d').format(_timestamp);
+    }
+  }
+
+  /// Handles manual dismissal via close button
+  /// 
+  /// Animates out and then removes the overlay entry
+  void _dismiss() {
+    _controller.reverse().then((_) {
+      // Remove from overlay after animation completes
+      widget.onDismiss();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Positioned(
+      // Position in top right corner with safe area padding
       top: MediaQuery.of(context).padding.top + 16,
-      left: 16,
       right: 16,
       child: SlideTransition(
         position: _slideAnimation,
         child: FadeTransition(
           opacity: _fadeAnimation,
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: widget.backgroundColor,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
+          child: ScaleTransition(
+            scale: _scaleAnimation,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                // Fixed width for consistent appearance
+                // Responsive to screen size but with max constraint
+                // For mobile: use 80% width, for larger screens: max 320px
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width > 600 
+                      ? 320 
+                      : MediaQuery.of(context).size.width * 0.8,
+                  minWidth: 240,
+                ),
+                decoration: BoxDecoration(
+                  // Dominant white background as requested
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  // Subtle border with accent color for visual interest
+                  border: Border.all(
+                    color: widget.accentColor.withValues(alpha: 0.2),
+                    width: 1,
                   ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (widget.icon != null) ...[
-                    Icon(
-                      widget.icon,
-                      color: widget.textColor,
-                      size: 20,
+                  // Soft shadow for depth following Apple HIG
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                      spreadRadius: 0,
                     ),
-                    const SizedBox(width: 8),
                   ],
-                  Expanded(
-                    child: Text(
-                      widget.message,
-                      style: GoogleFonts.poppins(
-                        color: widget.textColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        decoration: TextDecoration.none,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header section with icon, title, timestamp, and close button
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          // Colored icon square (rounded corners)
+                          Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: widget.accentColor,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Icon(
+                              widget.icon ?? CupertinoIcons.info_circle_fill,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          // Title text
+                          Expanded(
+                            child: Text(
+                              widget.title ?? 'Notification',
+                              style: GoogleFonts.poppins(
+                                color: const Color(0xFF1A1A1A),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ),
+                          // Timestamp
+                          Text(
+                            _formatTimestamp(),
+                            style: GoogleFonts.poppins(
+                              color: const Color(0xFF8E8E93),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w400,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          // Close button
+                          GestureDetector(
+                            onTap: _dismiss,
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              child: Icon(
+                                CupertinoIcons.xmark,
+                                size: 14,
+                                color: const Color(0xFF8E8E93),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                    // Divider line between header and body
+                    Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: const Color(0xFFE5E5EA),
+                      indent: 12,
+                      endIndent: 12,
+                    ),
+                    // Message body section
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Text(
+                        widget.message,
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xFF1A1A1A),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400,
+                          decoration: TextDecoration.none,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -176,5 +368,3 @@ class _ToastWidgetState extends State<_ToastWidget>
     );
   }
 }
-
-

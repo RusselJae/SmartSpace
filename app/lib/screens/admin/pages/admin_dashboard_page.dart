@@ -9,9 +9,10 @@ import '../admin_theme.dart';
 import '../widgets/admin_summary_card.dart';
 
 class AdminDashboardPage extends StatefulWidget {
-  const AdminDashboardPage({super.key, required this.onOpenReviews});
+  const AdminDashboardPage({super.key, required this.onOpenReviews, required this.onOpenOrders});
 
   final VoidCallback onOpenReviews;
+  final VoidCallback onOpenOrders;
 
   @override
   State<AdminDashboardPage> createState() => _AdminDashboardPageState();
@@ -111,7 +112,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       const SizedBox(width: 20),
                       Expanded(
                         flex: 2,
-                        child: _SalesOverviewCard(metrics: metrics),
+                        child: _SalesOverviewCard(orders: _orders),
                       ),
                     ],
                   )
@@ -121,7 +122,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     children: [
                       _HeroBanner(onRefresh: _loadData),
                       const SizedBox(height: 20),
-                      _SalesOverviewCard(metrics: metrics),
+                      _SalesOverviewCard(orders: _orders),
                     ],
                   ),
                 const SizedBox(height: 24),
@@ -130,6 +131,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 _OrdersSection(
                   orders: _recentOrders,
                   onRefresh: _loadData,
+                  onViewAll: widget.onOpenOrders,
                 ),
                 const SizedBox(height: 24),
                 _ReviewHealthCard(reviews: _reviews, onOpenReviews: widget.onOpenReviews),
@@ -141,37 +143,81 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  /// Builds summary metrics dynamically based on current database data.
+  /// All calculations are done from actual loaded data, making the dashboard fully dynamic.
   List<AdminSummaryMetric> _buildSummaryMetrics() {
-    final double revenue = _orders.fold(0, (sum, order) => sum + order.totalAmount);
-    final int pendingReviews = _reviews.where((review) => review.status != 'published').length;
-    final double avgTicket = _orders.isEmpty ? 0 : revenue / _orders.length;
+    // Calculate total revenue from all orders
+    final double totalRevenue = _orders.fold(0.0, (sum, order) => sum + order.totalAmount);
+    
+    // Calculate monthly revenue (current month)
+    final now = DateTime.now();
+    final currentMonthStart = DateTime(now.year, now.month, 1);
+    final double monthlyRevenue = _orders
+        .where((order) => order.createdAt.isAfter(currentMonthStart.subtract(const Duration(milliseconds: 1))) ||
+                         order.createdAt.isAtSameMomentAs(currentMonthStart))
+        .fold(0.0, (sum, order) => sum + order.totalAmount);
+    
+    // Calculate active users (users with orders in the last 30 days or recent login)
+    final thirtyDaysAgo = now.subtract(const Duration(days: 30));
+    final activeUserIds = _orders
+        .where((order) => order.createdAt.isAfter(thirtyDaysAgo))
+        .map((order) => order.userId)
+        .toSet();
+    final recentLoginUsers = _users
+        .where((user) => user.lastLoginAt.isAfter(thirtyDaysAgo))
+        .map((user) => user.id)
+        .toSet();
+    final int activeUsersCount = (activeUserIds.union(recentLoginUsers)).length;
+    
+    // Calculate total orders per month (excluding cancelled and expired)
+    final int monthlyOrders = _orders
+        .where((order) => 
+            (order.createdAt.isAfter(currentMonthStart.subtract(const Duration(milliseconds: 1))) ||
+             order.createdAt.isAtSameMomentAs(currentMonthStart)) &&
+            order.status.toLowerCase() != 'cancelled' &&
+            order.status.toLowerCase() != 'expired')
+        .length;
+    
+    // Calculate total orders (excluding cancelled and expired) for comparison
+    final int totalValidOrders = _orders
+        .where((order) => 
+            order.status.toLowerCase() != 'cancelled' &&
+            order.status.toLowerCase() != 'expired')
+        .length;
+    
+    // Calculate total products count
+    final int totalProducts = _products.length;
+    
+    // Calculate low stock products (inventory < 10)
+    final int lowStockProducts = _products.where((p) => p.inventoryQty > 0 && p.inventoryQty < 10).length;
+    
     return [
       AdminSummaryMetric(
-        title: 'Revenue',
-        value: '₱${revenue.toStringAsFixed(1)}',
-        deltaLabel: '${_orders.length} orders',
-        icon: Icons.attach_money_rounded,
+        title: 'Total Revenue',
+        value: '₱${totalRevenue.toStringAsFixed(1)}',
+        deltaLabel: '₱${monthlyRevenue.toStringAsFixed(1)} this month',
+        icon: Icons.payments_rounded,
         background: AdminPalette.brown,
       ),
       AdminSummaryMetric(
         title: 'Active users',
-        value: _users.length.toString(),
-        deltaLabel: 'Top regions: US, SG',
+        value: activeUsersCount.toString(),
+        deltaLabel: '${_users.length} total users',
         icon: Icons.group_outlined,
         background: AdminPalette.accent,
       ),
       AdminSummaryMetric(
-        title: 'Avg ticket',
-        value: '₱${avgTicket.toStringAsFixed(2)}',
-        deltaLabel: 'per order',
-        icon: Icons.shopping_basket_outlined,
+        title: 'Orders this month',
+        value: monthlyOrders.toString(),
+        deltaLabel: '$totalValidOrders total valid orders',
+        icon: Icons.shopping_bag_outlined,
         background: AdminPalette.brown,
       ),
       AdminSummaryMetric(
-        title: 'Pending reviews',
-        value: pendingReviews.toString(),
-        deltaLabel: 'Need moderation',
-        icon: Icons.rate_review_outlined,
+        title: 'Products',
+        value: totalProducts.toString(),
+        deltaLabel: lowStockProducts > 0 ? '$lowStockProducts low stock' : 'All in stock',
+        icon: Icons.inventory_2_outlined,
         background: AdminPalette.clay,
       ),
     ];
@@ -194,38 +240,41 @@ class _HeroBanner extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
       ),
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            'Fulfilment performance',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: Colors.black,
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Track catalog health, approve reviews, and keep orders flowing — all with the same warm palette.',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey[700]),
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 12,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              FilledButton.tonalIcon(
-                onPressed: onRefresh,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Refresh'),
+              Text(
+                'Dashboard',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w700,
+                    ),
               ),
-              OutlinedButton.icon(
-                onPressed: () {},
+              const SizedBox(height: 4),
+              Text(
+                'Manage your store efficiently',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: onRefresh,
+                tooltip: 'Refresh',
+              ),
+              IconButton(
                 icon: const Icon(Icons.tune),
-                label: const Text('Filters'),
+                onPressed: () {},
+                tooltip: 'Filters',
               ),
             ],
           ),
@@ -235,50 +284,75 @@ class _HeroBanner extends StatelessWidget {
   }
 }
 
-/// Compact sales overview card on the right of the hero area, similar to the
-/// "Sales Overview" block in the provided template.
+/// Compact sales overview card on the right of the hero area
+/// Shows monthly sales data with a bar chart visualization
 class _SalesOverviewCard extends StatelessWidget {
-  const _SalesOverviewCard({required this.metrics});
+  const _SalesOverviewCard({required this.orders});
 
-  final List<AdminSummaryMetric> metrics;
+  final List<OrderRecord> orders;
+
+  /// Calculate monthly sales for the current month
+  double get _monthlySales {
+    final now = DateTime.now();
+    final currentMonthStart = DateTime(now.year, now.month, 1);
+    
+    return orders
+        .where((order) => order.createdAt.isAfter(currentMonthStart) || 
+                         order.createdAt.isAtSameMomentAs(currentMonthStart))
+        .fold(0.0, (sum, order) => sum + order.totalAmount);
+  }
+
+  /// Get sales data for the last 6 months for the bar chart
+  List<double> get _monthlySalesData {
+    final now = DateTime.now();
+    final List<double> monthlyData = [];
+    
+    // Calculate sales for each of the last 6 months
+    for (int i = 5; i >= 0; i--) {
+      final monthStart = DateTime(now.year, now.month - i, 1);
+      final monthEnd = DateTime(now.year, now.month - i + 1, 1);
+      
+      final monthSales = orders
+          .where((order) => 
+              order.createdAt.isAfter(monthStart.subtract(const Duration(milliseconds: 1))) &&
+              order.createdAt.isBefore(monthEnd))
+          .fold(0.0, (sum, order) => sum + order.totalAmount);
+      
+      monthlyData.add(monthSales);
+    }
+    
+    return monthlyData;
+  }
 
   @override
   Widget build(BuildContext context) {
+    final monthlySales = _monthlySales;
+    final chartData = _monthlySalesData;
+    final maxSales = chartData.isEmpty ? 1.0 : chartData.reduce((a, b) => a > b ? a : b);
+    
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Text(
-                  'Sales overview',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.more_horiz),
-                  onPressed: () {},
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
             Text(
-              metrics.isNotEmpty ? metrics.first.value : '₱0.0',
+              'Monthly Sales',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '₱${monthlySales.toStringAsFixed(1)}',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
             ),
             const SizedBox(height: 16),
             SizedBox(
-              height: 120,
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                child: _MiniBarChart(),
-              ),
+              height: 100,
+              child: _MiniBarChart(data: chartData, maxValue: maxSales),
             ),
           ],
         ),
@@ -287,33 +361,52 @@ class _SalesOverviewCard extends StatelessWidget {
   }
 }
 
+/// Mini bar chart widget that displays monthly sales data
+/// Uses actual sales data from orders to visualize trends
 class _MiniBarChart extends StatelessWidget {
+  const _MiniBarChart({required this.data, required this.maxValue});
+
+  final List<double> data;
+  final double maxValue;
+
   @override
   Widget build(BuildContext context) {
-    final bars = [40.0, 65.0, 30.0, 80.0, 55.0, 70.0, 48.0];
+    // If no data, show empty chart
+    if (data.isEmpty || maxValue == 0) {
+      return Center(
+        child: Text(
+          'No sales data',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.grey[600],
+              ),
+        ),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final barWidth = (width - (bars.length - 1) * 8) / bars.length;
+        final barWidth = (width - (data.length - 1) * 6) / data.length;
+        final maxHeight = constraints.maxHeight;
+        
         return SizedBox(
-          height: 120,
+          height: 100,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              for (final value in bars) ...[
+              for (int i = 0; i < data.length; i++) ...[
                 Container(
                   width: barWidth,
-                  height: value + 20,
+                  // Scale height based on max value, with minimum height of 4 for visibility
+                  height: maxValue > 0 
+                      ? (data[i] / maxValue * maxHeight).clamp(4.0, maxHeight)
+                      : 4.0,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF111827), Color(0xFF4B5563)],
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                    ),
+                    borderRadius: BorderRadius.circular(6),
+                    color: const Color(0xFF8D6E63),
                   ),
                 ),
-                if (value != bars.last) const SizedBox(width: 8),
+                if (i < data.length - 1) const SizedBox(width: 6),
               ],
             ],
           ),
@@ -323,16 +416,17 @@ class _MiniBarChart extends StatelessWidget {
   }
 }
 
-/// Orders section styled closer to the template: tab-like status filters above
-/// a compact list of recent orders.
+/// Orders section with simplified design
 class _OrdersSection extends StatelessWidget {
   const _OrdersSection({
     required this.orders,
     required this.onRefresh,
+    required this.onViewAll,
   });
 
   final List<OrderRecord> orders;
   final Future<void> Function() onRefresh;
+  final VoidCallback onViewAll;
 
   @override
   Widget build(BuildContext context) {
@@ -345,26 +439,17 @@ class _OrdersSection extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  'Orders',
+                  'Recent Orders',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                 ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    orders.length.toString(),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ),
                 const Spacer(),
+                TextButton.icon(
+                  onPressed: onViewAll,
+                  icon: const Icon(Icons.arrow_forward, size: 18),
+                  label: const Text('View All'),
+                ),
                 IconButton(
                   icon: const Icon(Icons.refresh),
                   tooltip: 'Refresh',
@@ -375,86 +460,27 @@ class _OrdersSection extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: const [
-                  _OrdersFilterChip(label: 'Pending', count: 0, active: false),
-                  SizedBox(width: 8),
-                  _OrdersFilterChip(label: 'Responded', count: 0, active: false),
-                  SizedBox(width: 8),
-                  _OrdersFilterChip(label: 'Assigned', count: 0, active: true),
-                  SizedBox(width: 8),
-                  _OrdersFilterChip(label: 'Completed', count: 0, active: false),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
             if (orders.isEmpty)
-              const Text('Orders will appear here once customers start checking out.')
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: Text(
+                    'No orders yet',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey[600],
+                        ),
+                  ),
+                ),
+              )
             else
-              Column(
-                children: orders
-                    .map(
-                      (order) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: _OrderRow(order: order),
-                      ),
-                    )
-                    .toList(),
-              ),
+              ...orders.take(5).map(
+                    (order) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _OrderRow(order: order),
+                    ),
+                  ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _OrdersFilterChip extends StatelessWidget {
-  const _OrdersFilterChip({
-    required this.label,
-    required this.count,
-    required this.active,
-  });
-
-  final String label;
-  final int count;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: active ? Colors.black : const Color(0xFFF3F4F6),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: active ? Colors.white : Colors.black,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: active ? Colors.white12 : Colors.white,
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              count.toString(),
-              style: TextStyle(
-                color: active ? Colors.white : Colors.black,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -468,51 +494,73 @@ class _OrderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFFF9FAFB),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
       ),
       child: Row(
         children: [
           Expanded(
-            flex: 2,
-            child: Text(
-              '#${order.id.length >= 8 ? order.id.substring(0, 8) : order.id}',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '#${order.id.length >= 8 ? order.id.substring(0, 8) : order.id}',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  order.userName.isEmpty ? 'Guest user' : order.userName,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
             ),
           ),
           Expanded(
-            flex: 3,
-            child: Text(order.userName.isEmpty ? 'Guest user' : order.userName),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text(order.shippingAddress['city']?.toString() ?? ''),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              order.createdAt.toLocal().toString().substring(0, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '₱${order.totalAmount.toStringAsFixed(2)}',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _getStatusColor(order.status).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    order.status,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _getStatusColor(order.status),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text('₱${order.totalAmount.toStringAsFixed(2)}'),
-          ),
-          const SizedBox(width: 8),
-          Chip(
-            label: Text(order.status),
-            backgroundColor: Colors.green.withValues(alpha: 0.08),
-          ),
-          const SizedBox(width: 8),
-          OutlinedButton(
-            onPressed: () {},
-            child: const Text('See more'),
           ),
         ],
       ),
     );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'confirmed':
+        return Colors.green;
+      case 'pending':
+        return Colors.orange;
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
   }
 }
 
@@ -526,7 +574,9 @@ class _SummaryGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final int columns = constraints.maxWidth > 1100 ? 4 : constraints.maxWidth > 720 ? 2 : 1;
-        // Increased childAspectRatio to prevent overflow - cards are wider relative to height
+        // For web-based admin panel, use a lower childAspectRatio to give cards more height
+        // Lower ratio = taller cards (more vertical space)
+        // Set to 1.75 to provide 2x the height for card content without overflow
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -534,8 +584,9 @@ class _SummaryGrid extends StatelessWidget {
             crossAxisCount: columns,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
-            // Increased from 2.7 to 3.2 to make cards wider and prevent bottom overflow
-            childAspectRatio: 3.2,
+            // Decreased to 1.75 for web - gives cards 2x more height to fit content comfortably
+            // This ratio makes cards approximately 1.75x wider than they are tall (much taller cards)
+            childAspectRatio: 1.75,
           ),
           itemCount: metrics.length,
           itemBuilder: (context, index) => AdminSummaryCard(metric: metrics[index]),
@@ -551,10 +602,16 @@ class _ReviewHealthCard extends StatelessWidget {
   final List<Review> reviews;
   final VoidCallback onOpenReviews;
 
+  /// Get the latest 2 reviews sorted by creation date (newest first)
+  List<Review> get _latestReviews {
+    final sorted = List<Review>.from(reviews);
+    sorted.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return sorted.take(2).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final int pending = reviews.where((review) => review.status == 'pending').length;
-    final int flagged = reviews.where((review) => review.status == 'flagged').length;
+    final latestReviews = _latestReviews;
 
     return Card(
       child: Padding(
@@ -562,32 +619,142 @@ class _ReviewHealthCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Review moderation',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _ReviewStat(label: 'Pending approvals', value: pending.toString(), color: Colors.orange),
-                _ReviewStat(label: 'Flagged entries', value: flagged.toString(), color: Colors.red),
-                _ReviewStat(
-                  label: 'Published',
-                  value: (reviews.length - pending - flagged).toString(),
-                  color: Colors.green,
+                Text(
+                  'Review Moderation',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                TextButton.icon(
+                  onPressed: onOpenReviews,
+                  icon: const Icon(Icons.rate_review_outlined, size: 18),
+                  label: const Text('View All'),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: onOpenReviews,
-              icon: const Icon(Icons.rate_review_outlined),
-              label: const Text('Go to reviews'),
-            ),
+            if (latestReviews.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: Text(
+                    'No reviews yet',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey[600],
+                        ),
+                  ),
+                ),
+              )
+            else
+              ...latestReviews.map((review) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _LatestReviewRow(review: review),
+                  )),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Widget displaying a single latest review row
+class _LatestReviewRow extends StatelessWidget {
+  const _LatestReviewRow({required this.review});
+
+  final Review review;
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return Colors.orange;
+      case 'published':
+        return Colors.green;
+      case 'flagged':
+        return Colors.red;
+      case 'rejected':
+        return Colors.grey;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stars = List.generate(
+      5,
+      (index) => Icon(
+        index < review.rating ? Icons.star : Icons.star_border,
+        size: 14,
+        color: Colors.amber,
+      ),
+    );
+    final statusColor = _getStatusColor(review.status);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  review.productName,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    ...stars,
+                    const SizedBox(width: 4),
+                    Text(
+                      '${review.rating}/5',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'by ${review.userName.isEmpty ? 'Anonymous' : review.userName}',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+                if (review.content.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    review.content,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              review.status[0].toUpperCase() + review.status.substring(1),
+              style: TextStyle(
+                fontSize: 11,
+                color: statusColor,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -603,17 +770,21 @@ class _ReviewStat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 200,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[600],
+                ),
+          ),
+          const SizedBox(height: 8),
           Text(
             value,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(

@@ -1,4 +1,4 @@
-/// Admin model representing an administrator in the SmartSpace system.
+/// Admin model representing an administrator in the Wood Home Furniture Trading system.
 /// 
 /// Admins have full access to the admin console and can manage
 /// products, orders, reviews, users, and other admins.
@@ -45,6 +45,21 @@ class Admin {
     };
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

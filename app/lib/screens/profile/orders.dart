@@ -583,6 +583,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
+        leading: CupertinoNavigationBarBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          color: const Color(0xFF8D6E63),
+        ),
         middle: Text('Orders & Tracking', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
       ),
       child: SafeArea(

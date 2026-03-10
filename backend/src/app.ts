@@ -9,8 +9,8 @@ export const createApp = (): Application => {
   const app = express();
   ensureUploadsDirectories();
   
-  // Enhanced CORS configuration for Flutter Web
-  // Allow all localhost origins (Flutter Web uses random ports)
+  // Enhanced CORS configuration for Flutter Web and mobile devices
+  // Allows connections from localhost, local network IPv4 addresses, and mobile apps
   app.use(cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, Postman, etc.)
@@ -18,14 +18,21 @@ export const createApp = (): Application => {
         return callback(null, true);
       }
       
-      // Allow all localhost origins (any port)
+      // Allow all localhost origins (any port) - for web development
       const localhostRegex = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/;
       if (localhostRegex.test(origin)) {
         return callback(null, true);
       }
       
+      // Allow local network IPv4 addresses (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+      // This enables physical devices on the same network to connect
+      const localNetworkRegex = /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/;
+      if (localNetworkRegex.test(origin)) {
+        return callback(null, true);
+      }
+      
       // In production, you might want to check against a whitelist
-      // For development, allow all localhost
+      // For development, allow all origins to prevent connection issues
       callback(null, true);
     },
     credentials: true,
@@ -35,9 +42,16 @@ export const createApp = (): Application => {
   }));
   
   app.use(express.json({ limit: '1mb' }));
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-  app.use('/uploads', express.static(uploadsRoot));
+  // Serve uploaded files with proper CORS headers for WebXR
+  app.use('/uploads', (req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  }, express.static(uploadsRoot));
   app.use('/api', apiRouter);
 
   app.get('/', (_req, res) => {

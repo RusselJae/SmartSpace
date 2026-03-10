@@ -13,6 +13,8 @@ import '../../services/wishlist_service.dart';
 import '../../services/auth_service.dart';
 import '../../models/product.dart';
 import '../../widgets/toast.dart';
+import '../../utils/model_path_helper.dart';
+import '../../services/native_ar_editor_service.dart';
 import 'package:flutter/services.dart';
 import 'dart:developer' as developer;
 
@@ -33,7 +35,8 @@ class _CatalogHomeState extends State<CatalogHome> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   List<Product> _allProducts = [];
   List<Product> _newArrivals = [];
-  List<Product> _popularProducts = [];
+  List<Product> _topRatedProducts = [];
+  List<Product> _bestSellerProducts = [];
   bool _loading = true;
   String? _error;
 
@@ -41,6 +44,50 @@ class _CatalogHomeState extends State<CatalogHome> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   FilterData? _activeFilters;
+
+  // -------------------------------------------------------------
+  // Lightweight in-memory search suggestions
+  // -------------------------------------------------------------
+  //
+  // We derive "typeahead" style suggestions directly from the full
+  // `_allProducts` list. This means:
+  // - No extra network calls
+  // - Suggestions always reflect the same data set used elsewhere
+  // - We keep behavior consistent with the existing search filter
+  //
+  // The intent is to *preview* likely matches while typing, without
+  // changing the existing filtering behavior of the main sections.
+  // -------------------------------------------------------------
+  List<Product> get _searchSuggestions {
+    // If there is no query, we do not show any suggestion UI at all.
+    if (_searchQuery.isEmpty) return const [];
+
+    final query = _searchQuery;
+
+    // Simple scoring: we reuse the same fields as `_applyFilters`,
+    // so search behavior stays consistent with the main list.
+    final matches = _allProducts.where((product) {
+      final name = product.name.toLowerCase();
+      final description = product.description.toLowerCase();
+      final category = product.category.toLowerCase();
+      final style = product.style.toLowerCase();
+      final material = product.material.toLowerCase();
+
+      return name.contains(query) ||
+          description.contains(query) ||
+          category.contains(query) ||
+          style.contains(query) ||
+          material.contains(query);
+    }).toList();
+
+    // To keep the UI lightweight and very "Apple-style", we only
+    // surface a small handful of top matches here.
+    const maxSuggestions = 6;
+    if (matches.length <= maxSuggestions) {
+      return matches;
+    }
+    return matches.sublist(0, maxSuggestions);
+  }
 
   // Updated color palette: removed dark brown, using medium brown and orange
   static const Color _kTextPrimary = Color(0xFF6D4C41); // Medium brown for text
@@ -76,13 +123,15 @@ class _CatalogHomeState extends State<CatalogHome> {
       final results = await Future.wait([
         _db.getAllProducts(),
         _db.getNewArrivalProducts(),
-        _db.getPopularProducts(),
+        _db.getTopRatedProducts(),
+        _db.getBestSellerProducts(),
       ]);
       if (!mounted) return;
       setState(() {
         _allProducts = results[0];
         _newArrivals = results[1];
-        _popularProducts = results[2];
+        _topRatedProducts = results[2];
+        _bestSellerProducts = results[3];
         developer.log('✅ Loaded ${_allProducts.length} products from database');
       });
     } catch (e) {
@@ -115,20 +164,13 @@ class _CatalogHomeState extends State<CatalogHome> {
     }
   }
 
-  /// Applies search query and filters to a product list
+  /// Applies filters to a product list (excluding search query)
+  /// Search results are shown separately, not filtering existing sections
   List<Product> _applyFilters(List<Product> products) {
     var filtered = List<Product>.from(products);
     
-    // Apply search query if present
-    if (_searchQuery.isNotEmpty) {
-      filtered = filtered.where((product) {
-        return product.name.toLowerCase().contains(_searchQuery) ||
-               product.description.toLowerCase().contains(_searchQuery) ||
-               product.category.toLowerCase().contains(_searchQuery) ||
-               product.style.toLowerCase().contains(_searchQuery) ||
-               product.material.toLowerCase().contains(_searchQuery);
-      }).toList();
-    }
+    // Note: Search query is NOT applied here - search results are shown separately
+    // This ensures existing sections (New Arrival, Top Rated, etc.) remain visible
     
     // Apply filters if active
     if (_activeFilters != null && _activeFilters!.hasActiveFilters) {
@@ -151,11 +193,6 @@ class _CatalogHomeState extends State<CatalogHome> {
           return false;
         }
         
-        // Size filter
-        if (_activeFilters!.size != 'M' && product.size != _activeFilters!.size) {
-          return false;
-        }
-        
         return true;
       }).toList();
     }
@@ -163,39 +200,93 @@ class _CatalogHomeState extends State<CatalogHome> {
     return filtered;
   }
 
-  /// Gets filtered products for display
+  /// Gets search results (separate from filtered sections)
+  List<Product> get _searchResults {
+    if (_searchQuery.isEmpty) return [];
+    
+    var results = _allProducts.where((product) {
+      return product.name.toLowerCase().contains(_searchQuery) ||
+             product.description.toLowerCase().contains(_searchQuery) ||
+             product.category.toLowerCase().contains(_searchQuery) ||
+             product.style.toLowerCase().contains(_searchQuery) ||
+             product.material.toLowerCase().contains(_searchQuery);
+    }).toList();
+    
+    // Apply filters to search results if active
+    if (_activeFilters != null && _activeFilters!.hasActiveFilters) {
+      results = _applyFilters(results);
+    }
+    
+    return results;
+  }
+
+  /// Gets filtered products for display (without search filtering)
   List<Product> get _filteredNewArrivals => _applyFilters(_newArrivals);
-  List<Product> get _filteredPopularProducts => _applyFilters(_popularProducts);
+  List<Product> get _filteredTopRatedProducts => _applyFilters(_topRatedProducts);
+  List<Product> get _filteredBestSellerProducts => _applyFilters(_bestSellerProducts);
   
-  /// Checks if search or filters are active
-  bool get _hasActiveSearchOrFilters => 
-      _searchQuery.isNotEmpty || 
-      (_activeFilters != null && _activeFilters!.hasActiveFilters);
+  /// Checks if filters are active (search is handled separately)
+  bool get _hasActiveFilters => 
+      _activeFilters != null && _activeFilters!.hasActiveFilters;
+
+  /// Format price with commas (e.g., 25000 -> 25,000)
+  static String formatPrice(double price) {
+    final parts = price.toStringAsFixed(0).split('.');
+    final integerPart = parts[0];
+    
+    // Add commas to integer part
+    final buffer = StringBuffer();
+    for (int i = 0; i < integerPart.length; i++) {
+      if (i > 0 && (integerPart.length - i) % 3 == 0) {
+        buffer.write(',');
+      }
+      buffer.write(integerPart[i]);
+    }
+    
+    return buffer.toString();
+  }
+
+  /// Navigate to product list filtered by category
+  void _navigateToCategory(String category) {
+    final categoryProducts = _allProducts
+        .where((product) => product.category.toLowerCase() == category.toLowerCase())
+        .toList();
+    
+    Navigator.of(context, rootNavigator: true).push(
+      CupertinoPageRoute(
+        builder: (_) => ProductListScreen(
+          title: category,
+          products: categoryProducts,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Remove 'Kids' category as requested
     const categories = [
-      'Living Room', 'Dining', 'Bedroom', 'Office', 'Outdoor', 'Kids'
+      'Living Room', 'Dining', 'Bedroom', 'Office', 'Outdoor'
     ];
 
     return CupertinoPageScaffold(
       // Enhanced background with subtle gradient following Apple HIG
       backgroundColor: Colors.white,
       navigationBar: CupertinoNavigationBar(
-        // Modern navigation bar with improved styling
-        backgroundColor: Colors.white.withValues(alpha: 0.95),
+        // Solid walnut navigation bar with white title
+        backgroundColor: const Color(0xFF5C4033), // Walnut
         border: Border(
           bottom: BorderSide(
-            color: CupertinoColors.separator.withValues(alpha: 0.08),
+            color: const Color(0xFF4A3329).withValues(alpha: 0.3),
             width: 0.5,
           ),
         ),
         middle: Text(
-          'SmartSpace',
+          'Wood Home Furniture Trading',
           style: GoogleFonts.poppins(
             fontSize: 18,
             fontWeight: FontWeight.w600,
-            color: _kTextPrimary,
+            color: Colors.white,
             letterSpacing: -0.3,
           ),
         ),
@@ -267,317 +358,598 @@ class _CatalogHomeState extends State<CatalogHome> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Enhanced search bar with improved styling
-                    Container(
-                      decoration: BoxDecoration(
-                        // Subtle gradient background for depth
-                        gradient: LinearGradient(
-                          colors: [
-                            const Color(0xFFFFFBF7),
-                            const Color(0xFFF4E6D4).withValues(alpha: 0.3),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: const Color(0xFFBCAAA4).withValues(alpha: 0.2),
-                          width: 1,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF8D6E63).withValues(alpha: 0.05),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          Icon(
-                            CupertinoIcons.search,
-                            color: _kTextPrimary.withValues(alpha: 0.5),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: CupertinoTextField(
-                              controller: _searchController,
-                              placeholder: 'Search furniture or keywords',
-                              placeholderStyle: GoogleFonts.poppins(
-                                fontSize: 15,
-                                color: _kTextPrimary.withValues(alpha: 0.5),
-                              ),
-                              decoration: null,
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              style: GoogleFonts.poppins(
-                                fontSize: 15,
-                                color: _kTextPrimary,
-                                decoration: TextDecoration.none,
-                              ),
-                              suffix: _searchQuery.isNotEmpty
-                                  ? CupertinoButton(
-                                      padding: EdgeInsets.zero,
-                                      minimumSize: Size.zero,
-                                      onPressed: () {
-                                        _searchController.clear();
-                                      },
-                                      child: Icon(
-                                        CupertinoIcons.clear_circled_solid,
-                                        size: 18,
-                                        color: _kTextPrimary.withValues(alpha: 0.5),
-                                      ),
-                                    )
-                                  : null,
+                    // -------------------------------------------------------
+                    // Search bar + live suggestions
+                    // -------------------------------------------------------
+                    //
+                    // We keep the existing search bar behavior exactly the
+                    // same, and simply *layer* a lightweight suggestion
+                    // preview underneath it. This follows Apple HIG by:
+                    // - Keeping the field visually anchored at the top
+                    // - Using a soft card with subtle depth for suggestions
+                    // - Making the suggestions fully tappable rows
+                    // -------------------------------------------------------
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Primary search input
+                        Container(
+                          decoration: BoxDecoration(
+                            // Subtle gradient background for depth
+                            gradient: LinearGradient(
+                              colors: [
+                                const Color(0xFFFFFBF7),
+                                const Color(0xFFF4E6D4).withValues(alpha: 0.3),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          // Filter button with indicator if filters are active
-                          Stack(
-                            children: [
-                              CupertinoButton(
-                                padding: const EdgeInsets.all(8),
-                                minimumSize: Size.zero,
-                                borderRadius: BorderRadius.circular(10),
-                                color: _activeFilters?.hasActiveFilters == true
-                                    ? _kOrange
-                                    : _kLight,
-                                onPressed: () => _openFilters(context),
-                                child: Icon(
-                                  CupertinoIcons.slider_horizontal_3,
-                                  color: _activeFilters?.hasActiveFilters == true
-                                      ? Colors.white
-                                      : _kBrown,
-                                  size: 18,
-                                ),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: const Color(0xFFBCAAA4).withValues(alpha: 0.2),
+                              width: 1,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF8D6E63).withValues(alpha: 0.05),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
                               ),
-                              // Badge indicator when filters are active
-                              if (_activeFilters?.hasActiveFilters == true)
-                                Positioned(
-                                  right: 0,
-                                  top: 0,
-                                  child: Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: const BoxDecoration(
-                                      color: CupertinoColors.systemRed,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Categories',
-                      style: GoogleFonts.poppins(
-                        fontSize: 16,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.black,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 120,
-                child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: categories.length,
-                  itemBuilder: (context, i) {
-                    return SizedBox(
-                      width: 100,
-                      child: _CategoryTile(label: categories[i]),
-                    );
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
-                ),
-              ),
-            ),
-            // New Arrival section
-            const SliverToBoxAdapter(child: SizedBox(height: 8)),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'New Arrival',
-                      style: GoogleFonts.poppins(
-                        fontSize: 16,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.black,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    CupertinoButton(
-                      padding: EdgeInsets.zero,
-                      onPressed: () {
-                        // Use rootNavigator to hide tab bar when navigating to product list
-                        Navigator.of(context, rootNavigator: true).push(
-                          CupertinoPageRoute(
-                            builder: (_) => ProductListScreen(title: 'New Arrival Products', products: _newArrivals),
-                          ),
-                        );
-                      },
-                      child: Text(
-                        'See all',
-                        style: GoogleFonts.poppins(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: _kBrown,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 220,
-                child: _hasActiveSearchOrFilters
-                    ? _filteredNewArrivals.isEmpty
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24.0),
-                              child: Text(
-                                'No products found',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 16,
-                                  color: _kTextPrimary.withValues(alpha: 0.6),
-                                  decoration: TextDecoration.none,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          child: Row(
+                            children: [
+                              Icon(
+                                CupertinoIcons.search,
+                                color: _kTextPrimary.withValues(alpha: 0.5),
+                                size: 20,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: CupertinoTextField(
+                                  controller: _searchController,
+                                  placeholder: 'Search furniture or keywords',
+                                  placeholderStyle: GoogleFonts.poppins(
+                                    fontSize: 15,
+                                    color: _kTextPrimary.withValues(alpha: 0.5),
+                                  ),
+                                  decoration: null,
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 15,
+                                    color: _kTextPrimary,
+                                    decoration: TextDecoration.none,
+                                  ),
+                                  suffix: _searchQuery.isNotEmpty
+                                      ? CupertinoButton(
+                                          padding: EdgeInsets.zero,
+                                          minimumSize: Size.zero,
+                                          onPressed: () {
+                                            _searchController.clear();
+                                          },
+                                          child: Icon(
+                                            CupertinoIcons.clear_circled_solid,
+                                            size: 18,
+                                            color: _kTextPrimary.withValues(alpha: 0.5),
+                                          ),
+                                        )
+                                      : null,
                                 ),
                               ),
-                            ),
-                          )
-                        : ListView.separated(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            scrollDirection: Axis.horizontal,
-                            itemBuilder: (context, index) {
-                              final product = _filteredNewArrivals[index];
-                              return _HorizontalProductCard(
-                                product: product,
-                                onTap: () => _openProduct(context, product),
-                              );
-                            },
-                            separatorBuilder: (_, __) => const SizedBox(width: 12),
-                            itemCount: _filteredNewArrivals.length,
-                          )
-                    : ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        scrollDirection: Axis.horizontal,
-                        itemBuilder: (context, index) {
-                          final product = index < _newArrivals.length 
-                              ? _newArrivals[index] 
-                              : _allProducts[index % _allProducts.length];
-                          return _HorizontalProductCard(
-                            product: product,
-                            onTap: () => _openProduct(context, product),
-                          );
-                        },
-                        separatorBuilder: (_, __) => const SizedBox(width: 12),
-                        itemCount: _newArrivals.isNotEmpty ? _newArrivals.length : _allProducts.length,
-                      ),
-              ),
-            ),
-            // Popular section
-            const SliverToBoxAdapter(child: SizedBox(height: 8)),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Popular',
-                      style: GoogleFonts.poppins(
-                        fontSize: 16,
-                        fontWeight: FontWeight.normal,
-                        color: Colors.black,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    CupertinoButton(
-                      padding: EdgeInsets.zero,
-                      onPressed: () {
-                        // Use rootNavigator to hide tab bar when navigating to product list
-                        Navigator.of(context, rootNavigator: true).push(
-                          CupertinoPageRoute(
-                            builder: (_) => ProductListScreen(title: 'Popular Products', products: _popularProducts),
+                              const SizedBox(width: 8),
+                              // Filter button with indicator if filters are active
+                              Stack(
+                                children: [
+                                  CupertinoButton(
+                                    padding: const EdgeInsets.all(8),
+                                    minimumSize: Size.zero,
+                                    borderRadius: BorderRadius.circular(10),
+                                    color: _activeFilters?.hasActiveFilters == true
+                                        ? _kOrange
+                                        : _kLight,
+                                    onPressed: () => _openFilters(context),
+                                    child: Icon(
+                                      CupertinoIcons.slider_horizontal_3,
+                                      color: _activeFilters?.hasActiveFilters == true
+                                          ? Colors.white
+                                          : _kBrown,
+                                      size: 18,
+                                    ),
+                                  ),
+                                  // Badge indicator when filters are active
+                                  if (_activeFilters?.hasActiveFilters == true)
+                                    Positioned(
+                                      right: 0,
+                                      top: 0,
+                                      child: Container(
+                                        width: 8,
+                                        height: 8,
+                                        decoration: const BoxDecoration(
+                                          color: CupertinoColors.systemRed,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
                           ),
-                        );
-                      },
-                      child: Text(
-                        'See all',
+                        ),
+                        const SizedBox(height: 8),
+                        // Animated suggestion preview panel.
+                        // This collapses completely when there is no query or
+                        // when there are no matches, so the rest of the layout
+                        // (categories, sections, etc.) stays untouched.
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          child: _searchSuggestions.isEmpty
+                              ? const SizedBox.shrink()
+                              : Container(
+                                  key: const ValueKey('catalog_search_suggestions'),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: const Color(0xFFBCAAA4).withValues(alpha: 0.2),
+                                      width: 1,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.04),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: _searchSuggestions.map((product) {
+                                      return CupertinoButton(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                        borderRadius: BorderRadius.zero,
+                                        onPressed: () {
+                                          // Keep the text field in sync with the tapped suggestion
+                                          // and open the existing product detail screen.
+                                          _searchController.text = product.name;
+                                          _openProduct(context, product);
+                                        },
+                                        child: Row(
+                                          children: [
+                                            // Small circular thumb-style preview using the same model
+                                            Container(
+                                              width: 32,
+                                              height: 32,
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFF9F4EF),
+                                                borderRadius: BorderRadius.circular(999),
+                                              ),
+                                              clipBehavior: Clip.hardEdge,
+                                              child: ModelViewer(
+                                                key: ValueKey('${product.id}_suggestion'),
+                                                backgroundColor: const Color(0xFFF9F4EF),
+                                                src: ModelPathHelper.normalize(product.modelPath),
+                                                alt: 'Preview of ${product.name}',
+                                                ar: false,
+                                                autoRotate: false,
+                                                cameraControls: false,
+                                                disableZoom: true,
+                                                interactionPrompt: InteractionPrompt.none,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    product.name,
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: GoogleFonts.poppins(
+                                                      fontSize: 14,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: _kTextPrimary,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    '${product.category} • ₱${_CatalogHomeState.formatPrice(product.price)}',
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: GoogleFonts.poppins(
+                                                      fontSize: 11,
+                                                      color: _kTextPrimary.withValues(alpha: 0.6),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
+                    // Categories section (only shown when not searching)
+                    if (_searchQuery.isEmpty) ...[
+                      const SizedBox(height: 24),
+                      Text(
+                        'Categories',
                         style: GoogleFonts.poppins(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: _kBrown,
+                          fontSize: 16,
+                          fontWeight: FontWeight.normal,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
                         ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
             ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 220,
-                child: _hasActiveSearchOrFilters
-                    ? _filteredPopularProducts.isEmpty
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24.0),
-                              child: Text(
-                                'No products found',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 16,
-                                  color: _kTextPrimary.withValues(alpha: 0.6),
-                                  decoration: TextDecoration.none,
-                                ),
+            // Categories horizontal list (only shown when not searching)
+            if (_searchQuery.isEmpty)
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 120,
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    scrollDirection: Axis.horizontal,
+                    itemCount: categories.length,
+                    itemBuilder: (context, i) {
+                      return SizedBox(
+                        width: 100,
+                        child: _CategoryTile(
+                          label: categories[i],
+                          onTap: () => _navigateToCategory(categories[i]),
+                        ),
+                      );
+                    },
+                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  ),
+                ),
+              ),
+            // Search Results section (shown when searching)
+            if (_searchQuery.isNotEmpty) ...[
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Search Results',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: _kTextPrimary,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                      Text(
+                        '${_searchResults.length} ${_searchResults.length == 1 ? 'result' : 'results'}',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          fontWeight: FontWeight.normal,
+                          color: _kTextPrimary.withValues(alpha: 0.6),
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 220,
+                  child: _searchResults.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24.0),
+                            child: Text(
+                              'No products found',
+                              style: GoogleFonts.poppins(
+                                fontSize: 16,
+                                color: _kTextPrimary.withValues(alpha: 0.6),
+                                decoration: TextDecoration.none,
                               ),
                             ),
-                          )
-                        : ListView.separated(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            scrollDirection: Axis.horizontal,
-                            itemBuilder: (context, index) {
-                              final product = _filteredPopularProducts[index];
-                              return _HorizontalProductCard(
-                                product: product,
-                                onTap: () => _openProduct(context, product),
-                              );
-                            },
-                            separatorBuilder: (_, __) => const SizedBox(width: 12),
-                            itemCount: _filteredPopularProducts.length,
-                          )
-                    : ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        scrollDirection: Axis.horizontal,
-                        itemBuilder: (context, index) {
-                          final product = index < _popularProducts.length 
-                              ? _popularProducts[index] 
-                              : _allProducts[index % _allProducts.length];
-                          return _HorizontalProductCard(
-                            product: product,
-                            onTap: () => _openProduct(context, product),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          scrollDirection: Axis.horizontal,
+                          itemBuilder: (context, index) {
+                            final product = _searchResults[index];
+                            return _HorizontalProductCard(
+                              product: product,
+                              onTap: () => _openProduct(context, product),
+                            );
+                          },
+                          separatorBuilder: (_, __) => const SizedBox(width: 12),
+                          itemCount: _searchResults.length,
+                        ),
+                ),
+              ),
+            ],
+            // New Arrival section (always shows all products, not filtered by search)
+            if (_searchQuery.isEmpty) ...[
+              const SliverToBoxAdapter(child: SizedBox(height: 8)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'New Arrival',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.normal,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: () {
+                          // Use rootNavigator to hide tab bar when navigating to product list
+                          Navigator.of(context, rootNavigator: true).push(
+                            CupertinoPageRoute(
+                              builder: (_) => ProductListScreen(title: 'New Arrival Products', products: _newArrivals),
+                            ),
                           );
                         },
-                        separatorBuilder: (_, __) => const SizedBox(width: 12),
-                        itemCount: _popularProducts.isNotEmpty ? _popularProducts.length : _allProducts.length,
+                        child: Text(
+                          'See all',
+                          style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: _kBrown,
+                          ),
+                        ),
                       ),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 220,
+                  child: _hasActiveFilters
+                      ? _filteredNewArrivals.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24.0),
+                                child: Text(
+                                  'No products found',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 16,
+                                    color: _kTextPrimary.withValues(alpha: 0.6),
+                                    decoration: TextDecoration.none,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              scrollDirection: Axis.horizontal,
+                              itemBuilder: (context, index) {
+                                final product = _filteredNewArrivals[index];
+                                return _HorizontalProductCard(
+                                  product: product,
+                                  onTap: () => _openProduct(context, product),
+                                );
+                              },
+                              separatorBuilder: (_, __) => const SizedBox(width: 12),
+                              itemCount: _filteredNewArrivals.length,
+                            )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          scrollDirection: Axis.horizontal,
+                          itemBuilder: (context, index) {
+                            final product = index < _newArrivals.length 
+                                ? _newArrivals[index] 
+                                : _allProducts[index % _allProducts.length];
+                            return _HorizontalProductCard(
+                              product: product,
+                              onTap: () => _openProduct(context, product),
+                            );
+                          },
+                          separatorBuilder: (_, __) => const SizedBox(width: 12),
+                          itemCount: _newArrivals.isNotEmpty ? _newArrivals.length : _allProducts.length,
+                        ),
+                ),
+              ),
+            ],
+            // Top Rated section (only shown when not searching)
+            if (_searchQuery.isEmpty) ...[
+              const SliverToBoxAdapter(child: SizedBox(height: 8)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Top Rated',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.normal,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: () {
+                          // Use rootNavigator to hide tab bar when navigating to product list
+                          Navigator.of(context, rootNavigator: true).push(
+                            CupertinoPageRoute(
+                              builder: (_) => ProductListScreen(title: 'Top Rated Products', products: _topRatedProducts),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          'See all',
+                          style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: _kBrown,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 220,
+                  child: _hasActiveFilters
+                      ? _filteredTopRatedProducts.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24.0),
+                                child: Text(
+                                  'No products found',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 16,
+                                    color: _kTextPrimary.withValues(alpha: 0.6),
+                                    decoration: TextDecoration.none,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              scrollDirection: Axis.horizontal,
+                              itemBuilder: (context, index) {
+                                final product = _filteredTopRatedProducts[index];
+                                return _HorizontalProductCard(
+                                  product: product,
+                                  onTap: () => _openProduct(context, product),
+                                );
+                              },
+                              separatorBuilder: (_, __) => const SizedBox(width: 12),
+                              itemCount: _filteredTopRatedProducts.length,
+                            )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          scrollDirection: Axis.horizontal,
+                          itemBuilder: (context, index) {
+                            final product = index < _topRatedProducts.length 
+                                ? _topRatedProducts[index] 
+                                : _allProducts[index % _allProducts.length];
+                            return _HorizontalProductCard(
+                              product: product,
+                              onTap: () => _openProduct(context, product),
+                            );
+                          },
+                          separatorBuilder: (_, __) => const SizedBox(width: 12),
+                          itemCount: _topRatedProducts.isNotEmpty ? _topRatedProducts.length : _allProducts.length,
+                        ),
+                ),
+              ),
+            ],
+            // Best Seller section (only shown when not searching)
+            if (_searchQuery.isEmpty) ...[
+              const SliverToBoxAdapter(child: SizedBox(height: 8)),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Best Seller',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.normal,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: () {
+                          // Use rootNavigator to hide tab bar when navigating to product list
+                          Navigator.of(context, rootNavigator: true).push(
+                            CupertinoPageRoute(
+                              builder: (_) => ProductListScreen(title: 'Best Seller Products', products: _bestSellerProducts),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          'See all',
+                          style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: _kBrown,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 220,
+                  child: _hasActiveFilters
+                      ? _filteredBestSellerProducts.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24.0),
+                                child: Text(
+                                  'No products found',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 16,
+                                    color: _kTextPrimary.withValues(alpha: 0.6),
+                                    decoration: TextDecoration.none,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              scrollDirection: Axis.horizontal,
+                              itemBuilder: (context, index) {
+                                final product = _filteredBestSellerProducts[index];
+                                return _HorizontalProductCard(
+                                  product: product,
+                                  onTap: () => _openProduct(context, product),
+                                );
+                              },
+                              separatorBuilder: (_, __) => const SizedBox(width: 12),
+                              itemCount: _filteredBestSellerProducts.length,
+                            )
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          scrollDirection: Axis.horizontal,
+                          itemBuilder: (context, index) {
+                            final product = index < _bestSellerProducts.length 
+                                ? _bestSellerProducts[index] 
+                                : _allProducts[index % _allProducts.length];
+                            return _HorizontalProductCard(
+                              product: product,
+                              onTap: () => _openProduct(context, product),
+                            );
+                          },
+                          separatorBuilder: (_, __) => const SizedBox(width: 12),
+                          itemCount: _bestSellerProducts.isNotEmpty ? _bestSellerProducts.length : _allProducts.length,
+                        ),
+                ),
+              ),
+            ],
             // Add bottom padding to prevent content from being blocked by tab bar
             // Tab bar height is 70px, so we add extra padding for comfortable spacing
             const SliverToBoxAdapter(child: SizedBox(height: 90)),
@@ -589,8 +961,9 @@ class _CatalogHomeState extends State<CatalogHome> {
 }
 
 class _CategoryTile extends StatelessWidget {
-  const _CategoryTile({required this.label});
+  const _CategoryTile({required this.label, required this.onTap});
   final String label;
+  final VoidCallback onTap;
 
   IconData _iconForLabel() {
     switch (label) {
@@ -604,8 +977,6 @@ class _CategoryTile extends StatelessWidget {
         return CupertinoIcons.briefcase_fill;
       case 'Outdoor':
         return CupertinoIcons.tree;
-      case 'Kids':
-        return CupertinoIcons.person_2_fill;
       default:
         return CupertinoIcons.square_grid_2x2;
     }
@@ -615,7 +986,7 @@ class _CategoryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return CupertinoButton(
       padding: EdgeInsets.zero,
-      onPressed: () {},
+      onPressed: onTap,
       child: Container(
         width: double.infinity,
         height: double.infinity,
@@ -707,6 +1078,14 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
   final CartService _cart = CartService();
   final AuthService _auth = AuthService();
 
+  /// Launches the native Kotlin AR editor for this product.
+  ///
+  /// This matches the grid card behavior so all product AR buttons feel
+  /// consistent across the app.
+  Future<void> _openNativeArEditor() {
+    return NativeArEditorService.openForProduct(widget.product);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -754,6 +1133,7 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
     Toast.success(context, '${widget.product.name} added to cart');
   }
 
+
   @override
   Widget build(BuildContext context) {
     final isWishlisted = _wishlist.isWishlisted(widget.product.id);
@@ -791,24 +1171,29 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Product image with overlay buttons
+            // Product image with overlay buttons - make image area clickable
             Stack(
               children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                  child: SizedBox(
-                    height: 140,
-                    width: double.infinity,
-                    child: ModelViewer(
-                      key: ValueKey('${widget.product.id}_preview'),
-                      backgroundColor: const Color(0xFFF9F4EF),
-                      src: widget.product.modelPath,
-                      alt: 'Preview of ${widget.product.name}',
-                      ar: false,
-                      autoRotate: false,
-                      cameraControls: false,
-                      disableZoom: true,
-                      interactionPrompt: InteractionPrompt.none,
+                // Make the image area clickable by wrapping ModelViewer in GestureDetector
+                GestureDetector(
+                  onTap: widget.onTap,
+                  behavior: HitTestBehavior.opaque, // Make entire area tappable
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                    child: SizedBox(
+                      height: 140,
+                      width: double.infinity,
+                      child: ModelViewer(
+                        key: ValueKey('${widget.product.id}_preview'),
+                        backgroundColor: const Color(0xFFF9F4EF),
+                        src: ModelPathHelper.normalize(widget.product.modelPath),
+                        alt: 'Preview of ${widget.product.name}',
+                        ar: false,
+                        autoRotate: false,
+                        cameraControls: false,
+                        disableZoom: true,
+                        interactionPrompt: InteractionPrompt.none,
+                      ),
                     ),
                   ),
                 ),
@@ -846,47 +1231,72 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
                     ),
                   ),
                 ),
+                // AR Editor button at bottom right (per request)
+                Positioned(
+                  bottom: 8,
+                  right: 8,
+                  child: CupertinoButton(
+                    padding: const EdgeInsets.all(6),
+                    minimumSize: Size.zero,
+                    color: Colors.white.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(18),
+                    onPressed: _openNativeArEditor,
+                    child: const Icon(
+                      CupertinoIcons.cube_box,
+                      size: 18,
+                      color: Color(0xFF8D6E63),
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Text(
-                widget.product.name,
-                style: GoogleFonts.poppins(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                  color: _CatalogHomeState._kTextPrimary,
+            // Product name - also clickable
+            GestureDetector(
+              onTap: widget.onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Text(
+                  widget.product.name,
+                  style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: _CatalogHomeState._kTextPrimary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ),
             const SizedBox(height: 3),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '₱${widget.product.price.toStringAsFixed(0)}',
-                    style: GoogleFonts.poppins(
-                      color: _CatalogHomeState._kBrown,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
+            // Price and quantity - also clickable
+            GestureDetector(
+              onTap: widget.onTap,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '₱${_CatalogHomeState.formatPrice(widget.product.price)}',
+                      style: GoogleFonts.poppins(
+                        color: _CatalogHomeState._kBrown,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 1),
-                  Text(
-                    'Qty: ${widget.product.inventoryQty}',
-                    style: GoogleFonts.poppins(
-                      fontSize: 10,
-                      color: _CatalogHomeState._kTextPrimary.withValues(alpha: 0.6),
-                      fontWeight: FontWeight.normal,
+                    const SizedBox(height: 1),
+                    Text(
+                      'Qty: ${widget.product.inventoryQty}',
+                      style: GoogleFonts.poppins(
+                        fontSize: 10,
+                        color: _CatalogHomeState._kTextPrimary.withValues(alpha: 0.6),
+                        fontWeight: FontWeight.normal,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],

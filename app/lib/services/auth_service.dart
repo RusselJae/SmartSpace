@@ -83,13 +83,52 @@ class AuthService {
       if (response.statusCode == 201) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
         if (decoded['success'] == true && decoded['data'] != null) {
-          _currentUser = User.fromJson(decoded['data'] as Map<String, dynamic>);
-          await _persistUser(_currentUser!);
-          await CartService().syncWithUser(_currentUser?.id);
-          developer.log('✅ User signed up successfully: ${_currentUser?.email}');
-          return _currentUser!;
+          try {
+            // Parse user data with detailed error handling
+            final userData = decoded['data'] as Map<String, dynamic>;
+            developer.log('📦 User data from backend: $userData');
+            
+            // Check emailVerified field specifically
+            if (userData.containsKey('emailVerified')) {
+              developer.log('📧 emailVerified value: ${userData['emailVerified']} (type: ${userData['emailVerified'].runtimeType})');
+            }
+            
+            _currentUser = User.fromJson(userData);
+            await _persistUser(_currentUser!);
+            await CartService().syncWithUser(_currentUser?.id);
+            developer.log('✅ User signed up successfully: ${_currentUser?.email}');
+            return _currentUser!;
+          } catch (parseError) {
+            developer.log('❌ Failed to parse user data: $parseError');
+            developer.log('   Raw user data: ${decoded['data']}');
+            rethrow;
+          }
         }
       }
+      
+      // Handle specific error responses from backend
+      // 409 Conflict - typically means email already exists
+      if (response.statusCode == 409) {
+        try {
+          final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+          final message = decoded['message'] as String? ?? 'Email address is already taken';
+          throw Exception(message);
+        } catch (_) {
+          throw Exception('Email address is already taken');
+        }
+      }
+      
+      // Try to extract error message from response body if it's JSON
+      try {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final message = decoded['message'] as String?;
+        if (message != null) {
+          throw Exception(message);
+        }
+      } catch (_) {
+        // If parsing fails, use the raw response body
+      }
+      
       throw Exception('Failed to sign up: ${response.body}');
     } catch (e) {
       developer.log('❌ Sign up failed: $e');
@@ -98,6 +137,7 @@ class AuthService {
   }
 
   /// Sign in an existing user (checks if user exists by email)
+  /// Also verifies that the user's email has been verified before allowing login
   Future<User> signIn({
     required String email,
     required String password,
@@ -121,6 +161,12 @@ class AuthService {
             orElse: () => throw Exception('Invalid username or password'),
           );
 
+          // Check if email is verified - users cannot login until they verify their email
+          if (!user.emailVerified) {
+            developer.log('⚠️ Login blocked: Email not verified for ${user.email}');
+            throw Exception('Please verify your email address before signing in. Check your inbox for the verification email.');
+          }
+
           _currentUser = user;
           await _persistUser(user);
           await CartService().syncWithUser(_currentUser?.id);
@@ -131,7 +177,8 @@ class AuthService {
       throw Exception('Invalid username or password');
     } catch (e) {
       developer.log('❌ Sign in failed: $e');
-      throw Exception('Invalid username or password');
+      // Re-throw the exception with the original message (especially for email verification errors)
+      rethrow;
     }
   }
 
@@ -156,6 +203,108 @@ class AuthService {
     developer.log('🔐 Signing in with Facebook...');
     // TODO: Implement Facebook Login
     throw UnimplementedError('Facebook Login not yet implemented');
+  }
+
+  /// Verify user email using verification token
+  /// Called when user clicks the verification link in their email
+  Future<User> verifyEmail(String token) async {
+    developer.log('✉️ Verifying email with token');
+    
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/users/verify-email').replace(
+        queryParameters: {'token': token},
+      );
+      final response = await _client.get(uri).timeout(ApiConfig.timeout);
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['success'] == true && decoded['data'] != null) {
+          final user = User.fromJson(decoded['data'] as Map<String, dynamic>);
+          
+          // Update current user if it's the same user
+          if (_currentUser?.id == user.id) {
+            _currentUser = user;
+            await _persistUser(user);
+          }
+          
+          developer.log('✅ Email verified successfully: ${user.email}');
+          return user;
+        }
+      }
+      throw Exception('Failed to verify email');
+    } catch (e) {
+      developer.log('❌ Email verification failed: $e');
+      rethrow;
+    }
+  }
+
+  /// Verify user email using verification code
+  /// Called when user manually enters the verification code
+  Future<User> verifyEmailByCode(String code) async {
+    developer.log('✉️ Verifying email with code');
+    
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/users/verify-email-code');
+      final response = await _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'code': code.trim().toUpperCase()}),
+      ).timeout(ApiConfig.timeout);
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['success'] == true && decoded['data'] != null) {
+          final user = User.fromJson(decoded['data'] as Map<String, dynamic>);
+          
+          // Update current user if it's the same user
+          if (_currentUser?.id == user.id) {
+            _currentUser = user;
+            await _persistUser(user);
+          }
+          
+          developer.log('✅ Email verified successfully with code: ${user.email}');
+          return user;
+        }
+      }
+      
+      // Try to extract error message
+      try {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final message = decoded['message'] as String?;
+        if (message != null) {
+          throw Exception(message);
+        }
+      } catch (_) {
+        // If parsing fails, use default message
+      }
+      
+      throw Exception('Invalid or expired verification code');
+    } catch (e) {
+      developer.log('❌ Email verification failed: $e');
+      rethrow;
+    }
+  }
+
+  /// Resend verification email for a user
+  Future<void> resendVerificationEmail(String userId) async {
+    developer.log('📧 Resending verification email for user: $userId');
+    
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/users/$userId/resend-verification');
+      final response = await _client.post(uri).timeout(ApiConfig.timeout);
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['success'] == true) {
+          developer.log('✅ Verification email resent successfully');
+          return;
+        }
+      }
+      throw Exception('Failed to resend verification email');
+    } catch (e) {
+      developer.log('❌ Failed to resend verification email: $e');
+      rethrow;
+    }
   }
 }
 

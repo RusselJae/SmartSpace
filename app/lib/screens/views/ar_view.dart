@@ -2,9 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../services/ar_support_service.dart';
+import '../../utils/model_path_helper.dart';
 
 class ArViewScreen extends StatelessWidget {
   const ArViewScreen({
@@ -12,11 +12,17 @@ class ArViewScreen extends StatelessWidget {
     required this.modelSrc,
     required this.altText,
     this.initialMode,
+    this.realWidthMeters,
+    this.realHeightMeters,
+    this.realDepthMeters,
   });
 
   final String modelSrc;
   final String altText;
   final ArViewMode? initialMode;
+  final double? realWidthMeters;
+  final double? realHeightMeters;
+  final double? realDepthMeters;
 
   static const String route = '/ar-view';
 
@@ -31,6 +37,9 @@ class ArViewScreen extends StatelessWidget {
           modelSrc: modelSrc,
           altText: altText,
           initialMode: initialMode,
+          realWidthMeters: realWidthMeters,
+          realHeightMeters: realHeightMeters,
+          realDepthMeters: realDepthMeters,
         ),
       ),
     );
@@ -90,11 +99,21 @@ class ArModelDimensions {
 }
 
 class _ArBody extends StatefulWidget {
-  const _ArBody({required this.modelSrc, required this.altText, this.initialMode});
+  const _ArBody({
+    required this.modelSrc,
+    required this.altText,
+    this.initialMode,
+    this.realWidthMeters,
+    this.realHeightMeters,
+    this.realDepthMeters,
+  });
 
   final String modelSrc;
   final String altText;
   final ArViewMode? initialMode;
+  final double? realWidthMeters;
+  final double? realHeightMeters;
+  final double? realDepthMeters;
 
   @override
   State<_ArBody> createState() => _ArBodyState();
@@ -150,6 +169,11 @@ class _ArBodyState extends State<_ArBody> {
     }
 
     // Layout keeps the viewer flexible while reserving room for status hints.
+    //
+    // NOTE ABOUT LANDSCAPE (Apple HIG):
+    // - In landscape, people expect "content-first" layouts where the primary
+    //   canvas stays large and supporting controls move to a side rail.
+    // - This also avoids the "short + cramped" stacked-column feel on phones.
     final bool supportsArCore = _capability.enableAr && _capability.supportsSceneViewer;
     final bool supportsWebXr = _capability.enableAr && _capability.supportsWebXr;
 
@@ -166,57 +190,102 @@ class _ArBodyState extends State<_ArBody> {
         break;
     }
 
-    return Column(
-      children: <Widget>[
-        // --- AR / 3D canvas --------------------------------------------------
-        Expanded(
-          child: ModelViewer(
-            src: widget.modelSrc,
-            alt: widget.altText,
-            ar: arEnabledForMode,
-            arModes: arModes,
-            arPlacement: ArPlacement.floor,
-            arScale: ArScale.auto,
-            cameraControls: true,
-            autoRotate: false,
-            disableZoom: false,
-            touchAction: TouchAction.none,
-            iosSrc: null,
-            backgroundColor: const Color(0xFFFFFFFF),
-            id: _viewerId,
-            // Inject custom JS so we can query `<model-viewer>` for its live
-            // bounding-box and current scale factors.
-            relatedJs: _dimensionProbeScript,
-            javascriptChannels: <JavascriptChannel>{
-              JavascriptChannel(
-                _dimensionChannelName,
-                onMessageReceived: _handleDimensionMessage,
+    // --- Shared: the 3D / AR canvas -----------------------------------------
+    final Widget viewer = ModelViewer(
+      src: ModelPathHelper.normalize(widget.modelSrc),
+      alt: widget.altText,
+      ar: arEnabledForMode,
+      arModes: arModes,
+      arPlacement: ArPlacement.floor,
+      arScale: ArScale.auto,
+      cameraControls: true,
+      autoRotate: false,
+      disableZoom: false,
+      touchAction: TouchAction.none,
+      iosSrc: null,
+      backgroundColor: const Color(0xFFFFFFFF),
+      id: _viewerId,
+      // Inject custom JS so we can query `<model-viewer>` for its live
+      // bounding-box and current scale factors.
+      relatedJs: _dimensionProbeScript,
+      javascriptChannels: <JavascriptChannel>{
+        JavascriptChannel(
+          _dimensionChannelName,
+          onMessageReceived: (dynamic message) {
+            // Extract message string from the callback parameter
+            final String messageStr = message is String ? message : (message?.toString() ?? '{}');
+            _handleDimensionMessage(messageStr);
+          },
+        ),
+      },
+    );
+
+    // --- Shared: supporting UI panels ---------------------------------------
+    final List<Widget> panels = <Widget>[
+      _DimensionReadout(
+        dimensions: _dimensions,
+        realWidthMeters: widget.realWidthMeters,
+        realHeightMeters: widget.realHeightMeters,
+        realDepthMeters: widget.realDepthMeters,
+      ),
+      _ModeToggleBar(
+        activeMode: _mode,
+        supportsArCore: supportsArCore,
+        supportsWebXr: supportsWebXr,
+        onModeChanged: (ArViewMode mode) => setState(() => _mode = mode),
+      ),
+      _CapabilityBanner(
+        capability: _capability,
+        onRetry: _resolveArSupport,
+      ),
+    ];
+
+    // --- Responsive composition ---------------------------------------------
+    return OrientationBuilder(
+      builder: (BuildContext context, Orientation orientation) {
+        final bool isLandscape = orientation == Orientation.landscape;
+
+        // Portrait: classic stacked layout (works well on narrow phones).
+        if (!isLandscape) {
+          return Column(
+            children: <Widget>[
+              Expanded(child: viewer),
+              ...panels,
+            ],
+          );
+        }
+
+        // Landscape: keep the viewer big, move controls into a side rail.
+        //
+        // This matches Apple HIG expectations for wide layouts (primary content
+        // on the left, controls on the right) and prevents the bottom stack from
+        // feeling cramped.
+        return Row(
+          children: <Widget>[
+            Expanded(child: viewer),
+            SizedBox(
+              width: 360,
+              child: SafeArea(
+                left: false,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: panels,
+                  ),
+                ),
               ),
-            },
-          ),
-        ),
-        // --- Dimension readout -----------------------------------------------
-        _DimensionReadout(dimensions: _dimensions),
-        // --- Mode toggles ----------------------------------------------------
-        _ModeToggleBar(
-          activeMode: _mode,
-          supportsArCore: supportsArCore,
-          supportsWebXr: supportsWebXr,
-          onModeChanged: (ArViewMode mode) => setState(() => _mode = mode),
-        ),
-        // --- Status / fallback hints ----------------------------------------
-        _CapabilityBanner(
-          capability: _capability,
-          onRetry: _resolveArSupport,
-        ),
-      ],
+            ),
+          ],
+        );
+      },
     );
   }
 
   /// Consumes payloads from the JavaScript bridge and hydrates [_dimensions].
-  void _handleDimensionMessage(JavaScriptMessage message) {
+  void _handleDimensionMessage(String message) {
     try {
-      final Map<String, dynamic> payload = jsonDecode(message.message) as Map<String, dynamic>;
+      final Map<String, dynamic> payload = jsonDecode(message) as Map<String, dynamic>;
       final ArModelDimensions latest = ArModelDimensions.fromJson(payload);
       if (!mounted) return;
       setState(() => _dimensions = latest);
@@ -232,7 +301,7 @@ class _ArBodyState extends State<_ArBody> {
   const viewer = document.getElementById('$_viewerId');
   const channelName = '$_dimensionChannelName';
   if (!viewer) {
-    console.warn('[SmartSpace][AR] Missing viewer for dimension bridge.');
+    console.warn('[Wood Home Furniture Trading][AR] Missing viewer for dimension bridge.');
     return;
   }
 
@@ -422,9 +491,17 @@ class _CapabilityBanner extends StatelessWidget {
 
 /// Compact summary card that mirrors Apple HIG spacing + typography guidance.
 class _DimensionReadout extends StatelessWidget {
-  const _DimensionReadout({required this.dimensions});
+  const _DimensionReadout({
+    required this.dimensions,
+    this.realWidthMeters,
+    this.realHeightMeters,
+    this.realDepthMeters,
+  });
 
   final ArModelDimensions? dimensions;
+  final double? realWidthMeters;
+  final double? realHeightMeters;
+  final double? realDepthMeters;
 
   @override
   Widget build(BuildContext context) {
@@ -433,10 +510,37 @@ class _DimensionReadout extends StatelessWidget {
     }
 
     final ArModelDimensions dims = dimensions!;
+    
+    // Calculate percentages if real dimensions are available
+    final double? widthPercent = realWidthMeters != null && realWidthMeters! > 0
+        ? (dims.widthMeters / realWidthMeters!) * 100
+        : null;
+    final double? heightPercent = realHeightMeters != null && realHeightMeters! > 0
+        ? (dims.heightMeters / realHeightMeters!) * 100
+        : null;
+    final double? depthPercent = realDepthMeters != null && realDepthMeters! > 0
+        ? (dims.depthMeters / realDepthMeters!) * 100
+        : null;
+    
     final List<_DimensionEntry> entries = <_DimensionEntry>[
-      _DimensionEntry(label: 'Width', meters: dims.widthMeters),
-      _DimensionEntry(label: 'Height', meters: dims.heightMeters),
-      _DimensionEntry(label: 'Depth', meters: dims.depthMeters),
+      _DimensionEntry(
+        label: 'Width',
+        meters: dims.widthMeters,
+        realMeters: realWidthMeters,
+        percent: widthPercent,
+      ),
+      _DimensionEntry(
+        label: 'Height',
+        meters: dims.heightMeters,
+        realMeters: realHeightMeters,
+        percent: heightPercent,
+      ),
+      _DimensionEntry(
+        label: 'Depth',
+        meters: dims.depthMeters,
+        realMeters: realDepthMeters,
+        percent: depthPercent,
+      ),
     ];
 
     return Padding(
@@ -485,20 +589,52 @@ class _DimensionReadout extends StatelessWidget {
                         label: entry.label,
                         metricValue: _formatMeters(entry.meters),
                         imperialValue: _formatImperial(entry.meters),
+                        realMeters: entry.realMeters,
+                        percent: entry.percent,
                       ),
                     ),
                   )
                   .toList(growable: false),
             ),
             const SizedBox(height: 10),
-            Text(
-              'Scale XYZ: ${dims.scaleX.toStringAsFixed(2)}× / '
-              '${dims.scaleY.toStringAsFixed(2)}× / ${dims.scaleZ.toStringAsFixed(2)}×',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Color(0xFF6B7280),
+            // Show real size comparison if available
+            if (realWidthMeters != null || realHeightMeters != null || realDepthMeters != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _getSizeStatusColor(widthPercent, heightPercent, depthPercent),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _getSizeStatusIcon(widthPercent, heightPercent, depthPercent),
+                      size: 14,
+                      color: CupertinoColors.white,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _getSizeStatusText(widthPercent, heightPercent, depthPercent),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: CupertinoColors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Text(
+                'Scale XYZ: ${dims.scaleX.toStringAsFixed(2)}× / '
+                '${dims.scaleY.toStringAsFixed(2)}× / ${dims.scaleZ.toStringAsFixed(2)}×',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF6B7280),
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -521,13 +657,66 @@ class _DimensionReadout extends StatelessWidget {
     }
     return '${feet}ft ${remainingInches.toStringAsFixed(0)}in';
   }
+
+  Color _getSizeStatusColor(double? w, double? h, double? d) {
+    // Average percentage if multiple dimensions available
+    final List<double> percents = [w, h, d].whereType<double>().toList();
+    if (percents.isEmpty) return const Color(0xFF6B7280);
+    final double avg = percents.reduce((a, b) => a + b) / percents.length;
+    
+    if (avg >= 95 && avg <= 105) {
+      return const Color(0xFF10B981); // Green for ~100%
+    } else if (avg >= 80 && avg < 95) {
+      return const Color(0xFFF59E0B); // Orange for smaller
+    } else if (avg > 105 && avg <= 120) {
+      return const Color(0xFFF59E0B); // Orange for larger
+    } else {
+      return const Color(0xFFEF4444); // Red for way off
+    }
+  }
+
+  IconData _getSizeStatusIcon(double? w, double? h, double? d) {
+    final List<double> percents = [w, h, d].whereType<double>().toList();
+    if (percents.isEmpty) return CupertinoIcons.info;
+    final double avg = percents.reduce((a, b) => a + b) / percents.length;
+    
+    if (avg >= 95 && avg <= 105) {
+      return CupertinoIcons.check_mark_circled_solid;
+    } else if (avg < 95) {
+      return CupertinoIcons.arrow_down_circle;
+    } else {
+      return CupertinoIcons.arrow_up_circle;
+    }
+  }
+
+  String _getSizeStatusText(double? w, double? h, double? d) {
+    final List<double> percents = [w, h, d].whereType<double>().toList();
+    if (percents.isEmpty) return 'Real size data unavailable';
+    
+    final double avg = percents.reduce((a, b) => a + b) / percents.length;
+    
+    if (avg >= 95 && avg <= 105) {
+      return 'At real size (${avg.toStringAsFixed(0)}%)';
+    } else if (avg < 95) {
+      return '${avg.toStringAsFixed(0)}% of real size (smaller)';
+    } else {
+      return '${avg.toStringAsFixed(0)}% of real size (larger)';
+    }
+  }
 }
 
 class _DimensionEntry {
-  const _DimensionEntry({required this.label, required this.meters});
+  const _DimensionEntry({
+    required this.label,
+    required this.meters,
+    this.realMeters,
+    this.percent,
+  });
 
   final String label;
   final double meters;
+  final double? realMeters;
+  final double? percent;
 }
 
 class _DimensionChip extends StatelessWidget {
@@ -535,11 +724,15 @@ class _DimensionChip extends StatelessWidget {
     required this.label,
     required this.metricValue,
     required this.imperialValue,
+    this.realMeters,
+    this.percent,
   });
 
   final String label;
   final String metricValue;
   final String imperialValue;
+  final double? realMeters;
+  final double? percent;
 
   @override
   Widget build(BuildContext context) {
@@ -571,13 +764,25 @@ class _DimensionChip extends StatelessWidget {
                   color: Color(0xFF111827),
                 ),
               ),
-              Text(
-                imperialValue,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF4B5563),
+              if (percent != null)
+                Text(
+                  '${percent!.toStringAsFixed(0)}% of real',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: percent! >= 95 && percent! <= 105
+                        ? const Color(0xFF10B981)
+                        : const Color(0xFFF59E0B),
+                  ),
+                )
+              else
+                Text(
+                  imperialValue,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF4B5563),
+                  ),
                 ),
-              ),
             ],
           ),
         ),

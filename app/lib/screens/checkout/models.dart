@@ -31,7 +31,7 @@ class DeliveryData {
   final String slotLabel; // e.g., "10:00 - 12:00"
 }
 
-enum PaymentMethod { card, paypal, cod }
+enum PaymentMethod { gcash, cod }
 
 class PaymentData {
   PaymentData({

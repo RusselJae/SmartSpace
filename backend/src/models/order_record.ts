@@ -6,6 +6,7 @@ export interface OrderRecord {
   readonly totalAmount: number;
   readonly status: string;
   readonly shippingAddress: Record<string, unknown>;
+  readonly paymentProofUrl?: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

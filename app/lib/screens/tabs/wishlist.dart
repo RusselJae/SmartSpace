@@ -49,17 +49,27 @@ class _WishlistScreenState extends State<WishlistScreen> {
   Widget build(BuildContext context) {
     final items = _wishlist.items;
 
+    // Light brown color for navigation bar
+    const lightBrown = Color(0xFFF4E6D4);
+    const mediumBrown = Color(0xFF8D6E63);
+    
     return CupertinoPageScaffold(
       backgroundColor: Colors.white,
       navigationBar: CupertinoNavigationBar(
-        backgroundColor: Colors.white,
+        backgroundColor: lightBrown,
         border: Border(
           bottom: BorderSide(
-            color: CupertinoColors.separator.withValues(alpha: 0.1),
+            color: mediumBrown.withValues(alpha: 0.2),
             width: 0.5,
           ),
         ),
-        middle: Text('Wishlist', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        middle: Text(
+          'Wishlist',
+          style: GoogleFonts.poppins(
+            fontWeight: FontWeight.w600,
+            color: mediumBrown,
+          ),
+        ),
       ),
       child: SafeArea(
         child: items.isEmpty

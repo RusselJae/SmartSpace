@@ -12,7 +12,7 @@ import 'package:smartspace_ar/main.dart';
 void main() {
   testWidgets('App starts with onboarding', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const SmartSpaceApp());
+    await tester.pumpWidget(const WoodHomeFurnitureApp());
 
     // Verify that onboarding screen is shown.
     expect(find.text('Welcome'), findsOneWidget);

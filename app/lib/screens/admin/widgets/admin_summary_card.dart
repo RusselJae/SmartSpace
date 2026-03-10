@@ -27,18 +27,38 @@ class AdminSummaryCard extends StatelessWidget {
     final TextStyle valueStyle = Theme.of(context).textTheme.headlineSmall!.copyWith(color: Colors.white);
     return Card(
       color: metric.background,
+      // Use clipBehavior to prevent overflow rendering issues
+      clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(12),
         child: Column(
+          // Use mainAxisSize.min to prevent expansion
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             Icon(metric.icon, size: 28, color: Colors.white),
-            const SizedBox(height: 18),
-            Text(metric.title, style: titleStyle),
-            const SizedBox(height: 8),
-            Text(metric.value, style: valueStyle),
+            const SizedBox(height: 10),
+            Text(
+              metric.title,
+              style: titleStyle.copyWith(fontSize: 13),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              metric.value,
+              style: valueStyle.copyWith(fontSize: 22, fontWeight: FontWeight.w700),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             const SizedBox(height: 4),
-            Text(metric.deltaLabel, style: titleStyle.copyWith(fontSize: 12)),
+            Text(
+              metric.deltaLabel,
+              style: titleStyle.copyWith(fontSize: 11),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ),
       ),

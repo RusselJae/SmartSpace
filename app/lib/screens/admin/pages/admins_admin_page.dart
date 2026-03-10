@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../../models/admin.dart';
 import '../../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
+import '../../../../widgets/toast.dart';
 
 /// Admin management page for viewing and creating admin accounts.
 /// 
@@ -105,21 +106,11 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
         fullName: data.fullName,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Admin created successfully'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      Toast.success(context, 'Admin created successfully');
       await _loadAdmins();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to create admin: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      Toast.error(context, 'Failed to create admin: $e');
     }
   }
 
@@ -129,6 +120,33 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const AdminToolbar(
+          title: 'Administrators',
+          actions: [],
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withAlpha(30),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.redAccent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Row(
@@ -184,33 +202,6 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
             ],
           ),
         ),
-        const AdminToolbar(
-          title: 'Administrators',
-          actions: [],
-        ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withAlpha(30),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.redAccent),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _error!,
-                      style: const TextStyle(color: Colors.redAccent),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           child: Text(
@@ -535,18 +526,12 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
     if (_email.text.trim().isEmpty ||
         _password.text.isEmpty ||
         _fullName.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('All fields are required')),
-      );
+      Toast.warning(context, 'All fields are required');
       return;
     }
 
     if (_password.text.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Password must be at least 6 characters long'),
-        ),
-      );
+      Toast.warning(context, 'Password must be at least 6 characters long');
       return;
     }
 
@@ -667,6 +652,19 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
     );
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/async_handler';
-import { createReview, deleteReview, listReviews, updateReviewStatus } from '../services/review_service';
+import { createReview, deleteReview, getReviewsByProductId, listReviews, updateReviewStatus } from '../services/review_service';
 
 const createReviewSchema = z.object({
   productId: z.string().min(1),
@@ -20,9 +20,20 @@ export const reviewRouter = Router();
 
 reviewRouter.get(
   '/',
-  asyncHandler(async (_req, res) => {
-    const reviews = await listReviews();
-    res.json({ success: true, data: reviews });
+  asyncHandler(async (req, res) => {
+    // Support filtering by productId via query parameter
+    const productId = req.query.productId as string | undefined;
+    console.log(`[ReviewRoute] GET /reviews - productId: ${productId || 'none'}`);
+    
+    if (productId) {
+      const reviews = await getReviewsByProductId(productId, false);
+      console.log(`[ReviewRoute] Returning ${reviews.length} reviews for productId: ${productId}`);
+      res.json({ success: true, data: reviews });
+    } else {
+      const reviews = await listReviews();
+      console.log(`[ReviewRoute] Returning ${reviews.length} total reviews`);
+      res.json({ success: true, data: reviews });
+    }
   }),
 );
 

@@ -21,9 +21,12 @@ type CartItemRow = RowDataPacket & {
   readonly product_style: string | null;
   readonly product_material: string | null;
   readonly product_color: string | null;
-  readonly product_size: string | null;
   readonly product_model_path: string | null;
   readonly product_image_urls: string | null;
+  readonly product_real_width_m: number | null;
+  readonly product_real_height_m: number | null;
+  readonly product_real_depth_m: number | null;
+  readonly product_model_base_scale: number | null;
   readonly product_rating: number | null;
   readonly product_review_count: number | null;
   readonly product_is_popular: number | boolean | null;
@@ -63,9 +66,12 @@ const CART_SELECT = `
     p.style AS product_style,
     p.material AS product_material,
     p.color AS product_color,
-    p.size AS product_size,
     p.model_path AS product_model_path,
     p.image_urls AS product_image_urls,
+    p.real_width_m AS product_real_width_m,
+    p.real_height_m AS product_real_height_m,
+    p.real_depth_m AS product_real_depth_m,
+    p.model_base_scale AS product_model_base_scale,
     p.rating AS product_rating,
     p.review_count AS product_review_count,
     p.is_popular AS product_is_popular,
@@ -85,8 +91,11 @@ const mapProduct = (row: CartItemRow): Product => ({
   style: row.product_style ?? '',
   material: row.product_material ?? '',
   color: row.product_color ?? '',
-  size: row.product_size ?? '',
   modelPath: row.product_model_path ?? 'assets/chair.glb',
+  realWidthM: row.product_real_width_m ?? null,
+  realHeightM: row.product_real_height_m ?? null,
+  realDepthM: row.product_real_depth_m ?? null,
+  modelBaseScale: row.product_model_base_scale ?? 1,
   imageUrls: parseStringArray(row.product_image_urls),
   rating: Number(row.product_rating ?? 0),
   reviewCount: Number(row.product_review_count ?? 0),
@@ -219,6 +228,9 @@ export const clearCart = async (userId: string): Promise<void> => {
   const pool = getPool();
   await pool.query('DELETE FROM cart_items WHERE user_id = ?', [userId]);
 };
+
+
+
 
 
 

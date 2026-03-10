@@ -1,9 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!-- Allow cleartext traffic for localhost and loopback -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">localhost</domain>
     </domain-config>
+    
+    <!-- Allow cleartext traffic for Android emulator (10.0.2.2 maps to host machine) -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+    
+    <!-- Allow cleartext traffic for common private IP ranges (for physical devices on same network) -->
+    <!-- This allows connections to your development machine's IP address -->
+    <base-config cleartextTrafficPermitted="true">
+        <!-- Allow all HTTP traffic in development -->
+        <!-- For production, you should restrict this to specific domains -->
+    </base-config>
 </network-security-config>
 
 

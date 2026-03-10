@@ -26,17 +26,28 @@ class Review {
   final DateTime? updatedAt;
 
   factory Review.fromJson(Map<String, dynamic> json) {
+    // Helper to parse dates safely - handles both string and already-parsed DateTime
+    DateTime parseDate(dynamic value) {
+      if (value is DateTime) {
+        return value;
+      }
+      if (value is String) {
+        return DateTime.parse(value);
+      }
+      throw FormatException('Invalid date format: $value');
+    }
+
     return Review(
       id: json['id'] as String,
       productId: json['productId'] as String,
       productName: json['productName'] as String,
       userId: json['userId'] as String,
       userName: json['userName'] as String,
-      rating: json['rating'] as int,
-      content: json['content'] as String,
-      status: json['status'] as String,
-      createdAt: DateTime.parse(json['createdAt'] as String),
-      updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt'] as String) : null,
+      rating: json['rating'] is int ? json['rating'] as int : (json['rating'] as num).toInt(),
+      content: json['content'] as String? ?? '',
+      status: json['status'] as String? ?? 'published',
+      createdAt: parseDate(json['createdAt']),
+      updatedAt: json['updatedAt'] != null ? parseDate(json['updatedAt']) : null,
     );
   }
 

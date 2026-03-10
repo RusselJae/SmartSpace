@@ -1,5 +1,7 @@
+import 'dart:async' show TimeoutException;
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io' show SocketException;
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -39,9 +41,23 @@ class MySQLDatabaseService {
   }
 
   Future<void> initialize() async {
-    _useApi = await _checkApiAvailability();
-    if (!_useApi) {
-      developer.log('API unavailable, using mock data');
+    try {
+      _useApi = await _checkApiAvailability();
+      if (!_useApi) {
+        developer.log('⚠️ API unavailable, using mock data');
+        developer.log('💡 To connect to database:');
+        developer.log('   1. Make sure backend is running: cd backend && npm start');
+        developer.log('   2. Check API_BASE_URL in .env file (default: http://localhost:4000/api)');
+        developer.log('   3. For Android emulator, use: http://10.0.2.2:4000/api');
+        developer.log('   4. For physical device, use your computer IP: http://YOUR_IP:4000/api');
+        _initializeMockData();
+      } else {
+        developer.log('✅ Successfully connected to API and database');
+      }
+    } catch (e) {
+      developer.log('❌ Error during database initialization: $e');
+      developer.log('⚠️ Falling back to mock data');
+      _useApi = false;
       _initializeMockData();
     }
   }
@@ -59,7 +75,13 @@ class MySQLDatabaseService {
 
   Future<bool> _checkApiAvailability() async {
     final uri = _buildUri('/health');
-    developer.log('🔍 Checking API availability at: $uri');
+    final baseUrl = ApiConfig.baseUrl;
+    developer.log('🔍 Checking API availability...');
+    developer.log('   Base URL: $baseUrl');
+    developer.log('   Full URI: $uri');
+    developer.log('   Host: ${uri.host}');
+    developer.log('   Port: ${uri.port}');
+    developer.log('   Scheme: ${uri.scheme}');
     try {
       final response = await _client.get(uri).timeout(ApiConfig.timeout);
       developer.log('📡 API response status: ${response.statusCode}');
@@ -99,18 +121,53 @@ class MySQLDatabaseService {
       }
     } catch (error) {
       developer.log('❌ API health check failed: $error');
-      developer.log('💡 Make sure backend is running at ${ApiConfig.baseUrl}');
-      developer.log('💡 Test in browser: ${ApiConfig.baseUrl}/health');
+      developer.log('💡 Troubleshooting steps:');
+      developer.log('   1. Make sure backend is running: cd backend && npm run dev');
+      developer.log('   2. Test in browser: ${ApiConfig.baseUrl}/health');
+      developer.log('   3. If using IPv4 address, verify it\'s correct: ${uri.host}');
+      developer.log('   4. Check Windows Firewall - allow port ${uri.port}');
+      developer.log('   5. Verify backend is listening on 0.0.0.0 (not just localhost)');
+      developer.log('   6. If accessing from another device, ensure same network');
+      
+      // Additional help for IPv4 addresses
+      if (uri.host.contains('.') && !uri.host.contains('localhost')) {
+        developer.log('');
+        developer.log('🌐 IPv4 Connection Tips:');
+        developer.log('   - Backend must be started with: npm run dev (listens on 0.0.0.0)');
+        developer.log('   - Test directly in browser: http://${uri.host}:${uri.port}/api/health');
+        developer.log('   - If browser test works but app doesn\'t, check browser console for CORS errors');
+        developer.log('   - Windows Firewall may need to allow Node.js on port ${uri.port}');
+      }
     }
     return false;
   }
 
   Uri _buildUri(String path) {
-    final normalizedBase = ApiConfig.baseUrl.endsWith('/')
+    // Get the base URL and ensure it has no fragments
+    String normalizedBase = ApiConfig.baseUrl.endsWith('/')
         ? ApiConfig.baseUrl.substring(0, ApiConfig.baseUrl.length - 1)
         : ApiConfig.baseUrl;
+    
+    // Remove any hash fragments from base URL (shouldn't be there, but just in case)
+    if (normalizedBase.contains('#')) {
+      normalizedBase = normalizedBase.substring(0, normalizedBase.indexOf('#'));
+    }
+    
+    // Normalize the path
     final normalizedPath = path.startsWith('/') ? path : '/$path';
-    return Uri.parse('$normalizedBase$normalizedPath');
+    
+    // Parse base URL to extract components
+    final baseUri = Uri.parse(normalizedBase);
+    
+    // Build URI using constructor to avoid any parsing issues with fragments
+    return Uri(
+      scheme: baseUri.scheme,
+      host: baseUri.host,
+      port: baseUri.port,
+      path: '${baseUri.path}$normalizedPath',
+      query: baseUri.query,
+      // Explicitly no fragment - fragments are not sent to server
+    );
   }
 
   Map<String, String> get _jsonHeaders => {'Content-Type': 'application/json'};
@@ -122,31 +179,60 @@ class MySQLDatabaseService {
   }) async {
     final uri = _buildUri(path);
     final encodedBody = body == null ? null : jsonEncode(body);
+    
+    // Log request details for debugging
+    developer.log('📤 API Request: $method $uri');
+    
     late http.Response response;
-    switch (method) {
-      case 'GET':
-        response = await _client.get(uri).timeout(ApiConfig.timeout);
-        break;
-      case 'POST':
-        response =
-            await _client.post(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
-        break;
-      case 'PUT':
-        response =
-            await _client.put(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
-        break;
-      case 'PATCH':
-        response =
-            await _client.patch(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
-        break;
-      case 'DELETE':
-        response = await _client.delete(uri, headers: _jsonHeaders).timeout(ApiConfig.timeout);
-        break;
-      default:
-        throw UnsupportedError('Unsupported HTTP method $method');
+    try {
+      switch (method) {
+        case 'GET':
+          response = await _client.get(uri).timeout(ApiConfig.timeout);
+          break;
+        case 'POST':
+          response =
+              await _client.post(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+          break;
+        case 'PUT':
+          response =
+              await _client.put(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+          break;
+        case 'PATCH':
+          response =
+              await _client.patch(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+          break;
+        case 'DELETE':
+          response = await _client.delete(uri, headers: _jsonHeaders).timeout(ApiConfig.timeout);
+          break;
+        default:
+          throw UnsupportedError('Unsupported HTTP method $method');
+      }
+    } on TimeoutException {
+      developer.log('⏱️  API request timed out after ${ApiConfig.timeout.inSeconds}s');
+      developer.log('💡 Check if backend is running at: ${ApiConfig.baseUrl}');
+      developer.log('💡 Verify your IPv4 address is correct if connecting from another device');
+      developer.log('💡 Check firewall settings - port ${uri.port} must be open');
+      rethrow;
+    } on SocketException catch (e) {
+      developer.log('🔌 Network connection failed: $e');
+      developer.log('💡 Backend URL: ${ApiConfig.baseUrl}');
+      developer.log('💡 Make sure backend server is running');
+      developer.log('💡 If using IPv4 address, verify it\'s correct: ${uri.host}');
+      developer.log('💡 Check that backend is listening on 0.0.0.0 (not just localhost)');
+      developer.log('💡 Ensure both devices are on the same network');
+      developer.log('💡 Check Windows Firewall - it may be blocking port ${uri.port}');
+      rethrow;
+    } catch (e) {
+      developer.log('❌ API request failed: $e');
+      developer.log('💡 Request was: $method $uri');
+      rethrow;
     }
 
+    developer.log('📥 API Response: ${response.statusCode}');
+    
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      developer.log('❌ API returned error status: ${response.statusCode}');
+      developer.log('📄 Response body: ${response.body}');
       throw Exception('API request failed (${response.statusCode}): ${response.body}');
     }
 
@@ -191,13 +277,16 @@ class MySQLDatabaseService {
     required String style,
     required String material,
     required String color,
-    required String size,
     required String modelPath,
+    double? realWidthM,
+    double? realHeightM,
+    double? realDepthM,
+    double modelBaseScale = 1.0,
     required List<String> imageUrls,
     int? inventoryQty,
-    required bool isPopular,
-    required bool isNewArrival,
     required bool inStock,
+    bool isArchived = false,
+    // Note: isPopular and isNewArrival are now calculated automatically by the backend
   }) {
     return {
       'name': name,
@@ -207,13 +296,15 @@ class MySQLDatabaseService {
       'style': style,
       'material': material,
       'color': color,
-      'size': size,
       'modelPath': modelPath,
+      if (realWidthM != null) 'realWidthM': realWidthM,
+      if (realHeightM != null) 'realHeightM': realHeightM,
+      if (realDepthM != null) 'realDepthM': realDepthM,
+      'modelBaseScale': modelBaseScale,
       'imageUrls': imageUrls,
       if (inventoryQty != null) 'inventoryQty': inventoryQty,
-      'isPopular': isPopular,
-      'isNewArrival': isNewArrival,
       'inStock': inStock,
+      'isArchived': isArchived,
     };
   }
 
@@ -267,6 +358,40 @@ class MySQLDatabaseService {
     return products.where((product) => product.isNewArrival).toList();
   }
 
+  /// Get top rated products sorted by rating (highest first)
+  /// Only includes products with at least one review (rating > 0)
+  Future<List<Product>> getTopRatedProducts() async {
+    final products = await getAllProducts();
+    // Filter products with ratings and sort by rating descending
+    final topRated = products
+        .where((product) => product.rating > 0)
+        .toList()
+      ..sort((a, b) {
+        // Sort by rating descending, then by review count as tiebreaker
+        final ratingCompare = b.rating.compareTo(a.rating);
+        if (ratingCompare != 0) return ratingCompare;
+        return b.reviewCount.compareTo(a.reviewCount);
+      });
+    return topRated;
+  }
+
+  /// Get best seller products sorted by number of orders (highest first)
+  /// Products with no orders (orderCount = 0 or null) are excluded
+  Future<List<Product>> getBestSellerProducts() async {
+    final products = await getAllProducts();
+    // Filter products with orders and sort by order count descending
+    final bestSellers = products
+        .where((product) => (product.orderCount ?? 0) > 0)
+        .toList()
+      ..sort((a, b) {
+        // Sort by order count descending
+        final aCount = a.orderCount ?? 0;
+        final bCount = b.orderCount ?? 0;
+        return bCount.compareTo(aCount);
+      });
+    return bestSellers;
+  }
+
   Future<Product> createProduct({
     required String name,
     required String description,
@@ -275,13 +400,17 @@ class MySQLDatabaseService {
     required String style,
     required String material,
     required String color,
-    required String size,
     required String modelPath,
+    double? realWidthM,
+    double? realHeightM,
+    double? realDepthM,
+    double modelBaseScale = 1.0,
     List<String> imageUrls = const [],
     int? inventoryQty,
-    bool isPopular = false,
-    bool isNewArrival = false,
     bool inStock = true,
+    // Note: isPopular and isNewArrival are now calculated automatically
+    // - isNewArrival: Products created within the last week
+    // - isPopular: Products with orders
   }) async {
     if (!_useApi) {
       developer.log('⚠️ Creating product in MOCK MODE - data will NOT be saved to database!');
@@ -295,15 +424,20 @@ class MySQLDatabaseService {
         style: style,
         material: material,
         color: color,
-        size: size,
         modelPath: modelPath,
+        realWidthMeters: realWidthM,
+        realHeightMeters: realHeightM,
+        realDepthMeters: realDepthM,
+        modelBaseScale: modelBaseScale,
         imageUrls: List.unmodifiable(imageUrls),
         rating: 0,
         reviewCount: 0,
-        isPopular: isPopular,
-        isNewArrival: isNewArrival,
+        // Popular and new arrival are calculated automatically
+        isPopular: false, // Will be calculated based on orders
+        isNewArrival: true, // New products are automatically new arrivals
         inStock: inStock,
         inventoryQty: inventoryQty ?? (inStock ? 10 : 0),
+        isArchived: false, // New products are not archived by default
         createdAt: DateTime.now(),
       );
       _mockProducts.insert(0, product);
@@ -318,12 +452,13 @@ class MySQLDatabaseService {
       style: style,
       material: material,
       color: color,
-      size: size,
       modelPath: modelPath,
+      realWidthM: realWidthM,
+      realHeightM: realHeightM,
+      realDepthM: realDepthM,
+      modelBaseScale: modelBaseScale,
       imageUrls: imageUrls,
       inventoryQty: inventoryQty,
-      isPopular: isPopular,
-      isNewArrival: isNewArrival,
       inStock: inStock,
     );
     final data = await _sendRequest(method: 'POST', path: '/products', body: payload);
@@ -348,13 +483,15 @@ class MySQLDatabaseService {
       style: product.style,
       material: product.material,
       color: product.color,
-      size: product.size,
       modelPath: product.modelPath,
+      realWidthM: product.realWidthMeters,
+      realHeightM: product.realHeightMeters,
+      realDepthM: product.realDepthMeters,
+      modelBaseScale: product.modelBaseScale,
       imageUrls: product.imageUrls,
       inventoryQty: product.inventoryQty,
-      isPopular: product.isPopular,
-      isNewArrival: product.isNewArrival,
       inStock: product.inStock,
+      isArchived: product.isArchived,
     );
     final data = await _sendRequest(method: 'PUT', path: '/products/${product.id}', body: payload);
     final map = _asMap(data, 'product');
@@ -707,6 +844,64 @@ class MySQLDatabaseService {
     return order;
   }
 
+  /// Upload payment proof image for an order
+  Future<String> uploadPaymentProof({
+    required String orderId,
+    required List<int> imageBytes,
+    required String fileName,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ Upload payment proof in MOCK MODE - returning placeholder URL');
+      return 'https://placehold.co/400x600?text=Payment+Proof';
+    }
+    
+    final uri = Uri.parse('${ApiConfig.baseUrl}/payment-proofs/upload');
+    final request = http.MultipartRequest('POST', uri);
+    
+    // Add file
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        imageBytes,
+        filename: fileName,
+      ),
+    );
+    
+    // Add order ID
+    request.fields['orderId'] = orderId;
+    
+    // Send request
+    final streamedResponse = await request.send().timeout(
+      const Duration(seconds: 60),
+    );
+    
+    final response = await http.Response.fromStream(streamedResponse);
+    
+    if (response.statusCode != 200) {
+      final errorBody = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(
+        errorBody['message']?.toString() ?? 'Upload failed with status ${response.statusCode}',
+      );
+    }
+    
+    final responseData = jsonDecode(response.body) as Map<String, dynamic>;
+    
+    if (responseData['success'] != true) {
+      throw Exception(responseData['message']?.toString() ?? 'Upload failed');
+    }
+    
+    final data = responseData['data'] as Map<String, dynamic>;
+    final downloadUrl = data['downloadUrl'] as String;
+    
+    // Convert relative URL to absolute URL
+    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+    final absoluteUrl = downloadUrl.startsWith('http')
+        ? downloadUrl
+        : '$baseUrl$downloadUrl';
+    
+    return absoluteUrl;
+  }
+
   Future<List<AddressEntry>> getAddresses(String userId) async {
     if (!_useApi) {
       developer.log('⚠️ Using MOCK data for addresses (API not connected)');
@@ -825,6 +1020,132 @@ class MySQLDatabaseService {
     return reviews;
   }
 
+  /// Get all published reviews for a specific product.
+  /// Only returns reviews with 'published' status.
+  /// Returns reviews from ALL users who have reviewed this product.
+  Future<List<Review>> getReviewsByProductId(String productId) async {
+    if (!_useApi) {
+      developer.log('⚠️ Using MOCK data for reviews (API not connected)');
+      // Filter mock reviews by product ID - return ALL published reviews regardless of user
+      final allMock = _getMockReviews();
+      final filtered = allMock.where((r) => r.productId == productId && r.status == 'published').toList();
+      developer.log('✅ Loaded ${filtered.length} mock reviews for product $productId');
+      return filtered;
+    }
+    developer.log('📡 Fetching reviews for product $productId from API...');
+    try {
+      final response = await _sendRequest(method: 'GET', path: '/reviews?productId=$productId');
+      developer.log('📥 Raw response type: ${response.runtimeType}');
+      developer.log('📥 Raw response: $response');
+      
+      // The backend returns { success: true, data: reviews[] }
+      // _sendRequest extracts 'data', so response should be the reviews array directly
+      List<dynamic> rawList;
+      
+      if (response is List) {
+        // Response is already a list - this is the expected case
+        rawList = response;
+        developer.log('✅ Response is a List with ${rawList.length} items');
+      } else if (response is Map<String, dynamic>) {
+        // Response might be wrapped in another structure
+        if (response.containsKey('data') && response['data'] is List) {
+          rawList = response['data'] as List;
+          developer.log('✅ Found reviews in response.data with ${rawList.length} items');
+        } else if (response.containsKey('reviews') && response['reviews'] is List) {
+          rawList = response['reviews'] as List;
+          developer.log('✅ Found reviews in response.reviews with ${rawList.length} items');
+        } else {
+          developer.log('❌ Unexpected response structure: $response');
+          throw Exception('Invalid response format: expected List or Map with data/reviews key');
+        }
+      } else {
+        developer.log('❌ Unexpected response type: ${response.runtimeType}');
+        throw Exception('Invalid response type: expected List or Map, got ${response.runtimeType}');
+      }
+      
+      // Convert to List<Map<String, dynamic>>
+      final list = rawList
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+      
+      developer.log('📋 Parsed ${list.length} review items from response');
+      
+      // Parse each review
+      final reviews = <Review>[];
+      for (final map in list) {
+        try {
+          final review = Review.fromJson(map);
+          reviews.add(review);
+          developer.log('  ✓ Parsed review from ${review.userName} (${review.rating} stars)');
+        } catch (e) {
+          developer.log('❌ Error parsing review: $e');
+          developer.log('📄 Review data: $map');
+          // Continue with other reviews instead of failing completely
+        }
+      }
+      
+      // Backend already filters to only published reviews (including null status)
+      // Review.fromJson also defaults null status to 'published'
+      // So we should receive all valid reviews, but double-check status just in case
+      final publishedReviews = reviews.where((r) {
+        // Accept 'published' status or empty/null (which Review.fromJson converts to 'published')
+        final status = r.status.trim().toLowerCase();
+        return status == 'published' || status.isEmpty;
+      }).toList();
+      
+      developer.log('✅ Loaded ${publishedReviews.length} published reviews for product $productId (from ${reviews.length} total parsed)');
+      
+      // Log any filtered out reviews for debugging
+      final filteredOut = reviews.where((r) {
+        final status = r.status.trim().toLowerCase();
+        return status != 'published' && status.isNotEmpty;
+      }).toList();
+      if (filteredOut.isNotEmpty) {
+        developer.log('⚠️ Filtered out ${filteredOut.length} non-published reviews: ${filteredOut.map((r) => '${r.userName} (status: "${r.status}")').join(", ")}');
+      }
+      
+      if (publishedReviews.isNotEmpty) {
+        developer.log('👥 Reviews from users: ${publishedReviews.map((r) => '${r.userName} (${r.rating}⭐, status: "${r.status}")').join(", ")}');
+      } else {
+        developer.log('⚠️ No published reviews found for product $productId');
+        developer.log('💡 Troubleshooting:');
+        developer.log('   1. Check if reviews exist in database: SELECT * FROM reviews WHERE product_id = "$productId"');
+        developer.log('   2. Verify review status is "published" or NULL');
+        developer.log('   3. Check backend logs for query results');
+        developer.log('   4. Verify productId format matches between product and review records');
+      }
+      
+      return publishedReviews;
+    } catch (e, stackTrace) {
+      developer.log('❌ Error loading reviews for product $productId: $e');
+      developer.log('📚 Stack trace: $stackTrace');
+      // Return empty list instead of throwing to prevent UI from breaking
+      // The error is logged for debugging
+      return [];
+    }
+  }
+
+  /// Check if the current user has purchased a specific product.
+  /// Returns true if the user has at least one order containing this product.
+  Future<bool> hasUserPurchasedProduct(String userId, String productId) async {
+    if (!_useApi) {
+      // In mock mode, assume user has purchased if they have any orders
+      final orders = await getAllOrders();
+      final userOrders = orders.where((order) => order.userId == userId).toList();
+      return userOrders.any((order) => order.productIds.contains(productId));
+    }
+    try {
+      // Fetch user's orders and check if any contain this product
+      final orders = await getAllOrders();
+      final userOrders = orders.where((order) => order.userId == userId).toList();
+      return userOrders.any((order) => order.productIds.contains(productId));
+    } catch (e) {
+      developer.log('❌ Error checking purchase status: $e');
+      return false;
+    }
+  }
+
   Future<Review> createReview({
     required String productId,
     required String productName,
@@ -842,7 +1163,7 @@ class MySQLDatabaseService {
         userName: userName,
         rating: rating,
         content: content,
-        status: 'pending',
+        status: 'published',
         createdAt: DateTime.now(),
       );
     }
@@ -854,9 +1175,33 @@ class MySQLDatabaseService {
       'rating': rating,
       'content': content,
     };
-    final data = await _sendRequest(method: 'POST', path: '/reviews', body: payload);
-    final map = _asMap(data, 'review');
-    return Review.fromJson(map);
+    try {
+      developer.log('📤 Creating review for product: $productId');
+      final data = await _sendRequest(method: 'POST', path: '/reviews', body: payload);
+      developer.log('📥 Received review response: $data');
+      
+      if (data == null) {
+        throw Exception('Server returned empty response');
+      }
+      
+      final map = _asMap(data, 'review');
+      developer.log('✅ Parsed review map: $map');
+      
+      // Ensure dates are properly formatted strings
+      if (map['createdAt'] is DateTime) {
+        map['createdAt'] = (map['createdAt'] as DateTime).toIso8601String();
+      }
+      if (map['updatedAt'] != null && map['updatedAt'] is DateTime) {
+        map['updatedAt'] = (map['updatedAt'] as DateTime).toIso8601String();
+      }
+      
+      final review = Review.fromJson(map);
+      developer.log('✅ Successfully created review: ${review.id}');
+      return review;
+    } catch (e) {
+      developer.log('❌ Error creating review: $e');
+      rethrow;
+    }
   }
 
   Future<void> updateReviewStatus(String reviewId, String status) async {
@@ -910,8 +1255,11 @@ class MySQLDatabaseService {
         style: 'Modern',
         material: 'Wood',
         color: 'Brown',
-        size: 'M',
         modelPath: 'assets/chair.glb',
+        realWidthMeters: 0.45,
+        realHeightMeters: 0.88,
+        realDepthMeters: 0.52,
+        modelBaseScale: 1.0,
         imageUrls: const [],
         rating: 4.5,
         reviewCount: 128,
@@ -930,8 +1278,11 @@ class MySQLDatabaseService {
         style: 'Classic',
         material: 'Leather',
         color: 'Black',
-        size: 'L',
         modelPath: 'assets/chair.glb',
+        realWidthMeters: 0.6,
+        realHeightMeters: 1.1,
+        realDepthMeters: 0.65,
+        modelBaseScale: 1.0,
         imageUrls: const [],
         rating: 4.8,
         reviewCount: 89,

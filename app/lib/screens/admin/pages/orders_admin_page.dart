@@ -1,10 +1,14 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../models/order_record.dart';
 import '../../../services/mysql_database_service.dart';
+import '../../../config/api_config.dart';
 import '../widgets/admin_toolbar.dart';
+import '../../../widgets/toast.dart';
 
 /// Orders management page with search, filtering, and status updates.
 /// Follows Apple HIG principles with clean layouts and smooth animations.
@@ -18,7 +22,7 @@ class OrdersAdminPage extends StatefulWidget {
 class _OrdersAdminPageState extends State<OrdersAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
-  final List<String> _statuses = const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
+  final List<String> _statuses = const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'expired'];
   
   List<OrderRecord> _orders = [];
   Map<String, String> _productNames = {}; // Cache product names by ID
@@ -89,6 +93,309 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     return filtered;
   }
 
+  /// Shows order history dialog with cancelled and delivered orders
+  void _showOrderHistory() {
+    final cancelledOrders = _orders.where((o) => o.status == 'cancelled').toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final deliveredOrders = _orders.where((o) => o.status == 'delivered').toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.8,
+          height: MediaQuery.of(context).size.height * 0.8,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Order History',
+                    style: GoogleFonts.poppins(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              // Tabs for Cancelled and Delivered
+              DefaultTabController(
+                length: 2,
+                child: Column(
+                  children: [
+                    TabBar(
+                      labelColor: const Color(0xFF8D6E63),
+                      unselectedLabelColor: Colors.grey,
+                      indicatorColor: const Color(0xFF8D6E63),
+                      tabs: [
+                        Tab(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('Cancelled'),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: CupertinoColors.systemRed.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '${cancelledOrders.length}',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: CupertinoColors.systemRed,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Tab(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('Delivered'),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: CupertinoColors.systemGreen.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '${deliveredOrders.length}',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: CupertinoColors.systemGreen,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: TabBarView(
+                        children: [
+                          // Cancelled orders tab
+                          cancelledOrders.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.cancel_outlined, size: 64, color: Colors.grey[400]),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'No cancelled orders',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 16,
+                                          color: Colors.grey[600],
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : ListView.separated(
+                                  itemCount: cancelledOrders.length,
+                                  separatorBuilder: (_, __) => const Divider(height: 1),
+                                  itemBuilder: (context, index) {
+                                    final order = cancelledOrders[index];
+                                    return ListTile(
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                      title: Text(
+                                        'Order #${order.id.length >= 8 ? order.id.substring(0, 8) : order.id}',
+                                        style: GoogleFonts.poppins(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                          color: Colors.black,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                      subtitle: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Customer: ${order.userName.isEmpty ? 'Guest' : order.userName}',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 14,
+                                              color: Colors.grey[700],
+                                              decoration: TextDecoration.none,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Date: ${order.createdAt.toLocal().toString().substring(0, 16)}',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 12,
+                                              color: Colors.grey[600],
+                                              decoration: TextDecoration.none,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Total: ₱${order.totalAmount.toStringAsFixed(2)}',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.black,
+                                              decoration: TextDecoration.none,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      trailing: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: CupertinoColors.systemRed.withValues(alpha: 0.1),
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: CupertinoColors.systemRed.withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          'Cancelled',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: CupertinoColors.systemRed,
+                                            decoration: TextDecoration.none,
+                                          ),
+                                        ),
+                                      ),
+                                      onTap: () {
+                                        Navigator.of(context).pop();
+                                        _showOrderDetails(order);
+                                      },
+                                    );
+                                  },
+                                ),
+                          // Delivered orders tab
+                          deliveredOrders.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.check_circle_outline, size: 64, color: Colors.grey[400]),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'No delivered orders',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 16,
+                                          color: Colors.grey[600],
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : ListView.separated(
+                                  itemCount: deliveredOrders.length,
+                                  separatorBuilder: (_, __) => const Divider(height: 1),
+                                  itemBuilder: (context, index) {
+                                    final order = deliveredOrders[index];
+                                    return ListTile(
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                      title: Text(
+                                        'Order #${order.id.length >= 8 ? order.id.substring(0, 8) : order.id}',
+                                        style: GoogleFonts.poppins(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                          color: Colors.black,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                      subtitle: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Customer: ${order.userName.isEmpty ? 'Guest' : order.userName}',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 14,
+                                              color: Colors.grey[700],
+                                              decoration: TextDecoration.none,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Date: ${order.createdAt.toLocal().toString().substring(0, 16)}',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 12,
+                                              color: Colors.grey[600],
+                                              decoration: TextDecoration.none,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Total: ₱${order.totalAmount.toStringAsFixed(2)}',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.black,
+                                              decoration: TextDecoration.none,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      trailing: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: CupertinoColors.systemGreen.withValues(alpha: 0.1),
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: CupertinoColors.systemGreen.withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          'Delivered',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: CupertinoColors.systemGreen,
+                                            decoration: TextDecoration.none,
+                                          ),
+                                        ),
+                                      ),
+                                      onTap: () {
+                                        Navigator.of(context).pop();
+                                        _showOrderDetails(order);
+                                      },
+                                    );
+                                  },
+                                ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Updates order status with a smooth animation and user feedback.
   Future<void> _updateStatus(OrderRecord order, String status) async {
     // Show confirmation dialog for order confirmation
@@ -137,25 +444,12 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
         message += '. Email notification sent to customer.';
       }
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      Toast.success(context, message);
       
       await _loadOrders();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update order: $e'),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      Toast.error(context, 'Failed to update order: $e');
     }
   }
 
@@ -177,6 +471,10 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        AdminToolbar(
+          title: 'Orders',
+          actions: const [],
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Row(
@@ -211,11 +509,19 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                 ),
               ),
               const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: _showOrderHistory,
+                icon: const Icon(Icons.history, size: 18),
+                label: const Text('History'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF8D6E63),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
+              ),
+              const SizedBox(width: 8),
               IconButton.outlined(
                 onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Export functionality coming soon')),
-                  );
+                  Toast.info(context, 'Export functionality coming soon');
                 },
                 icon: const Icon(Icons.download_outlined),
                 tooltip: 'Export',
@@ -228,10 +534,6 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
               ),
             ],
           ),
-        ),
-        AdminToolbar(
-          title: 'Orders',
-          actions: const [],
         ),
         if (_error != null)
           Padding(
@@ -555,6 +857,7 @@ class _OrdersTableRow extends StatelessWidget {
               child: _StatusPill(
                 status: order.status,
                 onChanged: onStatusChanged,
+                isEditable: order.status != 'delivered' && order.status != 'cancelled',
               ),
             ),
             const SizedBox(width: 8),
@@ -586,17 +889,22 @@ class _OrdersTableRow extends StatelessWidget {
 }
 
 class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.status, required this.onChanged});
+  const _StatusPill({
+    required this.status,
+    required this.onChanged,
+    this.isEditable = true,
+  });
 
   final String status;
   final ValueChanged<String> onChanged;
+  final bool isEditable; // Whether the status can be edited
 
   /// Returns a clean, light color palette for status indicators
   /// Following Apple HIG with subtle, approachable colors
   Color _statusColor(String value) {
     switch (value) {
       case 'pending':
-        return CupertinoColors.systemOrange;
+        return Colors.yellow.shade700; // Yellow color for pending status
       case 'confirmed':
         return CupertinoColors.systemBlue;
       case 'shipped':
@@ -605,23 +913,106 @@ class _StatusPill extends StatelessWidget {
         return CupertinoColors.systemGreen;
       case 'cancelled':
         return CupertinoColors.systemRed;
+      case 'expired':
+        return CupertinoColors.systemGrey;
       default:
         return CupertinoColors.systemGrey;
+    }
+  }
+
+  /// Icon per status for clearer affordance in the dropdown
+  IconData _statusIcon(String value) {
+    switch (value) {
+      case 'pending':
+        return Icons.hourglass_top_outlined;
+      case 'confirmed':
+        return Icons.check_circle_outline;
+      case 'shipped':
+        return Icons.local_shipping_outlined;
+      case 'delivered':
+        return Icons.task_alt_outlined;
+      case 'cancelled':
+        return Icons.cancel_outlined;
+      case 'expired':
+        return Icons.schedule_send_outlined;
+      default:
+        return Icons.help_outline;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final color = _statusColor(status);
+    final isDeliveredOrCancelled = status == 'delivered' || status == 'cancelled';
+    
+    // For delivered and cancelled orders, show non-editable status pill
+    if (!isEditable || isDeliveredOrCancelled) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: color.withValues(alpha: 0.2),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                status[0].toUpperCase() + status.substring(1),
+                style: GoogleFonts.poppins(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: color,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            // Only show dropdown icon if editable and not delivered/cancelled
+            if (isEditable && !isDeliveredOrCancelled) ...[
+              const SizedBox(width: 6),
+              Icon(
+                Icons.expand_more,
+                size: 16,
+                color: color.withValues(alpha: 0.7),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+    
+    // For editable orders, show dropdown menu
     return PopupMenuButton<String>(
       padding: EdgeInsets.zero,
       onSelected: onChanged,
-      itemBuilder: (context) => const [
-        PopupMenuItem(value: 'pending', child: Text('Pending')),
-        PopupMenuItem(value: 'confirmed', child: Text('Confirmed')),
-        PopupMenuItem(value: 'shipped', child: Text('Shipped')),
-        PopupMenuItem(value: 'delivered', child: Text('Delivered')),
-        PopupMenuItem(value: 'cancelled', child: Text('Cancelled')),
+      itemBuilder: (context) => [
+        for (final s in const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'expired'])
+          PopupMenuItem(
+            value: s,
+            child: Row(
+              children: [
+                Icon(_statusIcon(s), size: 18, color: _statusColor(s)),
+                const SizedBox(width: 10),
+                Text(
+                  s[0].toUpperCase() + s.substring(1),
+                  style: GoogleFonts.poppins(fontSize: 14),
+                ),
+              ],
+            ),
+          ),
       ],
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -686,7 +1077,10 @@ class _OrderDetailsDialog extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
       ),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+        constraints: BoxConstraints(
+          maxWidth: 600,
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+        ),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.all(Radius.circular(24)),
@@ -904,6 +1298,285 @@ class _OrderDetailsDialog extends StatelessWidget {
                         ],
                       ),
                     ),
+                    // Payment Proof Section
+                    // Check for payment proof URL in order field first, then fall back to shippingAddress
+                    if (order.paymentProofUrl != null ||
+                        order.shippingAddress['paymentProofUrl'] != null ||
+                        order.shippingAddress['paymentProof'] != null)
+                      ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          'Payment Proof',
+                          style: GoogleFonts.poppins(
+                            color: Colors.black,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[50],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey[200]!),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Get payment proof URL from order field first, then shippingAddress (for backward compatibility)
+                              Builder(
+                                builder: (context) {
+                                  final proofUrl = order.paymentProofUrl ??
+                                      order.shippingAddress['paymentProofUrl'] as String? ??
+                                      order.shippingAddress['paymentProof'] as String?;
+                                  
+                                  if (proofUrl == null || proofUrl.isEmpty) {
+                                    return Text(
+                                      'No payment proof available',
+                                      style: GoogleFonts.poppins(
+                                        color: Colors.grey[600],
+                                        fontSize: 14,
+                                        decoration: TextDecoration.none,
+                                      ),
+                                    );
+                                  }
+                                  
+                                  // Convert relative URL to absolute if needed
+                                  String finalImageUrl = proofUrl;
+                                  
+                                  // If URL is relative (starts with /), construct full URL
+                                  if (finalImageUrl.startsWith('/')) {
+                                    // Remove /api from base URL if present, then append the image path
+                                    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+                                    finalImageUrl = '$baseUrl$finalImageUrl';
+                                  } else if (!finalImageUrl.startsWith('http')) {
+                                    // If it's a relative path without leading slash, prepend base URL
+                                    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+                                    finalImageUrl = '$baseUrl/$finalImageUrl';
+                                  }
+                                  
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Payment Screenshot:',
+                                        style: GoogleFonts.poppins(
+                                          color: Colors.black,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      // Display payment proof image with tap to view full size
+                                      Builder(
+                                        builder: (context) {
+                                          // Use the already constructed finalImageUrl
+                                          
+                                          return GestureDetector(
+                                            onTap: () {
+                                              // Show full-size image in a dialog with zoom capability
+                                              showDialog(
+                                                context: context,
+                                                builder: (dialogContext) => Dialog(
+                                                  backgroundColor: Colors.transparent,
+                                                  insetPadding: const EdgeInsets.all(20),
+                                                  child: Stack(
+                                                    children: [
+                                                      Center(
+                                                        child: InteractiveViewer(
+                                                          minScale: 0.5,
+                                                          maxScale: 4.0,
+                                                          child: Image.network(
+                                                            finalImageUrl,
+                                                            fit: BoxFit.contain,
+                                                            errorBuilder: (context, error, stackTrace) {
+                                                              return Container(
+                                                                padding: const EdgeInsets.all(40),
+                                                                color: Colors.black54,
+                                                                child: const Column(
+                                                                  mainAxisSize: MainAxisSize.min,
+                                                                  children: [
+                                                                    Icon(Icons.error_outline, color: Colors.white, size: 48),
+                                                                    SizedBox(height: 12),
+                                                                    Text('Failed to load image', style: TextStyle(color: Colors.white)),
+                                                                  ],
+                                                                ),
+                                                              );
+                                                            },
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      Positioned(
+                                                        top: 8,
+                                                        right: 8,
+                                                        child: IconButton(
+                                                          icon: const Icon(Icons.close, color: Colors.white),
+                                                          onPressed: () => Navigator.of(dialogContext).pop(),
+                                                          style: IconButton.styleFrom(
+                                                            backgroundColor: Colors.black54,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(8),
+                                              child: Image.network(
+                                                finalImageUrl,
+                                                width: double.infinity,
+                                                fit: BoxFit.contain,
+                                                headers: const {
+                                                  'Accept': 'image/*',
+                                                },
+                                                loadingBuilder: (context, child, loadingProgress) {
+                                                  if (loadingProgress == null) return child;
+                                                  return Container(
+                                                    height: 200,
+                                                    color: Colors.grey[200],
+                                                    child: Center(
+                                                      child: CircularProgressIndicator(
+                                                        value: loadingProgress.expectedTotalBytes != null
+                                                            ? loadingProgress.cumulativeBytesLoaded /
+                                                                loadingProgress.expectedTotalBytes!
+                                                            : null,
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                                errorBuilder: (context, error, stackTrace) {
+                                                  // Log the error for debugging
+                                                  developer.log(
+                                                    'Failed to load payment proof image: $error',
+                                                    name: 'OrdersAdmin',
+                                                    error: error,
+                                                    stackTrace: stackTrace,
+                                                  );
+                                                  developer.log('Image URL: $finalImageUrl', name: 'OrdersAdmin');
+                                                  
+                                                  return Container(
+                                                    height: 200,
+                                                    color: Colors.grey[200],
+                                                    child: Column(
+                                                      mainAxisAlignment: MainAxisAlignment.center,
+                                                      children: [
+                                                        const Icon(
+                                                          Icons.error_outline,
+                                                          color: Colors.red,
+                                                          size: 48,
+                                                        ),
+                                                        const SizedBox(height: 8),
+                                                        Text(
+                                                          'Failed to load image',
+                                                          style: GoogleFonts.poppins(
+                                                            color: Colors.grey[600],
+                                                            fontSize: 14,
+                                                            decoration: TextDecoration.none,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(height: 4),
+                                                        Padding(
+                                                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                                                          child: Text(
+                                                            finalImageUrl.length > 50 
+                                                                ? '${finalImageUrl.substring(0, 50)}...'
+                                                                : finalImageUrl,
+                                                            style: GoogleFonts.poppins(
+                                                              color: Colors.grey[500],
+                                                              fontSize: 10,
+                                                              decoration: TextDecoration.none,
+                                                            ),
+                                                            textAlign: TextAlign.center,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(height: 8),
+                                                        TextButton(
+                                                          onPressed: () {
+                                                            // Trigger rebuild to retry loading
+                                                            (context as Element).markNeedsBuild();
+                                                          },
+                                                          child: const Text('Retry'),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Tap image to view full size',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 11,
+                                          color: Colors.grey[600],
+                                          fontStyle: FontStyle.italic,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      // Payment status
+                                      if (order.shippingAddress['paymentStatus'] != null)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: order.shippingAddress['paymentStatus'] == 'confirmed' ||
+                                                    order.shippingAddress['paymentStatus'] == 'downpayment_paid'
+                                                ? Colors.green[50]
+                                                : Colors.orange[50],
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: order.shippingAddress['paymentStatus'] == 'confirmed' ||
+                                                      order.shippingAddress['paymentStatus'] == 'downpayment_paid'
+                                                  ? Colors.green[300]!
+                                                  : Colors.orange[300]!,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                order.shippingAddress['paymentStatus'] == 'confirmed' ||
+                                                        order.shippingAddress['paymentStatus'] == 'downpayment_paid'
+                                                    ? Icons.check_circle
+                                                    : Icons.pending,
+                                                size: 16,
+                                                color: order.shippingAddress['paymentStatus'] == 'confirmed' ||
+                                                        order.shippingAddress['paymentStatus'] == 'downpayment_paid'
+                                                    ? Colors.green[700]
+                                                    : Colors.orange[700],
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                'Payment Status: ${(order.shippingAddress['paymentStatus'] as String? ?? 'pending').toUpperCase()}',
+                                                style: GoogleFonts.poppins(
+                                                  color: order.shippingAddress['paymentStatus'] == 'confirmed' ||
+                                                          order.shippingAddress['paymentStatus'] == 'downpayment_paid'
+                                                      ? Colors.green[700]
+                                                      : Colors.orange[700],
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                  decoration: TextDecoration.none,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                   ],
                 ),
               ),

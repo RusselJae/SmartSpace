@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../services/mysql_database_service.dart';
+import '../../../../widgets/toast.dart';
 
 import '../admin_theme.dart';
 
@@ -58,7 +59,7 @@ class _AdminSignupPageState extends State<AdminSignupPage> {
                       ),
                       const SizedBox(height: 32),
                       Text(
-                        'SmartSpace',
+                        'Wood Home Furniture Trading',
                         style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                               fontWeight: FontWeight.w700,
                               color: AdminPalette.textPrimary,
@@ -228,18 +229,12 @@ class _AdminSignupPageState extends State<AdminSignupPage> {
     final nameText = name.text.trim();
 
     if (emailText.isEmpty || passwordText.isEmpty || nameText.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all fields')),
-      );
+      Toast.warning(context, 'Please fill in all fields');
       return;
     }
 
     if (passwordText.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Password must be at least 6 characters long'),
-        ),
-      );
+      Toast.warning(context, 'Password must be at least 6 characters long');
       return;
     }
 
@@ -252,22 +247,12 @@ class _AdminSignupPageState extends State<AdminSignupPage> {
         fullName: nameText,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Admin account created successfully'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      Toast.success(context, 'Admin account created successfully');
       // Navigate to login page after successful signup
       Navigator.of(context).pushReplacementNamed('/admin/login');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to create admin: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      Toast.error(context, 'Failed to create admin: $e');
       setState(() => isLoading = false);
     }
   }

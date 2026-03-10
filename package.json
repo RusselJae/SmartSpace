@@ -1,0 +1,25 @@
+{
+  "name": "smartspace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RusselJae/SmartSpace.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/RusselJae/SmartSpace/issues"
+  },
+  "homepage": "https://github.com/RusselJae/SmartSpace#readme",
+  "dependencies": {
+    "phil-address": "^2.0.1",
+    "psgc": "^2.2.0"
+  }
+}

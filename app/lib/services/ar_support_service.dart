@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 /// ###########################################################################
 /// ## ARSupportService                                                       ##
@@ -19,81 +18,38 @@ class ArSupportService {
   ArSupportService._();
   static final ArSupportService instance = ArSupportService._();
 
-  /// Channel name kept short + unique to avoid collisions with other plugins.
-  static const MethodChannel _channel = MethodChannel('com.smartspace/ar_support');
-
   /// Public entry point used by the AR view.
   Future<ArCapabilityResult> resolveCapability() async {
-    // --- Step 1: Early exit when we already know the platform cannot use ARCore.
-    if (!Platform.isAndroid) {
-      return const ArCapabilityResult.viewerOnly(
-        headline: 'ARCore is Android-only',
-        detail: 'We can still show the model in 3D, but iOS needs QuickLook/USDC assets.',
-      );
-    }
-
-    // --- Step 2: Filter out Huawei/Honor devices that cannot install Google services.
-    final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-    try {
-      final AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
-      final String manufacturer = androidInfo.manufacturer.toUpperCase();
-      final String brand = androidInfo.brand.toUpperCase();
-      final bool isHuaweiFamily = manufacturer.contains('HUAWEI') || brand.contains('HUAWEI') || brand.contains('HONOR');
-      if (isHuaweiFamily) {
-        return const ArCapabilityResult.webFallback(
-          headline: 'Google services unavailable',
-          detail: 'Huawei/Honor devices cannot install Play Services for AR, so we drop to WebXR.',
-        );
-      }
-    } catch (_) {
-      // If device_info fails we optimistically continue so users still get a shot at ARCore/WebXR.
-    }
-
-    // --- Step 3: Ask the Android host (MainActivity) for the official ARCore status.
-    Map<String, dynamic> nativeReport = <String, dynamic>{};
-    try {
-      final Map<dynamic, dynamic>? raw = await _channel.invokeMethod<Map<dynamic, dynamic>>('checkArAvailability');
-      if (raw != null) {
-        nativeReport = raw.map((key, value) => MapEntry(key.toString(), value));
-      }
-    } on PlatformException catch (_) {
-      // Missing channel usually means the user is running on emulators/old builds.
+    // --- Step 1: For web platforms, always enable WebXR
+    if (kIsWeb) {
       return const ArCapabilityResult.webFallback(
-        headline: 'AR service unavailable',
-        detail: 'Device failed to report ARCore status. We lean on WebXR instead.',
+        headline: 'WebXR available',
+        detail: 'WebXR is available for AR previews in supported browsers.',
       );
     }
 
-    // --- Step 4: Derive a friendly capability state from the native response.
-    final bool isSupported = nativeReport['isSupported'] == true;
-    final bool isInstalled = nativeReport['isInstalled'] == true;
-    final bool needsInstall = nativeReport['needsInstall'] == true;
-    final bool isUnavailable = nativeReport['isUnavailable'] == true;
-
-    if (isSupported && isInstalled) {
+    // --- Step 2: On Android, optimistically prefer Scene Viewer / ARCore.
+    //
+    // Some OEMs (like Infinix) are not on Google's official ARCore list even
+    // though users can still install Play Services for AR and successfully
+    // launch Scene Viewer. The previous, strict ARCore check was blocking AR
+    // on these devices, even when the native experience actually worked.
+    //
+    // To restore the previous behavior (and match what you saw before), we
+    // now *always* attempt Scene Viewer on Android and let Google handle any
+    // fallback or error UI. This keeps the AR button available and hands off
+    // to ARCore whenever the device can handle it.
+    if (Platform.isAndroid) {
       return const ArCapabilityResult.sceneViewer(
-        headline: 'Full AR ready',
-        detail: 'Scene Viewer can launch immediately with accurate motion tracking.',
+        headline: 'AR available',
+        detail: 'Attempting to launch Scene Viewer / ARCore when supported.',
       );
     }
 
-    if (isSupported && needsInstall) {
-      return const ArCapabilityResult.sceneViewer(
-        headline: 'Install AR services',
-        detail: 'Google will prompt the user to add Play Services for AR before launching the scene.',
-      );
-    }
-
-    if (!isSupported && !isUnavailable) {
-      return const ArCapabilityResult.webFallback(
-        headline: 'WebXR fallback',
-        detail: 'Device cannot guarantee ARCore, but Chrome-based WebXR usually still works.',
-      );
-    }
-
-    return const ArCapabilityResult.viewerOnly(
-      headline: '3D only',
-      detail: 'Sensors or Google services are missing, so we keep users inside the 3D viewer.',
+    // --- Step 3: Non‑Android native platforms fall back to WebXR / 3D only.
+    return const ArCapabilityResult.webFallback(
+      headline: 'WebXR fallback',
+      detail: 'ARCore is Android-only, so we lean on WebXR or 3D preview here.',
     );
   }
 }

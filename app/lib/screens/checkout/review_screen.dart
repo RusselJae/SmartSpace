@@ -29,12 +29,10 @@ class ReviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final paymentLabel = () {
       switch (payment.method) {
-        case PaymentMethod.card:
-          return 'Card ${payment.cardNumberMasked ?? ''}'.trim();
-        case PaymentMethod.paypal:
-          return 'PayPal';
+        case PaymentMethod.gcash:
+          return 'GCash (Online)';
         case PaymentMethod.cod:
-          return 'Cash on Delivery';
+          return 'Cash on Delivery (COD)';
       }
     }();
 

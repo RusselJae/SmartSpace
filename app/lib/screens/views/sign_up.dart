@@ -5,8 +5,9 @@ import 'package:intl/intl.dart';
 
 import '../../services/auth_service.dart';
 import '../../widgets/styled_text_field.dart';
+import '../../widgets/toast.dart';
 import 'sign_in.dart';
-import 'welcome_screen.dart';
+import 'email_verification_screen.dart';
 
 /// =============================================================
 /// SignUpScreen (Cupertino) - 4-Step Process
@@ -32,6 +33,11 @@ class SignUpScreen extends StatefulWidget {
 class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderStateMixin {
   final AuthService _auth = AuthService();
   
+  // Color constants - moved to class level for use in methods
+  static const Color kTextPrimary = Color(0xFF6D4C41); // Medium brown for text
+  static const Color kBrown = Color(0xFF8D6E63); // Primary brown
+  static const Color kLight = Color(0xFFF4E6D4);
+  
   // Step management
   int _currentStep = 0;
   late AnimationController _animationController;
@@ -46,7 +52,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
   DateTime? _selectedBirthday;
   
   bool _loading = false;
-  String? _error;
 
   @override
   void initState() {
@@ -77,7 +82,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
   void _nextStep() {
     if (_currentStep < 3) {
       setState(() {
-        _error = null;
         _currentStep++;
       });
       _animationController.reset();
@@ -89,7 +93,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
   void _previousStep() {
     if (_currentStep > 0) {
       setState(() {
-        _error = null;
         _currentStep--;
       });
       _animationController.reset();
@@ -99,18 +102,16 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
 
   // Validate and proceed to next step
   void _validateAndProceed() {
-    setState(() => _error = null);
-    
     switch (_currentStep) {
       case 0: // Email step
         if (_emailController.text.trim().isEmpty) {
-          setState(() => _error = 'Please enter your email');
+          Toast.warning(context, 'Please enter your email');
           return;
         }
         // Basic email validation
         final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
         if (!emailRegex.hasMatch(_emailController.text.trim())) {
-          setState(() => _error = 'Please enter a valid email address');
+          Toast.warning(context, 'Please enter a valid email address');
           return;
         }
         _nextStep();
@@ -118,11 +119,11 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         
       case 1: // First Name & Last Name step
         if (_firstNameController.text.trim().isEmpty) {
-          setState(() => _error = 'Please enter your first name');
+          Toast.warning(context, 'Please enter your first name');
           return;
         }
         if (_lastNameController.text.trim().isEmpty) {
-          setState(() => _error = 'Please enter your last name');
+          Toast.warning(context, 'Please enter your last name');
           return;
         }
         _nextStep();
@@ -130,7 +131,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         
       case 2: // Birthday step
         if (_selectedBirthday == null) {
-          setState(() => _error = 'Please select your birthday');
+          Toast.warning(context, 'Please select your birthday');
           return;
         }
         // Check if user is at least 13 years old
@@ -138,7 +139,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         final age = now.year - _selectedBirthday!.year;
         if (age < 13 || (age == 13 && now.month < _selectedBirthday!.month) ||
             (age == 13 && now.month == _selectedBirthday!.month && now.day < _selectedBirthday!.day)) {
-          setState(() => _error = 'You must be at least 13 years old');
+          Toast.warning(context, 'You must be at least 13 years old');
           return;
         }
         _nextStep();
@@ -153,33 +154,37 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
   // Final sign up submission
   Future<void> _handleSignUp() async {
     if (_usernameController.text.trim().isEmpty || _passwordController.text.isEmpty) {
-      setState(() => _error = 'Please fill in all fields');
+      Toast.warning(context, 'Please fill in all fields');
       return;
     }
 
     if (_passwordController.text.length < 6) {
-      setState(() => _error = 'Password must be at least 6 characters');
+      Toast.warning(context, 'Password must be at least 6 characters');
       return;
     }
 
     setState(() {
       _loading = true;
-      _error = null;
     });
 
     try {
       // Combine first name and last name for fullName
       final fullName = '${_firstNameController.text.trim()} ${_lastNameController.text.trim()}';
+      final email = _emailController.text.trim();
+      
       await _auth.signUp(
-        email: _emailController.text.trim(),
+        email: email,
         fullName: fullName,
         password: _passwordController.text,
       );
       if (!mounted) return;
-      // Navigate to welcome screen with user's name
+      
+      // Navigate to email verification screen instead of welcome screen
+      // Users must verify their email before they can login
       Navigator.of(context, rootNavigator: true).pushReplacement(
         CupertinoPageRoute(
-          builder: (_) => WelcomeScreen(
+          builder: (_) => EmailVerificationScreen(
+            email: email,
             userName: fullName,
           ),
         ),
@@ -187,9 +192,21 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
         _loading = false;
       });
+      
+      // Extract error message and provide user-friendly feedback
+      String errorMessage = e.toString().replaceFirst('Exception: ', '');
+      
+      // Log detailed error for debugging
+      debugPrint('❌ Sign up error: $e');
+      debugPrint('   Error type: ${e.runtimeType}');
+      if (e is TypeError) {
+        debugPrint('   TypeError details: $e');
+      }
+      
+      // Show user-friendly error message
+      Toast.error(context, errorMessage);
     }
   }
 
@@ -200,40 +217,40 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     final firstDate = DateTime(now.year - 100);
     final lastDate = DateTime(now.year - 13);
     
-    await showCupertinoModalPopup<DateTime>(
+    final DateTime? picked = await showDatePicker(
       context: context,
-      builder: (context) => Container(
-        height: 216,
-        padding: const EdgeInsets.only(top: 6.0),
-        margin: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
-        color: CupertinoColors.systemBackground.resolveFrom(context),
-        child: SafeArea(
-          top: false,
-          child: CupertinoDatePicker(
-            initialDateTime: initialDate,
-            mode: CupertinoDatePickerMode.date,
-            maximumDate: lastDate,
-            minimumDate: firstDate,
-            use24hFormat: true,
-            onDateTimeChanged: (DateTime newDate) {
-              setState(() {
-                _selectedBirthday = newDate;
-              });
-            },
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+      builder: (BuildContext context, Widget? child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: kBrown,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: kTextPrimary,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(
+                foregroundColor: kBrown,
+              ),
+            ),
           ),
-        ),
-      ),
+          child: child!,
+        );
+      },
     );
+    
+    if (picked != null) {
+      setState(() {
+        _selectedBirthday = picked;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Updated color palette: removed dark brown, using medium brown and orange
-    const Color kTextPrimary = Color(0xFF6D4C41); // Medium brown for text
-    const Color kBrown = Color(0xFF8D6E63); // Primary brown
-    const Color kLight = Color(0xFFF4E6D4);
 
     return CupertinoPageScaffold(
       backgroundColor: Colors.white,
@@ -302,21 +319,25 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                           color: kLight.withValues(alpha: 0.3),
                           shape: BoxShape.circle,
                         ),
-                        child: Icon(
-                          CupertinoIcons.cube_box_fill,
-                          size: isSmallScreen ? 35 : 45,
-                          color: kBrown,
+                        child: ClipOval(
+                          child: Image.asset(
+                            'assets/images/logo.jpg',
+                            width: isSmallScreen ? 70 : 90,
+                            height: isSmallScreen ? 70 : 90,
+                            fit: BoxFit.cover,
+                          ),
                         ),
                       ),
                       SizedBox(height: isSmallScreen ? 6 : 8),
                       Text(
-                        'SmartSpace',
+                        'Wood Home Furniture Trading',
                         style: GoogleFonts.poppins(
-                          fontSize: isSmallScreen ? 18 : 22,
+                          fontSize: isSmallScreen ? 16 : 20,
                           fontWeight: FontWeight.w700,
                           color: kTextPrimary,
                           decoration: TextDecoration.none,
                         ),
+                        textAlign: TextAlign.center,
                       ),
                       SizedBox(height: isSmallScreen ? 28 : 36),
                     ],
@@ -325,38 +346,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                     // Step content
                     // ------------------------------
                     _buildStepContent(isSmallScreen, kTextPrimary, kBrown, kLight),
-
-                    // ------------------------------
-                    // Error message
-                    // ------------------------------
-                    if (_error != null) ...[
-                      SizedBox(height: isSmallScreen ? 12 : 16),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: CupertinoColors.systemRed.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(CupertinoIcons.exclamationmark_circle, 
-                                color: Colors.black, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _error!,
-                                style: GoogleFonts.poppins(
-                                  color: Colors.black,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.normal,
-                                  decoration: TextDecoration.none,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
 
                     SizedBox(height: isSmallScreen ? 20 : 24),
 
@@ -475,16 +464,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
           textAlign: TextAlign.center,
         ),
         SizedBox(height: isSmallScreen ? 28 : 36),
-        Text(
-          'Email',
-          style: GoogleFonts.poppins(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: kTextPrimary,
-            decoration: TextDecoration.none,
-          ),
-        ),
-        SizedBox(height: isSmallScreen ? 6 : 8),
         StyledTextField(
           controller: _emailController,
           label: 'Email',
@@ -524,16 +503,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
           textAlign: TextAlign.center,
         ),
         SizedBox(height: isSmallScreen ? 28 : 36),
-        Text(
-          'First Name',
-          style: GoogleFonts.poppins(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: kTextPrimary,
-            decoration: TextDecoration.none,
-          ),
-        ),
-        SizedBox(height: isSmallScreen ? 6 : 8),
         StyledTextField(
           controller: _firstNameController,
           label: 'First Name',
@@ -582,16 +551,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
           textAlign: TextAlign.center,
         ),
         SizedBox(height: isSmallScreen ? 28 : 36),
-        Text(
-          'Birthday',
-          style: GoogleFonts.poppins(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: kTextPrimary,
-            decoration: TextDecoration.none,
-          ),
-        ),
-        SizedBox(height: isSmallScreen ? 6 : 8),
         GestureDetector(
           onTap: _showDatePicker,
           child: Container(
@@ -659,16 +618,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
           textAlign: TextAlign.center,
         ),
         SizedBox(height: isSmallScreen ? 28 : 36),
-        Text(
-          'Username',
-          style: GoogleFonts.poppins(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: kTextPrimary,
-            decoration: TextDecoration.none,
-          ),
-        ),
-        SizedBox(height: isSmallScreen ? 6 : 8),
         StyledTextField(
           controller: _usernameController,
           label: 'Username',

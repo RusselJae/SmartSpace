@@ -3,10 +3,11 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
     
     <application
-        android:label="smartspace_ar"
+        android:label="Wood Home Furniture Trading"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
@@ -32,7 +33,27 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Deep linking for email verification -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- Custom URL scheme: smartspace://verify-email?token=... -->
+                <data android:scheme="smartspace" android:host="verify-email" />
+                <!-- HTTP/HTTPS links: https://yourdomain.com/verify-email?token=... -->
+                <data android:scheme="https" android:host="*" android:pathPrefix="/verify-email" />
+                <data android:scheme="http" android:host="*" android:pathPrefix="/verify-email" />
+            </intent-filter>
         </activity>
+        <!-- Native AR editor Activity (launched from Flutter via MethodChannel).
+             Currently a simple UI shell that will later host a full ARCore view. -->
+        <activity
+            android:name=".ArEditorActivity"
+            android:exported="false"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="fullSensor" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

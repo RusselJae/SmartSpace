@@ -6,15 +6,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'package:firebase_core/firebase_core.dart';
+
 import 'screens/onboarding/onboarding_flow.dart';
 import 'screens/shell/tab_shell.dart';
 import 'screens/admin/admin_shell.dart';
 import 'screens/admin/auth/admin_login_page.dart';
 import 'screens/admin/auth/admin_signup_page.dart';
+import 'screens/views/verify_email_screen.dart';
 import 'utils/env_loader.dart';
 import 'services/mysql_database_service.dart';
 import 'config/database_config.dart';
 import 'services/auth_service.dart';
+import 'widgets/loading_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +27,34 @@ Future<void> main() async {
     await EnvLoader.load();
   } catch (e) {
     // Continue even if .env file is missing
+  }
+
+  // Initialize Firebase
+  try {
+    final apiKey = EnvLoader.get('FIREBASE_API_KEY');
+    final appId = EnvLoader.get('FIREBASE_APP_ID');
+    final messagingSenderId = EnvLoader.get('FIREBASE_MESSAGING_SENDER_ID');
+    final projectId = EnvLoader.get('FIREBASE_PROJECT_ID');
+    final storageBucket = EnvLoader.get('FIREBASE_STORAGE_BUCKET');
+
+    if (apiKey.isNotEmpty && appId.isNotEmpty && projectId.isNotEmpty) {
+      await Firebase.initializeApp(
+        options: FirebaseOptions(
+          apiKey: apiKey,
+          appId: appId,
+          messagingSenderId: messagingSenderId,
+          projectId: projectId,
+          storageBucket: storageBucket.isNotEmpty ? storageBucket : '$projectId.appspot.com',
+        ),
+      );
+      developer.log('✅ Firebase initialized successfully');
+    } else {
+      developer.log('⚠️ Firebase credentials not found in .env file');
+      developer.log('📝 Firebase Storage uploads will not work until Firebase is configured.');
+    }
+  } catch (e) {
+    developer.log('⚠️ Firebase initialization failed: $e');
+    developer.log('📝 Firebase Storage uploads will not work until Firebase is configured.');
   }
   
   try {
@@ -45,11 +77,11 @@ Future<void> main() async {
     }
   }());
   
-  runApp(const SmartSpaceApp());
+  runApp(const WoodHomeFurnitureApp());
 }
 
-class SmartSpaceApp extends StatelessWidget {
-  const SmartSpaceApp({super.key});
+class WoodHomeFurnitureApp extends StatelessWidget {
+  const WoodHomeFurnitureApp({super.key});
 
   static final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
@@ -112,7 +144,7 @@ class SmartSpaceApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'SmartSpace AR',
+      title: 'Wood Home Furniture Trading',
       scaffoldMessengerKey: _scaffoldMessengerKey,
       /// Inject the delegates Material widgets require so we never see the
       /// "No MaterialLocalizations found" exception again.
@@ -173,6 +205,12 @@ class SmartSpaceApp extends StatelessWidget {
         AdminShell.route: (_) => const AdminShell(),
         AdminLoginPage.route: (_) => const AdminLoginPage(),
         AdminSignupPage.route: (_) => const AdminSignupPage(),
+        VerifyEmailScreen.route: (context) {
+          // Extract token from URL query parameters
+          final uri = Uri.base;
+          final token = uri.queryParameters['token'];
+          return VerifyEmailScreen(token: token);
+        },
       },
     );
   }
@@ -189,10 +227,13 @@ class _AppInitializer extends StatefulWidget {
 class _AppInitializerState extends State<_AppInitializer> {
   bool _isLoading = true;
   bool _showOnboarding = true;
+  bool _authCheckComplete = false;
+  bool _loadingScreenComplete = false;
 
   @override
   void initState() {
     super.initState();
+    // Start the auth check in parallel with loading screen display
     _checkAuthState();
   }
 
@@ -203,7 +244,11 @@ class _AppInitializerState extends State<_AppInitializer> {
       if (mounted) {
         setState(() {
           _showOnboarding = !auth.isAuthenticated;
-          _isLoading = false;
+          _authCheckComplete = true;
+          // Proceed if loading screen has also completed
+          if (_loadingScreenComplete) {
+            _isLoading = false;
+          }
         });
       }
     } catch (e) {
@@ -211,17 +256,36 @@ class _AppInitializerState extends State<_AppInitializer> {
       if (mounted) {
         setState(() {
           _showOnboarding = true;
-          _isLoading = false;
+          _authCheckComplete = true;
+          // Proceed if loading screen has also completed
+          if (_loadingScreenComplete) {
+            _isLoading = false;
+          }
         });
       }
+    }
+  }
+
+  void _handleLoadingComplete() {
+    // Called when LoadingScreen completes its 3-second display
+    if (mounted) {
+      setState(() {
+        _loadingScreenComplete = true;
+        // Proceed if auth check has also completed
+        if (_authCheckComplete) {
+          _isLoading = false;
+        }
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Material(
-        child: Center(child: CircularProgressIndicator()),
+      // Show custom loading screen while checking auth state
+      // LoadingScreen displays for 3 seconds, then calls onComplete
+      return LoadingScreen(
+        onComplete: _handleLoadingComplete,
       );
     }
     return _showOnboarding ? const OnboardingFlow() : const TabShell();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:smartspace_ar/screens/admin/admin_shell.dart';
 import 'package:smartspace_ar/services/admin_auth_service.dart';
+import 'package:smartspace_ar/widgets/toast.dart';
 
 import '../admin_theme.dart';
 
@@ -93,7 +94,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                       ),
                       const SizedBox(height: 32),
                       Text(
-                        'SmartSpace',
+                        'Wood Home Furniture Trading',
                         style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                               fontWeight: FontWeight.w700,
                               color: AdminPalette.textPrimary,
@@ -231,9 +232,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     final String passwordText = password.text;
 
     if (emailText.isEmpty || passwordText.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter both email and password')),
-      );
+      Toast.warning(context, 'Please enter both email and password');
       return;
     }
 
@@ -243,18 +242,14 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
       final success = await adminAuth.signIn(email: emailText, password: passwordText);
       if (!mounted) return;
       if (!success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid admin credentials')),
-        );
+        Toast.error(context, 'Invalid admin credentials');
         setState(() => isLoading = false);
         return;
       }
       Navigator.of(context).pushReplacementNamed(AdminShell.route);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to sign in: $error')),
-      );
+      Toast.error(context, 'Failed to sign in: $error');
       setState(() => isLoading = false);
     }
   }

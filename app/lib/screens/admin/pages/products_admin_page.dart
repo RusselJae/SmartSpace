@@ -2,12 +2,15 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../../models/product.dart';
 import '../admin_theme.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
-import '../../../services/google_drive_service.dart';
+import '../../../services/backend_storage_service.dart';
+import '../../../widgets/toast.dart';
+import '../../../utils/model_path_helper.dart';
 
 class ProductsAdminPage extends StatefulWidget {
   const ProductsAdminPage({super.key});
@@ -69,9 +72,20 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
 
   List<Product> get _filteredProducts {
     var filtered = _products;
-    if (_segment != 'all') {
+    
+    // Filter by archive status - by default show only non-archived products
+    if (_segment != 'archived') {
+      filtered = filtered.where((p) => !p.isArchived).toList();
+    } else {
+      filtered = filtered.where((p) => p.isArchived).toList();
+    }
+    
+    // Filter by category if not 'all' and not 'archived'
+    if (_segment != 'all' && _segment != 'archived') {
       filtered = filtered.where((p) => p.category.toLowerCase() == _segment).toList();
     }
+    
+    // Apply search query filter
     if (_searchQuery.isNotEmpty) {
       filtered = filtered.where((p) {
         return p.name.toLowerCase().contains(_searchQuery) ||
@@ -80,6 +94,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                p.material.toLowerCase().contains(_searchQuery);
       }).toList();
     }
+    
     return filtered;
   }
 
@@ -108,7 +123,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
     if (!mounted) return;
     final data = await showDialog<_ProductFormData>(
       context: context,
-      builder: (_) => _ProductFormDialog(),
+      builder: (_) => _ProductFormDialog(allProducts: _products),
     );
     if (data == null) return;
     try {
@@ -120,41 +135,35 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
         style: data.style,
         material: data.material,
         color: data.color,
-        size: data.size,
         modelPath: data.modelPath,
+        realWidthM: data.realWidthM,
+        realHeightM: data.realHeightM,
+        realDepthM: data.realDepthM,
+        modelBaseScale: data.modelBaseScale,
         imageUrls: data.imageUrls,
         inventoryQty: data.inventoryQty,
-        isPopular: data.isPopular,
-        isNewArrival: data.isNewArrival,
         inStock: data.inStock,
       );
       if (!mounted) return;
       final message = _db.isConnected
           ? 'Product created successfully and saved to database'
           : 'Product created in memory (API not connected - not saved to database)';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: _db.isConnected ? Colors.green : Colors.orange,
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      if (_db.isConnected) {
+        Toast.success(context, message);
+      } else {
+        Toast.warning(context, message);
+      }
       await _loadProducts();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to create product: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      Toast.error(context, 'Failed to create product: $e');
     }
   }
 
   Future<void> _editProduct(Product product) async {
     final data = await showDialog<_ProductFormData>(
       context: context,
-      builder: (_) => _ProductFormDialog(product: product),
+      builder: (_) => _ProductFormDialog(product: product, allProducts: _products),
     );
     if (data == null) return;
     try {
@@ -167,28 +176,67 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
           style: data.style,
           material: data.material,
           color: data.color,
-          size: data.size,
           modelPath: data.modelPath,
+          realWidthMeters: data.realWidthM,
+          realHeightMeters: data.realHeightM,
+          realDepthMeters: data.realDepthM,
+          modelBaseScale: data.modelBaseScale,
           imageUrls: data.imageUrls,
           inventoryQty: data.inventoryQty,
-          isPopular: data.isPopular,
-          isNewArrival: data.isNewArrival,
           inStock: data.inStock,
+          // Preserve isArchived status when editing
+          isArchived: product.isArchived,
         ),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Product updated successfully'), backgroundColor: Colors.green),
-      );
+      Toast.success(context, 'Product updated successfully');
       await _loadProducts();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update product: $e'),
-          backgroundColor: Colors.red,
-        ),
+      Toast.error(context, 'Failed to update product: $e');
+    }
+  }
+
+  /// Archive a product instead of deleting it
+  /// Archived products are hidden from the main catalog but can be restored
+  Future<void> _archiveProduct(Product product) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Archive product'),
+        content: Text('Archive "${product.name}"? Archived products will be hidden from the catalog but can be restored later.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Archive')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await _db.updateProduct(
+        product.copyWith(isArchived: true),
       );
+      if (!mounted) return;
+      Toast.success(context, 'Product archived successfully');
+      await _loadProducts();
+    } catch (e) {
+      if (!mounted) return;
+      Toast.error(context, 'Failed to archive product: $e');
+    }
+  }
+
+  /// Unarchive a product to restore it to the catalog
+  Future<void> _unarchiveProduct(Product product) async {
+    try {
+      await _db.updateProduct(
+        product.copyWith(isArchived: false),
+      );
+      if (!mounted) return;
+      Toast.success(context, 'Product restored successfully');
+      await _loadProducts();
+    } catch (e) {
+      if (!mounted) return;
+      Toast.error(context, 'Failed to restore product: $e');
     }
   }
 
@@ -197,10 +245,14 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete product'),
-        content: Text('Delete "${product.name}"?'),
+        content: Text('Permanently delete "${product.name}"? This action cannot be undone.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete')),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+          ),
         ],
       ),
     );
@@ -208,18 +260,11 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
     try {
       await _db.deleteProduct(product.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Product deleted successfully'), backgroundColor: Colors.green),
-      );
+      Toast.success(context, 'Product deleted successfully');
       await _loadProducts();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to delete product: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      Toast.error(context, 'Failed to delete product: $e');
     }
   }
 
@@ -229,6 +274,23 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        AdminToolbar(
+          title: 'Catalog',
+          actions: const [],
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              _error!,
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.normal,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Row(
@@ -276,29 +338,13 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
             ],
           ),
         ),
-        AdminToolbar(
-          title: 'Catalog',
-          actions: const [],
-        ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              _error!,
-              style: const TextStyle(
-                color: Colors.black,
-                fontSize: 16,
-                fontWeight: FontWeight.normal,
-                decoration: TextDecoration.none,
-              ),
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: SegmentedButton<String>(
             segments: [
               const ButtonSegment<String>(value: 'all', label: Text('All')),
               ..._categories.map((cat) => ButtonSegment<String>(value: cat.toLowerCase(), label: Text(cat))),
+              const ButtonSegment<String>(value: 'archived', label: Text('Archived')),
             ],
             selected: {_segment},
             onSelectionChanged: (Set<String> values) => setState(() => _segment = values.first),
@@ -335,7 +381,9 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                                 return _ProductRow(
                                   product: product,
                                   onEdit: () => _editProduct(product),
-                                  onDelete: () => _deleteProduct(product),
+                                  onArchive: () => _archiveProduct(product),
+                                  onUnarchive: () => _unarchiveProduct(product),
+                                  isArchivedView: _segment == 'archived',
                                 );
                               },
                             ),
@@ -378,12 +426,16 @@ class _ProductRow extends StatelessWidget {
   const _ProductRow({
     required this.product,
     required this.onEdit,
-    required this.onDelete,
+    required this.onArchive,
+    required this.onUnarchive,
+    this.isArchivedView = false,
   });
 
   final Product product;
   final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback onArchive;
+  final VoidCallback onUnarchive;
+  final bool isArchivedView;
 
   @override
   Widget build(BuildContext context) {
@@ -395,6 +447,8 @@ class _ProductRow extends StatelessWidget {
             flex: 3,
             child: Row(
               children: [
+                // Display 3D model preview if available, otherwise show product image or icon placeholder
+                // Prioritize showing the 3D model preview for a better visual representation
                 Container(
                   height: 36,
                   width: 36,
@@ -402,7 +456,29 @@ class _ProductRow extends StatelessWidget {
                     color: AdminPalette.clay,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.chair_alt_rounded, color: AdminPalette.textPrimary, size: 20),
+                  clipBehavior: Clip.antiAlias,
+                  child: (product.modelPath.isNotEmpty && product.modelPath != 'assets/chair.glb')
+                      ? ModelViewer(
+                          key: ValueKey('${product.id}_admin_preview'),
+                          backgroundColor: AdminPalette.clay,
+                          src: ModelPathHelper.normalize(product.modelPath),
+                          alt: 'Preview of ${product.name}',
+                          ar: false,
+                          autoRotate: false,
+                          cameraControls: false,
+                          disableZoom: true,
+                          interactionPrompt: InteractionPrompt.none,
+                        )
+                      : product.imageUrls.isNotEmpty
+                          ? Image.network(
+                              product.imageUrls.first,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                // Fallback to icon if image fails to load
+                                return const Icon(Icons.chair_alt_rounded, color: AdminPalette.textPrimary, size: 20);
+                              },
+                            )
+                          : const Icon(Icons.chair_alt_rounded, color: AdminPalette.textPrimary, size: 20),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -444,16 +520,26 @@ class _ProductRow extends StatelessWidget {
           ),
           Expanded(
             flex: 2,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: product.inStock ? _tint(Colors.green, .15) : _tint(Colors.red, .15),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                product.inStock ? 'In stock' : 'Out of stock',
-                textAlign: TextAlign.center,
-              ),
+            child: Builder(
+              builder: (context) {
+                // Dynamic stock status based on inventory quantity
+                final isInStock = product.inventoryQty > 0;
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isInStock ? _tint(Colors.green, .15) : _tint(Colors.red, .15),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    isInStock ? 'In Stock' : 'Out of Stock',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w500,
+                      color: isInStock ? Colors.green.shade700 : Colors.red.shade700,
+                    ),
+                  ),
+                );
+              },
             ),
           ),
           const SizedBox(width: 8),
@@ -461,13 +547,18 @@ class _ProductRow extends StatelessWidget {
             onSelected: (value) {
               if (value == 'edit') {
                 onEdit();
-              } else if (value == 'delete') {
-                onDelete();
+              } else if (value == 'archive') {
+                onArchive();
+              } else if (value == 'unarchive') {
+                onUnarchive();
               }
             },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'edit', child: Text('Edit')),
-              PopupMenuItem(value: 'delete', child: Text('Delete')),
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'edit', child: Text('Edit')),
+              if (isArchivedView)
+                const PopupMenuItem(value: 'unarchive', child: Text('Restore')),
+              if (!isArchivedView)
+                const PopupMenuItem(value: 'archive', child: Text('Archive')),
             ],
           ),
         ],
@@ -485,12 +576,13 @@ class _ProductFormData {
     required this.style,
     required this.material,
     required this.color,
-    required this.size,
+    required this.realWidthM,
+    required this.realHeightM,
+    required this.realDepthM,
+    required this.modelBaseScale,
     required this.modelPath,
     required this.imageUrls,
     required this.inventoryQty,
-    required this.isPopular,
-    required this.isNewArrival,
     required this.inStock,
   });
 
@@ -501,19 +593,21 @@ class _ProductFormData {
   final String style;
   final String material;
   final String color;
-  final String size;
+  final double? realWidthM;
+  final double? realHeightM;
+  final double? realDepthM;
+  final double modelBaseScale;
   final String modelPath;
   final List<String> imageUrls;
   final int inventoryQty;
-  final bool isPopular;
-  final bool isNewArrival;
   final bool inStock;
 }
 
 class _ProductFormDialog extends StatefulWidget {
-  const _ProductFormDialog({this.product});
+  const _ProductFormDialog({this.product, required this.allProducts});
 
   final Product? product;
+  final List<Product> allProducts; // Pass all products to extract unique values
 
   @override
   State<_ProductFormDialog> createState() => _ProductFormDialogState();
@@ -523,19 +617,74 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _name;
   late final TextEditingController _description;
   late final TextEditingController _price;
-  late final TextEditingController _category;
-  late final TextEditingController _style;
-  late final TextEditingController _material;
-  late final TextEditingController _color;
-  late final TextEditingController _size;
+  late final TextEditingController _realWidthM;
+  late final TextEditingController _realHeightM;
+  late final TextEditingController _realDepthM;
+  late final TextEditingController _modelBaseScale;
   late final TextEditingController _modelPath;
-  late final TextEditingController _images;
+  late final List<String> _imageUrls;
   late final TextEditingController _inventoryQty;
-  bool _isPopular = false;
-  bool _isNewArrival = false;
+  
+  // Dropdown selected values
+  String? _selectedCategory;
+  String? _selectedStyle;
+  String? _selectedMaterial;
+  String? _selectedColor;
+  
   bool _inStock = true;
+  bool _uploadingImage = false;
   bool _uploadingModel = false;
   String? _uploadError;
+  String? _modelUploadError;
+
+  // Extract unique values from existing products
+  List<String> get _availableCategories {
+    final categories = widget.allProducts.map((p) => p.category).where((c) => c.isNotEmpty).toSet().toList()..sort();
+    // Add common categories if not present
+    final commonCategories = ['Living Room', 'Dining', 'Bedroom', 'Office', 'Outdoor', 'Kids'];
+    for (final cat in commonCategories) {
+      if (!categories.contains(cat)) {
+        categories.add(cat);
+      }
+    }
+    return categories..sort();
+  }
+
+  List<String> get _availableStyles {
+    final styles = widget.allProducts.map((p) => p.style).where((s) => s.isNotEmpty).toSet().toList()..sort();
+    // Add common styles if not present
+    final commonStyles = ['Modern', 'Classic', 'Minimal', 'Industrial', 'Scandinavian', 'Traditional'];
+    for (final style in commonStyles) {
+      if (!styles.contains(style)) {
+        styles.add(style);
+      }
+    }
+    return styles..sort();
+  }
+
+  List<String> get _availableMaterials {
+    final materials = widget.allProducts.map((p) => p.material).where((m) => m.isNotEmpty).toSet().toList()..sort();
+    // Add common materials if not present
+    final commonMaterials = ['Wood', 'Metal', 'Fabric', 'Leather', 'Plastic', 'Glass'];
+    for (final material in commonMaterials) {
+      if (!materials.contains(material)) {
+        materials.add(material);
+      }
+    }
+    return materials..sort();
+  }
+
+  List<String> get _availableColors {
+    final colors = widget.allProducts.map((p) => p.color).where((c) => c.isNotEmpty).toSet().toList()..sort();
+    // Add common colors if not present
+    final commonColors = ['Brown', 'Black', 'White', 'Light Brown', 'Dark Brown', 'Natural', 'Gray', 'Beige'];
+    for (final color in commonColors) {
+      if (!colors.contains(color)) {
+        colors.add(color);
+      }
+    }
+    return colors..sort();
+  }
 
   @override
   void initState() {
@@ -543,71 +692,198 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     final product = widget.product;
     _name = TextEditingController(text: product?.name ?? '');
     _description = TextEditingController(text: product?.description ?? '');
-    _price = TextEditingController(text: product?.price.toString() ?? '');
-    _category = TextEditingController(text: product?.category ?? '');
-    _style = TextEditingController(text: product?.style ?? '');
-    _material = TextEditingController(text: product?.material ?? '');
-    _color = TextEditingController(text: product?.color ?? '');
-    _size = TextEditingController(text: product?.size ?? '');
+    // Format price with commas
+    _price = TextEditingController(text: product != null ? _formatPrice(product.price) : '');
+    _selectedCategory = product?.category.isNotEmpty == true ? product!.category : null;
+    _selectedStyle = product?.style.isNotEmpty == true ? product!.style : null;
+    _selectedMaterial = product?.material.isNotEmpty == true ? product!.material : null;
+    _selectedColor = product?.color.isNotEmpty == true ? product!.color : null;
+    _realWidthM = TextEditingController(text: product?.realWidthMeters?.toStringAsFixed(3) ?? '');
+    _realHeightM = TextEditingController(text: product?.realHeightMeters?.toStringAsFixed(3) ?? '');
+    _realDepthM = TextEditingController(text: product?.realDepthMeters?.toStringAsFixed(3) ?? '');
+    _modelBaseScale = TextEditingController(text: product?.modelBaseScale.toStringAsFixed(2) ?? '1.00');
     _modelPath = TextEditingController(text: product?.modelPath ?? 'assets/chair.glb');
-    _images = TextEditingController(text: product?.imageUrls.join(', ') ?? '');
+    _imageUrls = List<String>.from(product?.imageUrls ?? []);
     _inventoryQty = TextEditingController(text: product?.inventoryQty.toString() ?? '0');
-    _isPopular = product?.isPopular ?? false;
-    _isNewArrival = product?.isNewArrival ?? false;
     _inStock = product?.inStock ?? true;
+    
+    // Add listener to format price as user types
+    _price.addListener(_onPriceChanged);
   }
 
-  /// Uploads a GLB/GTLF file straight into the shared Drive folder and stores
-  /// the public download URL back into the model path text field.
-  Future<void> _pickAndUploadModel() async {
+  /// Format price with commas (e.g., 25000 -> 25,000)
+  String _formatPrice(double price) {
+    final parts = price.toStringAsFixed(2).split('.');
+    final integerPart = parts[0];
+    final decimalPart = parts.length > 1 ? parts[1] : '00';
+    
+    // Add commas to integer part
+    final buffer = StringBuffer();
+    for (int i = 0; i < integerPart.length; i++) {
+      if (i > 0 && (integerPart.length - i) % 3 == 0) {
+        buffer.write(',');
+      }
+      buffer.write(integerPart[i]);
+    }
+    
+    return '${buffer.toString()}.$decimalPart';
+  }
+
+  /// Parse price from formatted string (removes commas)
+  double? _parsePrice(String value) {
+    // Remove commas and parse
+    final cleaned = value.replaceAll(',', '').trim();
+    return double.tryParse(cleaned);
+  }
+
+  /// Handle price input changes - format with commas
+  void _onPriceChanged() {
+    final text = _price.text;
+    final cursorPosition = _price.selection.baseOffset;
+    
+    // Remove all non-digit characters except decimal point
+    final cleaned = text.replaceAll(RegExp(r'[^\d.]'), '');
+    
+    // Parse and reformat
+    final parsed = double.tryParse(cleaned);
+    if (parsed != null) {
+      final formatted = _formatPrice(parsed);
+      if (formatted != text) {
+        _price.value = TextEditingValue(
+          text: formatted,
+          selection: TextSelection.collapsed(
+            offset: formatted.length,
+          ),
+        );
+      }
+    } else if (cleaned.isEmpty) {
+      // Allow empty input
+      _price.value = TextEditingValue(
+        text: '',
+        selection: TextSelection.collapsed(offset: 0),
+      );
+    }
+  }
+
+  /// Uploads product images to the backend server
+  Future<void> _pickAndUploadImages() async {
+    if (_imageUrls.length >= 10) {
+      Toast.warning(context, 'Maximum 10 images allowed');
+      return;
+    }
+
     setState(() {
       _uploadError = null;
     });
 
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['glb', 'gltf'],
+      type: FileType.image,
+      allowMultiple: true,
       withData: true,
     );
 
-    if (result == null) {
+    if (result == null || result.files.isEmpty) {
       return;
     }
 
-    final picked = result.files.single;
-    final bytes = picked.bytes;
+    final remainingSlots = 10 - _imageUrls.length;
+    final filesToUpload = result.files.take(remainingSlots).toList();
 
-    if (bytes == null) {
+    setState(() {
+      _uploadingImage = true;
+    });
+
+    try {
+      final handle = _deriveProductHandle();
+      final uploadedUrls = <String>[];
+
+      for (final file in filesToUpload) {
+        if (file.bytes == null) continue;
+
+        final uploadResult = await BackendStorageService.instance.uploadImage(
+          productHandle: handle,
+          fileName: file.name,
+          bytes: file.bytes!,
+        );
+        uploadedUrls.add(uploadResult.downloadUrl);
+      }
+
       setState(() {
-        _uploadError = 'Unable to read the file bytes. Please retry on a platform that supports in-memory reads.';
+        _imageUrls.addAll(uploadedUrls);
       });
+
+      if (!mounted) return;
+      Toast.success(context, '${uploadedUrls.length} image(s) uploaded successfully');
+    } catch (error) {
+      setState(() {
+        _uploadError = 'Upload failed: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploadingImage = false;
+        });
+      }
+    }
+  }
+
+  void _removeImage(int index) {
+    setState(() {
+      _imageUrls.removeAt(index);
+    });
+  }
+
+  /// Uploads a 3D model file (.glb or .gltf) to the backend server
+  /// Automatically updates the model path field with the uploaded file path
+  Future<void> _pickAndUploadModel() async {
+    setState(() {
+      _modelUploadError = null;
+    });
+
+    // Pick a single 3D model file (.glb or .gltf)
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['glb', 'gltf'],
+      withData: true,
+    );
+
+    if (result == null || result.files.isEmpty || result.files.first.bytes == null) {
       return;
     }
+
+    final file = result.files.first;
 
     setState(() {
       _uploadingModel = true;
     });
 
     try {
+      // Derive product handle for folder organization
       final handle = _deriveProductHandle();
-      final uploadResult = await GoogleDriveService.instance.uploadModel(
+
+      // Upload the model file to backend storage
+      final uploadResult = await BackendStorageService.instance.uploadModel(
         productHandle: handle,
-        fileName: picked.name,
-        bytes: bytes,
+        fileName: file.name,
+        bytes: file.bytes!,
       );
 
+      // Update the model path field with the relative path format
+      // The backend returns filePath as 'product-handle/file.glb' (relative to modelsDir)
+      // We prepend '/uploads/models/' so ModelPathHelper can normalize it to a full URL
+      // ModelPathHelper expects paths starting with '/uploads' or 'uploads/'
       setState(() {
-        _modelPath.text = uploadResult.downloadUrl;
+        _modelPath.text = '/uploads/models/${uploadResult.filePath}';
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Model uploaded to Drive as ${uploadResult.fileName}')),
-      );
+      Toast.success(context, '3D model uploaded successfully');
     } catch (error) {
       setState(() {
-        _uploadError = 'Drive upload failed: $error';
+        _modelUploadError = 'Model upload failed: $error';
       });
+      if (!mounted) return;
+      Toast.error(context, 'Failed to upload 3D model: $error');
     } finally {
       if (mounted) {
         setState(() {
@@ -634,31 +910,55 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   void dispose() {
     _name.dispose();
     _description.dispose();
+    _price.removeListener(_onPriceChanged);
     _price.dispose();
-    _category.dispose();
-    _style.dispose();
-    _material.dispose();
-    _color.dispose();
-    _size.dispose();
+    _realWidthM.dispose();
+    _realHeightM.dispose();
+    _realDepthM.dispose();
+    _modelBaseScale.dispose();
     _modelPath.dispose();
-    _images.dispose();
     _inventoryQty.dispose();
     super.dispose();
   }
 
   void _submit() {
-    final parsedPrice = double.tryParse(_price.text.trim());
-    if (parsedPrice == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid price')));
+    // Parse price (handles comma formatting)
+    final parsedPrice = _parsePrice(_price.text);
+    if (parsedPrice == null || parsedPrice <= 0) {
+      Toast.warning(context, 'Enter a valid price');
       return;
     }
+    
+    // Validate required dropdowns
+    if (_selectedCategory == null || _selectedCategory!.isEmpty) {
+      Toast.warning(context, 'Please select a category');
+      return;
+    }
+    if (_selectedStyle == null || _selectedStyle!.isEmpty) {
+      Toast.warning(context, 'Please select a style');
+      return;
+    }
+    if (_selectedMaterial == null || _selectedMaterial!.isEmpty) {
+      Toast.warning(context, 'Please select a material');
+      return;
+    }
+    if (_selectedColor == null || _selectedColor!.isEmpty) {
+      Toast.warning(context, 'Please select a color');
+      return;
+    }
+    
     final parsedInventoryQty = int.tryParse(_inventoryQty.text.trim());
+    final double? widthM = double.tryParse(_realWidthM.text.trim().replaceAll(',', '.'));
+    final double? heightM = double.tryParse(_realHeightM.text.trim().replaceAll(',', '.'));
+    final double? depthM = double.tryParse(_realDepthM.text.trim().replaceAll(',', '.'));
+    final double baseScale =
+        double.tryParse(_modelBaseScale.text.trim().replaceAll(',', '.')) ?? 1.0;
     if (parsedInventoryQty == null || parsedInventoryQty < 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid inventory quantity (0 or greater)')));
+      Toast.warning(context, 'Enter a valid inventory quantity (0 or greater)');
       return;
     }
     if (_name.text.trim().isEmpty || _modelPath.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name and model path are required')));
+      Toast.warning(context, 'Name and model path are required');
       return;
     }
 
@@ -666,16 +966,17 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       name: _name.text.trim(),
       description: _description.text.trim(),
       price: parsedPrice,
-      category: _category.text.trim().isEmpty ? 'General' : _category.text.trim(),
-      style: _style.text.trim().isEmpty ? 'Modern' : _style.text.trim(),
-      material: _material.text.trim().isEmpty ? 'Wood' : _material.text.trim(),
-      color: _color.text.trim().isEmpty ? 'Brown' : _color.text.trim(),
-      size: _size.text.trim().isEmpty ? 'M' : _size.text.trim(),
+      category: _selectedCategory!,
+      style: _selectedStyle!,
+      material: _selectedMaterial!,
+      color: _selectedColor!,
+      realWidthM: widthM,
+      realHeightM: heightM,
+      realDepthM: depthM,
+      modelBaseScale: baseScale,
       modelPath: _modelPath.text.trim(),
-      imageUrls: _images.text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList(),
+      imageUrls: _imageUrls,
       inventoryQty: parsedInventoryQty,
-      isPopular: _isPopular,
-      isNewArrival: _isNewArrival,
       inStock: _inStock,
     );
     Navigator.of(context).pop(data);
@@ -693,22 +994,55 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
             children: [
               _buildField(_name, 'Name'),
               _buildField(_description, 'Description', maxLines: 3),
-              _buildField(_price, 'Price', keyboardType: TextInputType.number),
-              _buildField(_category, 'Category'),
-              _buildField(_style, 'Style'),
-              _buildField(_material, 'Material'),
-              _buildField(_color, 'Color'),
-              _buildField(_size, 'Size'),
+              _buildPriceField(),
+              _buildDropdownField(
+                label: 'Category',
+                value: _selectedCategory,
+                items: _availableCategories,
+                onChanged: (value) => setState(() => _selectedCategory = value),
+              ),
+              _buildDropdownField(
+                label: 'Style',
+                value: _selectedStyle,
+                items: _availableStyles,
+                onChanged: (value) => setState(() => _selectedStyle = value),
+              ),
+              _buildDropdownField(
+                label: 'Material',
+                value: _selectedMaterial,
+                items: _availableMaterials,
+                onChanged: (value) => setState(() => _selectedMaterial = value),
+              ),
+              _buildDropdownField(
+                label: 'Color',
+                value: _selectedColor,
+                items: _availableColors,
+                onChanged: (value) => setState(() => _selectedColor = value),
+              ),
+          Row(
+            children: [
+              Expanded(child: _buildField(_realWidthM, 'Width (m)', keyboardType: TextInputType.number)),
+              const SizedBox(width: 8),
+              Expanded(child: _buildField(_realHeightM, 'Height (m)', keyboardType: TextInputType.number)),
+              const SizedBox(width: 8),
+              Expanded(child: _buildField(_realDepthM, 'Depth (m)', keyboardType: TextInputType.number)),
+            ],
+          ),
+          _buildField(_modelBaseScale, 'Model base scale', keyboardType: TextInputType.number),
+              const SizedBox(height: 8),
+              // 3D Model Upload Section
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildField(_modelPath, '3D Model path or URL'),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      Text(
+                        '3D Model',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       FilledButton.icon(
                         onPressed: _uploadingModel ? null : _pickAndUploadModel,
                         icon: _uploadingModel
@@ -717,48 +1051,156 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                                 height: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : const Icon(Icons.cloud_upload_rounded),
-                        label: Text(_uploadingModel ? 'Uploading...' : 'Upload to Drive'),
-                      ),
-                      Flexible(
-                        child: Text(
-                          'Uploads are stored per-product inside the shared Google Drive catalog so AR previews always fetch from the cloud.',
-                          style: Theme.of(context).textTheme.bodySmall,
+                            : const Icon(Icons.upload_file, size: 18),
+                        label: const Text('Upload Model'),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         ),
                       ),
                     ],
                   ),
-                  if (_uploadError != null)
+                  const SizedBox(height: 8),
+                  // Display current model path (editable text field)
+                  _buildField(_modelPath, 'Model path (.glb or .gltf file)', keyboardType: TextInputType.text),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Upload a .glb or .gltf file, or enter a path manually (e.g., assets/chair.glb or /uploads/models/...)',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontStyle: FontStyle.italic,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  if (_modelUploadError != null)
                     Padding(
-                      padding: const EdgeInsets.only(top: 6),
+                      padding: const EdgeInsets.only(top: 8),
                       child: Text(
-                        _uploadError!,
+                        _modelUploadError!,
                         style: const TextStyle(
-                          color: Colors.black,
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          decoration: TextDecoration.none,
+                          color: Colors.red,
+                          fontSize: 12,
                         ),
                       ),
                     ),
                 ],
               ),
-              _buildField(_images, 'Image URLs (comma separated)'),
+              const SizedBox(height: 12),
+              // Product Images Section
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Product Images (${_imageUrls.length}/10)',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (_imageUrls.length < 10)
+                        FilledButton.icon(
+                          onPressed: _uploadingImage ? null : _pickAndUploadImages,
+                          icon: _uploadingImage
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.add_photo_alternate, size: 18),
+                          label: const Text('Add Images'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_imageUrls.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'No images added. Click "Add Images" to upload.',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: List.generate(_imageUrls.length, (index) {
+                        return Stack(
+                          children: [
+                            Container(
+                              width: 80,
+                              height: 80,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              clipBehavior: Clip.hardEdge,
+                              child: Image.network(
+                                _imageUrls[index],
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: Colors.grey.shade200,
+                                    child: const Icon(Icons.broken_image),
+                                  );
+                                },
+                              ),
+                            ),
+                            Positioned(
+                              top: -4,
+                              right: -4,
+                              child: IconButton(
+                                icon: const Icon(Icons.close, color: Colors.red),
+                                iconSize: 20,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () => _removeImage(index),
+                              ),
+                            ),
+                          ],
+                        );
+                      }),
+                    ),
+                  if (_uploadError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        _uploadError!,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
               _buildField(_inventoryQty, 'Inventory Quantity', keyboardType: TextInputType.number),
-              SwitchListTile(
-                value: _isPopular,
-                title: const Text('Mark as popular'),
-                onChanged: (value) => setState(() => _isPopular = value),
-              ),
-              SwitchListTile(
-                value: _isNewArrival,
-                title: const Text('Mark as new arrival'),
-                onChanged: (value) => setState(() => _isNewArrival = value),
-              ),
               SwitchListTile(
                 value: _inStock,
                 title: const Text('In stock'),
                 onChanged: (value) => setState(() => _inStock = value),
+              ),
+              // Note: Popular and New Arrival are now automatic
+              // - New Arrival: Products created within the last week
+              // - Popular: Based on number of orders for the product
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Note: Popular and New Arrival status are automatically calculated based on order history and creation date.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontStyle: FontStyle.italic,
+                    color: Colors.grey[600],
+                  ),
+                ),
               ),
             ],
           ),
@@ -796,6 +1238,77 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
             borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Build price field with comma formatting
+  Widget _buildPriceField() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: TextField(
+        controller: _price,
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(
+          labelText: 'Price',
+          labelStyle: const TextStyle(color: Color(0xFF6D4C41)),
+          filled: true,
+          fillColor: const Color(0xFFF8F8F8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+          ),
+          prefixText: '₱',
+        ),
+      ),
+    );
+  }
+
+  /// Build dropdown field for category, style, material, and color
+  Widget _buildDropdownField({
+    required String label,
+    required String? value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: DropdownButtonFormField<String>(
+        value: value,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Color(0xFF6D4C41)),
+          filled: true,
+          fillColor: const Color(0xFFF8F8F8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+          ),
+        ),
+        items: items.map((item) {
+          return DropdownMenuItem<String>(
+            value: item,
+            child: Text(item),
+          );
+        }).toList(),
+        onChanged: onChanged,
+        hint: Text('Select $label', style: TextStyle(color: Colors.grey[600])),
       ),
     );
   }

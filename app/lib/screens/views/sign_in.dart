@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../services/auth_service.dart';
 import '../../widgets/styled_text_field.dart';
+import '../../widgets/toast.dart';
+import '../../widgets/loading_screen.dart';
 import '../shell/tab_shell.dart';
 import 'sign_up.dart';
 
@@ -31,7 +33,6 @@ class _SignInScreenState extends State<SignInScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _loading = false;
-  String? _error;
 
   @override
   void dispose() {
@@ -42,13 +43,12 @@ class _SignInScreenState extends State<SignInScreen> {
 
   Future<void> _handleSignIn() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      setState(() => _error = 'Please fill in all fields');
+      Toast.warning(context, 'Please fill in all fields');
       return;
     }
 
     setState(() {
       _loading = true;
-      _error = null;
     });
 
     try {
@@ -57,67 +57,74 @@ class _SignInScreenState extends State<SignInScreen> {
         password: _passwordController.text,
       );
       if (!mounted) return;
-      // Close the fullscreen dialog and navigate to main app
+      // Show loading screen before navigating to main app
       Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
         CupertinoPageRoute(
-          builder: (_) => const TabShell(),
+          builder: (_) => LoadingScreen(
+            message: 'Welcome back!',
+            nextBuilder: (_) => const TabShell(),
+          ),
         ),
         (route) => false,
       );
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Invalid username or password';
         _loading = false;
       });
+      Toast.error(context, 'Invalid username or password');
     }
   }
 
   Future<void> _handleGoogleSignIn() async {
     setState(() {
       _loading = true;
-      _error = null;
     });
     try {
       await _auth.signInWithGoogle();
       if (!mounted) return;
-      // Close the fullscreen dialog and navigate to main app
+      // Show loading screen before navigating to main app
       Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
         CupertinoPageRoute(
-          builder: (_) => const TabShell(),
+          builder: (_) => LoadingScreen(
+            message: 'Welcome back!',
+            nextBuilder: (_) => const TabShell(),
+          ),
         ),
         (route) => false,
       );
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Google Sign In is not yet available';
         _loading = false;
       });
+      Toast.info(context, 'Google Sign In is not yet available');
     }
   }
 
   Future<void> _handleFacebookSignIn() async {
     setState(() {
       _loading = true;
-      _error = null;
     });
     try {
       await _auth.signInWithFacebook();
       if (!mounted) return;
-      // Close the fullscreen dialog and navigate to main app
+      // Show loading screen before navigating to main app
       Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
         CupertinoPageRoute(
-          builder: (_) => const TabShell(),
+          builder: (_) => LoadingScreen(
+            message: 'Welcome back!',
+            nextBuilder: (_) => const TabShell(),
+          ),
         ),
         (route) => false,
       );
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Facebook Sign In is not yet available';
         _loading = false;
       });
+      Toast.info(context, 'Facebook Sign In is not yet available');
     }
   }
 
@@ -180,52 +187,27 @@ class _SignInScreenState extends State<SignInScreen> {
                       color: kLight.withValues(alpha: 0.3),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(
-                      CupertinoIcons.cube_box_fill,
-                      size: isSmallScreen ? 40 : 50,
-                      color: kBrown,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/logo.jpg',
+                        width: isSmallScreen ? 80 : 100,
+                        height: isSmallScreen ? 80 : 100,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   SizedBox(height: isSmallScreen ? 6 : 8),
                   Text(
-                    'SmartSpace',
+                    'Wood Home Furniture Trading',
                     style: GoogleFonts.poppins(
-                      fontSize: isSmallScreen ? 20 : 24,
+                      fontSize: isSmallScreen ? 18 : 22,
                       fontWeight: FontWeight.w700,
                       color: kTextPrimary,
                       decoration: TextDecoration.none,
                     ),
+                    textAlign: TextAlign.center,
                   ),
                   SizedBox(height: isSmallScreen ? 32 : 40),
-
-                  // Error message
-                  if (_error != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: CupertinoColors.systemRed.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(CupertinoIcons.exclamationmark_circle, color: Colors.black, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              _error!,
-                              style: GoogleFonts.poppins(
-                                color: Colors.black,
-                                fontSize: 16,
-                                fontWeight: FontWeight.normal,
-                                decoration: TextDecoration.none,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(height: isSmallScreen ? 12 : 16),
-                  ],
 
                   // ------------------------------
                   // Email field

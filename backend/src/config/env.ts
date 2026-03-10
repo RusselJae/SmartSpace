@@ -16,6 +16,17 @@ type EnvironmentConfig = {
     readonly timeout: number;
     readonly connectionLimit: number;
   };
+  readonly email: {
+    readonly host: string;
+    readonly port: number;
+    readonly secure: boolean;
+    readonly username: string | undefined;
+    readonly password: string | undefined;
+    readonly from: string;
+  };
+  readonly frontend: {
+    readonly url: string;
+  };
 };
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -43,6 +54,17 @@ export const config: EnvironmentConfig = {
     password: process.env.DB_PASSWORD ?? 'password',
     timeout: parseNumber(process.env.DB_TIMEOUT, 5),
     connectionLimit: parseNumber(process.env.DB_CONNECTION_LIMIT, 10),
+  },
+  email: {
+    host: process.env.SMTP_HOST ?? process.env.SMTP_SERVER ?? 'smtp.gmail.com',
+    port: parseNumber(process.env.SMTP_PORT, 587),
+    secure: parseBoolean(process.env.SMTP_SECURE, false),
+    username: process.env.SMTP_USERNAME ?? process.env.SMTP_USER,
+    password: process.env.SMTP_PASSWORD ?? process.env.SMTP_PASS,
+    from: process.env.SMTP_FROM ?? 'Wood Home Furniture Trading <noreply@woodhomefurniture.com>',
+  },
+  frontend: {
+    url: process.env.FRONTEND_URL ?? 'http://localhost:3000',
   },
 };
 

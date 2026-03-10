@@ -38,8 +38,17 @@
   <!-- Web Configuration: API Base URL -->
   <script>
     // Set API configuration for Flutter Web
+    // 
+    // For local development: use http://localhost:4000/api
+    // For accessing from another device on your network: use http://YOUR_IPv4_ADDRESS:4000/api
+    // 
+    // To find your IPv4 address:
+    //   Windows: Run "ipconfig" in Command Prompt, look for "IPv4 Address"
+    //   Mac/Linux: Run "ifconfig" in Terminal, look for "inet" under your network interface
+    // 
+    // Example: http://192.168.1.100:4000/api
     window.flutterConfig = {
-      apiBaseUrl: 'http://localhost:4000/api',
+      apiBaseUrl: 'http://192.168.254.104/api',
       apiTimeout: 10
     };
   </script>

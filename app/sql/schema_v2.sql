@@ -113,8 +113,11 @@ CREATE TABLE products (
     style           VARCHAR(100) NOT NULL,
     material        VARCHAR(100) NOT NULL,
     color           VARCHAR(100) NOT NULL,
-    size            VARCHAR(50)  NOT NULL,
     model_path      VARCHAR(500) NOT NULL,
+    real_width_m    DECIMAL(6,3) DEFAULT NULL,
+    real_height_m   DECIMAL(6,3) DEFAULT NULL,
+    real_depth_m    DECIMAL(6,3) DEFAULT NULL,
+    model_base_scale DECIMAL(5,2) DEFAULT 1.00,
     cover_image_url VARCHAR(500),
     image_urls      JSON,
     rating          DECIMAL(3,2) DEFAULT 0,
@@ -149,10 +152,16 @@ CREATE TABLE product_media (
 CREATE TABLE reviews (
     id         VARCHAR(50) PRIMARY KEY,
     product_id VARCHAR(50) NOT NULL,
+    -- Denormalized product name for quick display without joins
+    product_name VARCHAR(255) NOT NULL,
     user_id    VARCHAR(50) NOT NULL,
+    -- Denormalized user name for quick display without joins
+    user_name  VARCHAR(150) NOT NULL,
     rating     TINYINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
     content    TEXT,
-    status     ENUM('pending','published','flagged','archived') DEFAULT 'pending',
+    -- Reviews are now auto‑accepted: default to "published" so new rows are
+    -- immediately visible on the storefront and in the admin read‑only view.
+    status     ENUM('pending','published','flagged','archived') DEFAULT 'published',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_reviews_product
@@ -240,19 +249,35 @@ INSERT INTO user_addresses (
  'Home', TRUE);
 
 INSERT INTO products (
-    id, name, description, price, category, style, material, color, size,
-    model_path, cover_image_url, image_urls, rating, review_count,
+    id, name, description, price, category, style, material, color,
+    model_path, real_width_m, real_height_m, real_depth_m, model_base_scale,
+    cover_image_url, image_urls, rating, review_count,
     inventory_qty, is_popular, is_new_arrival, in_stock
 ) VALUES
 ('p1', 'Modern Dining Chair', 'Elegant wooden dining chair with comfortable cushioning',
- 299.99, 'Dining', 'Modern', 'Wood', 'Brown', 'M',
- 'assets/chair.glb', NULL, JSON_ARRAY(), 4.5, 128, 12, TRUE, FALSE, TRUE),
+ 299.99, 'Dining', 'Modern', 'Wood', 'Brown',
+ 'assets/chair.glb', 0.450, 0.880, 0.520, 1.00,
+ NULL, JSON_ARRAY(), 4.5, 128, 12, TRUE, FALSE, TRUE),
 ('p2', 'Executive Office Chair', 'Premium leather office chair with ergonomic design',
- 599.99, 'Office', 'Classic', 'Leather', 'Black', 'L',
- 'assets/chair.glb', NULL, JSON_ARRAY(), 4.8, 89, 8, TRUE, TRUE, TRUE),
+ 599.99, 'Office', 'Classic', 'Leather', 'Black',
+ 'assets/chair.glb', 0.600, 1.100, 0.650, 1.00,
+ NULL, JSON_ARRAY(), 4.8, 89, 8, TRUE, TRUE, TRUE),
 ('p3', 'Minimalist Lounge Chair', 'Simple yet elegant chair perfect for living rooms',
- 449.99, 'Living Room', 'Minimal', 'Fabric', 'Light Brown', 'M',
- 'assets/chair.glb', NULL, JSON_ARRAY(), 4.3, 67, 5, FALSE, TRUE, TRUE);
+ 449.99, 'Living Room', 'Minimal', 'Fabric', 'Light Brown',
+ 'assets/chair.glb', 0.700, 0.850, 0.750, 1.00,
+ NULL, JSON_ARRAY(), 4.3, 67, 5, FALSE, TRUE, TRUE);
+
+-- Example large item demonstrating ft→m conversion (4ft x 3ft x 2.5ft)
+INSERT INTO products (
+    id, name, description, price, category, style, material, color,
+    model_path, real_width_m, real_height_m, real_depth_m, model_base_scale,
+    cover_image_url, image_urls, rating, review_count,
+    inventory_qty, is_popular, is_new_arrival, in_stock
+) VALUES
+('p4', 'Wooden Dining Table', 'Sturdy rectangular dining table that supports up to six seats',
+ 899.99, 'Dining', 'Rustic', 'Wood', 'Natural',
+ 'assets/wooden_dining_table.glb', 1.219, 0.762, 0.914, 1.00,
+ NULL, JSON_ARRAY(), 4.6, 54, 4, TRUE, FALSE, TRUE);
 
 INSERT INTO product_media (id, product_id, media_url, sort_order) VALUES
 ('pm1', 'p1', 'https://cdn.smartspace.app/products/p1/hero.jpg', 0),
@@ -268,9 +293,9 @@ INSERT INTO cart_items (id, user_id, product_id, quantity, unit_price, notes) VA
 ('cart2', 'u_demo', 'p3', 2, 449.99, 'Duplicate order reminder');
 
 INSERT INTO reviews (
-    id, product_id, user_id, rating, content, status
+    id, product_id, product_name, user_id, user_name, rating, content, status
 ) VALUES
-('r1', 'p1', 'u_demo', 5, 'Incredible craftsmanship. The chair elevates my dining nook.', 'published');
+('r1', 'p1', 'Modern Dining Chair', 'u_demo', 'Russel Jae Dahonog', 5, 'Incredible craftsmanship. The chair elevates my dining nook.', 'published');
 
 INSERT INTO orders (
     id, user_id, contact_name, contact_phone, shipping_label,

@@ -15,6 +15,10 @@ export interface User {
   readonly maxBudget?: number;
   readonly createdAt: Date;
   readonly lastLoginAt?: Date;
+  readonly emailVerified: boolean;
+  readonly verificationToken?: string;
+  readonly verificationTokenExpires?: Date;
+  readonly verificationCode?: string;
 }
 
 

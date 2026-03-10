@@ -14,7 +14,13 @@ import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
+import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
+
+// Color constants matching the app's design system
+const _inkTitle = Color(0xFF6D4C41); // Medium brown for text
+const _inkBody = Color(0xFF5F5B56); // Body text color
+const _coffeePrimary = Color(0xFF8D6E63); // Primary brown
 
 class MyProfileScreen extends StatefulWidget {
   const MyProfileScreen({super.key});
@@ -59,7 +65,8 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       }
       return;
     }
-    // Try to load from server first
+    // Try to load from server first - this ensures we get the most up-to-date data
+    // including dateOfBirth that was saved during signup or profile updates
     try {
       final serverUsers = await _db.getAllUsers();
       final serverUser = serverUsers.firstWhere((u) => u.id == user.id, orElse: () => user);
@@ -70,19 +77,23 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       if (serverUser.gender != null) {
         _gender = Gender.values.firstWhere((g) => g.name == serverUser.gender, orElse: () => Gender.other);
       }
+      // Prioritize server dateOfBirth - this ensures we display the birthday from signup
+      // or the most recently saved birthday from the server
       _dateOfBirth = serverUser.dateOfBirth;
       
       // Load avatar from server (base64 data URL)
       await _applyServerAvatar(serverUser.avatarUrl);
     } catch (e) {
-      // Fallback to local storage
+      // Fallback to local storage if server fetch fails
       final extras = await _storage.loadExtras(user);
       _usernameController.text = extras.username;
       _nameController.text = user.fullName;
       _emailController.text = user.email;
       _phoneController.text = user.phoneNumber ?? '';
       _gender = extras.gender;
-      _dateOfBirth = extras.dateOfBirth;
+      // Use local dateOfBirth as fallback, but prioritize user's dateOfBirth if available
+      // This ensures we show the birthday from signup even if local storage is outdated
+      _dateOfBirth = user.dateOfBirth ?? extras.dateOfBirth;
       _avatarPath = extras.avatarPath;
       if (_avatarPath != null && await File(_avatarPath!).exists()) {
         _avatarBytes = await File(_avatarPath!).readAsBytes();
@@ -140,7 +151,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         // Decode image to compress it further if needed
         final decodedImage = img.decodeImage(fileBytes);
         if (decodedImage == null) {
-          if (mounted) _showToast('Failed to process image');
+          if (mounted) Toast.error(context, 'Failed to process image');
           return;
         }
         
@@ -163,12 +174,12 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         // Final size check
         const maxSizeBytes = 5 * 1024 * 1024; // 5MB limit
         if (imageBytes.length > maxSizeBytes) {
-          if (mounted) _showToast('Image is too large (max 5 MB). Please choose a smaller image.');
+          if (mounted) Toast.warning(context, 'Image is too large (max 5 MB). Please choose a smaller image.');
           return;
         }
       } catch (e) {
         debugPrint('Image processing error: $e');
-        if (mounted) _showToast('Failed to process image: $e');
+        if (mounted) Toast.error(context, 'Failed to process image: $e');
         return;
       }
       
@@ -186,98 +197,54 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       debugPrint('Image selection error: $e');
       debugPrint('Stack trace: $stackTrace');
       if (mounted) {
-        _showToast('Failed to select image. Please try again.');
+        Toast.error(context, 'Failed to select image. Please try again.');
       }
     }
   }
 
   Future<void> _pickDob() async {
-    DateTime? selectedDate = _dateOfBirth;
+    final DateTime now = DateTime.now();
+    final DateTime firstDate = DateTime(1950, 1, 1);
+    final DateTime lastDate = DateTime.now();
+    final DateTime initialDate = _dateOfBirth ?? DateTime(now.year - 18, 1, 1);
     
-    await showCupertinoModalPopup<void>(
+    final DateTime? picked = await showDatePicker(
       context: context,
-      builder: (BuildContext context) {
-        final baseTheme = CupertinoTheme.of(context);
-        return CupertinoTheme(
-          data: baseTheme.copyWith(
-            brightness: Brightness.light,
-            textTheme: baseTheme.textTheme.copyWith(
-              dateTimePickerTextStyle: GoogleFonts.poppins(
-                color: Colors.black87,
-                fontSize: 18,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+      builder: (BuildContext context, Widget? child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: _coffeePrimary,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: _inkTitle,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(
+                foregroundColor: _coffeePrimary,
               ),
             ),
           ),
-          child: Container(
-            height: 300,
-            decoration: BoxDecoration(
-              color: CupertinoColors.systemBackground.resolveFrom(context),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.3)),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: Text('Cancel', style: GoogleFonts.poppins(color: CupertinoColors.systemBlue)),
-                      ),
-                      Text(
-                        'Select Date',
-                        style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
-                      ),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: () {
-                          if (selectedDate != null) {
-                            Navigator.of(context).pop(selectedDate);
-                          }
-                        },
-                        child: Text('Done', style: GoogleFonts.poppins(color: CupertinoColors.systemBlue, fontWeight: FontWeight.w600)),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: CupertinoDatePicker(
-                    backgroundColor: CupertinoColors.systemBackground.resolveFrom(context),
-                    mode: CupertinoDatePickerMode.date,
-                    initialDateTime: selectedDate ?? DateTime(2000, 1, 1),
-                    maximumDate: DateTime.now(),
-                    minimumYear: 1950,
-                    onDateTimeChanged: (DateTime newDate) {
-                      selectedDate = newDate;
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
+          child: child!,
         );
       },
-    ).then((dynamic value) {
-      if (value != null && value is DateTime) {
-        setState(() {
-          _dateOfBirth = value;
-        });
-      }
-    });
+    );
+    
+    if (picked != null && picked != _dateOfBirth) {
+      setState(() {
+        _dateOfBirth = picked;
+      });
+    }
   }
 
   Future<void> _saveProfile() async {
     final user = _auth.currentUser;
     if (user == null) return;
     if (_nameController.text.trim().isEmpty) {
-      _showToast('Name cannot be empty');
+      Toast.warning(context, 'Name cannot be empty');
       return;
     }
 
@@ -286,7 +253,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     });
 
     try {
-      // Sync to server
+      // Sync to server - upload avatar first if it was changed
       String? avatarPayload = _serverAvatarValue;
       if (_avatarDirty && _avatarBytes != null) {
         final normalizedName = (_avatarPath != null && _avatarPath!.isNotEmpty)
@@ -298,31 +265,42 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
           fileName: normalizedName,
         );
       }
+      // Update user on server - include dateOfBirth even if null to ensure it's properly synced
+      // This ensures the server has the latest birthday value
       final updatedUser = await _db.updateUser(
         userId: user.id,
         fullName: _nameController.text.trim(),
         username: _usernameController.text.trim(),
         phoneNumber: _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
         gender: _gender.name,
-        dateOfBirth: _dateOfBirth,
+        dateOfBirth: _dateOfBirth, // Send current dateOfBirth value to server
         avatarUrl: avatarPayload,
       );
 
-      // Update local session
+      // Update local session with the user data returned from server
+      // This ensures we have the server's version of the data, including dateOfBirth
       await _auth.updateCurrentUser(updatedUser);
       await _applyServerAvatar(updatedUser.avatarUrl);
+      
+      // CRITICAL: Update _dateOfBirth from the server response to ensure consistency
+      // This prevents the birthday from reverting to an old value
+      // The server's response is the source of truth
+      if (updatedUser.dateOfBirth != null) {
+        _dateOfBirth = updatedUser.dateOfBirth;
+      }
 
       // Save extras locally for backward compatibility
+      // Use the server's dateOfBirth value to ensure local storage matches server
       final extras = ProfileExtras(
         username: _usernameController.text.trim(),
         gender: _gender,
-        dateOfBirth: _dateOfBirth,
+        dateOfBirth: updatedUser.dateOfBirth ?? _dateOfBirth, // Prioritize server value
         avatarPath: _avatarPath,
       );
       await _storage.saveExtras(updatedUser.id, extras);
 
       if (!mounted) return;
-      _showToast('Profile saved');
+      Toast.success(context, 'Profile saved');
       
       // Pop the screen to return to profile tab, which will refresh
       if (mounted) {
@@ -330,7 +308,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      _showToast('Failed to save profile: $e');
+      Toast.error(context, 'Failed to save profile: $e');
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -338,14 +316,6 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     }
   }
 
-  void _showToast(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: GoogleFonts.poppins()),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
 
   Widget _buildLabel(String text) {
     return Padding(
@@ -355,7 +325,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         style: GoogleFonts.poppins(
           fontSize: 13,
           fontWeight: FontWeight.w500,
-          color: Colors.black87,
+          color: _inkTitle,
         ),
       ),
     );
@@ -373,7 +343,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       ),
       style: GoogleFonts.poppins(
         fontSize: 14,
-        color: Colors.black,
+        color: _inkTitle,
         decoration: TextDecoration.none,
       ),
     );
@@ -398,13 +368,13 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             Icon(
               selected ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.circle,
               size: 18,
-              color: selected ? Colors.white : Colors.black54,
+              color: selected ? Colors.white : _inkBody.withValues(alpha: 0.7),
             ),
             const SizedBox(width: 6),
             Text(
               label,
               style: GoogleFonts.poppins(
-                color: selected ? Colors.white : Colors.black87,
+                color: selected ? Colors.white : _inkTitle,
                 fontSize: 13,
               ),
             ),
@@ -472,14 +442,14 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                       : '${_dateOfBirth!.month.toString().padLeft(2, '0')}/${_dateOfBirth!.day.toString().padLeft(2, '0')}/${_dateOfBirth!.year}',
                   style: GoogleFonts.poppins(
                     fontSize: 14,
-                    color: _dateOfBirth == null ? Colors.black54 : Colors.black,
+                    color: _dateOfBirth == null ? _inkBody.withValues(alpha: 0.7) : _inkTitle,
                     decoration: TextDecoration.none,
                   ),
                 ),
                 Icon(
                   CupertinoIcons.calendar,
                   size: 18,
-                  color: Colors.black54,
+                  color: _inkBody.withValues(alpha: 0.7),
                 ),
               ],
             ),
@@ -488,12 +458,20 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         const SizedBox(height: 20),
         // Keep the action area laser-focused on saving details per the new UX
         // request (no quick links to addresses/orders/reviews anymore).
+        // Modern, sleek button with improved color scheme matching Apple's design guidelines
         CupertinoButton(
-          color: const Color(0xFF8D6E63),
+          color: _coffeePrimary, // Rich brown primary color for better visibility and modern look
           onPressed: _saving ? null : _saveProfile,
           child: _saving
               ? const CupertinoActivityIndicator(color: Colors.white)
-              : Text('Save', style: GoogleFonts.poppins(color: Colors.white)),
+              : Text(
+                  'Save',
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
         ),
       ],
     );
@@ -502,15 +480,23 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       children: [
         avatar,
         const SizedBox(height: 8),
+        // Modern, sleek button with improved color scheme matching Apple's design guidelines
         CupertinoButton(
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
           borderRadius: BorderRadius.circular(8),
-          color: CupertinoColors.systemGrey5,
+          color: _coffeePrimary, // Rich brown primary color for better visibility and modern look
           onPressed: _selectAvatar,
-          child: Text('Select Image', style: GoogleFonts.poppins(fontSize: 13)),
+          child: Text(
+            'Select Image',
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
         Text('Max 1 MB • JPEG, PNG',
-            style: GoogleFonts.poppins(fontSize: 11, color: Colors.black54)),
+            style: GoogleFonts.poppins(fontSize: 11, color: _inkBody.withValues(alpha: 0.7))),
       ],
     );
 
@@ -554,7 +540,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             Text(
               'Create a profile to save your addresses, track orders, and leave reviews.',
               textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(fontSize: 16, color: Colors.black87),
+              style: GoogleFonts.poppins(fontSize: 16, color: _inkTitle),
             ),
             const SizedBox(height: 24),
             CupertinoButton.filled(
@@ -584,6 +570,10 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       backgroundColor: Colors.white,
       navigationBar: CupertinoNavigationBar(
         backgroundColor: Colors.white,
+        leading: CupertinoNavigationBarBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          color: const Color(0xFF8D6E63),
+        ),
         middle: Text('My Profile', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
       ),
       child: SafeArea(

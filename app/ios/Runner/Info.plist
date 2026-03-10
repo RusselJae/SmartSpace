@@ -49,5 +49,19 @@
 	<string>We need access to your photo library to select a profile picture.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>We need access to save images to your photo library.</string>
+	<!-- Deep linking for email verification -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.smartspace.verify</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>smartspace</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

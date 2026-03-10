@@ -46,4 +46,8 @@ flutter {
 dependencies {
     // Pull in the official ARCore runtime so our availability checks compile.
     implementation("com.google.ar:core:1.44.0")
+    // SceneView core (3D engine).
+    implementation("io.github.sceneview:sceneview:2.3.3")
+    // ARSceneView module, which exposes io.github.sceneview.ar.ARSceneView.
+    implementation("io.github.sceneview:arsceneview:2.3.3")
 }

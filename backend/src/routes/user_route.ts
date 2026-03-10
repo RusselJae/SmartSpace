@@ -3,7 +3,17 @@ import path from 'path';
 import multer from 'multer';
 import { Router } from 'express';
 import { asyncHandler } from '../utils/async_handler';
-import { listUsers, createUser, updateUser, findUserById, CreateUserInput } from '../services/user_service';
+import { 
+  listUsers, 
+  createUser, 
+  updateUser, 
+  findUserById, 
+  verifyUserEmail,
+  verifyUserEmailByCode,
+  resendVerificationToken,
+  CreateUserInput 
+} from '../services/user_service';
+import { EmailService } from '../services/email_service';
 import { avatarsDir, ensureUploadsDirectories } from '../utils/uploads';
 import { generateId } from '../utils/id_generator';
 
@@ -71,8 +81,43 @@ userRouter.post(
     if (!input.email || !input.fullName) {
       return res.status(400).json({ success: false, message: 'Email and full name are required' });
     }
-    const user = await createUser(input);
-    res.status(201).json({ success: true, data: user });
+    
+    try {
+      // Create user - this generates a verification token automatically
+      const user = await createUser(input);
+      
+      // Send verification email asynchronously (don't wait for it to complete)
+      // The email service handles errors gracefully, so signup succeeds even if email fails
+      // Use frontend URL from config (or pass undefined to use default)
+      EmailService.sendVerificationEmail(
+        user.email,
+        user.fullName,
+        user.verificationToken!,
+        user.verificationCode!,
+        undefined, // Will use FRONTEND_URL from config
+      ).catch((error) => {
+        console.error('Failed to send verification email (non-blocking):', error);
+      });
+      
+      res.status(201).json({ success: true, data: user });
+    } catch (error) {
+      // Handle duplicate email error - MySQL returns error code 1062 for duplicate entry
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check if it's a duplicate email error (MySQL error code 1062 or unique constraint violation)
+      if (errorMessage.includes('Duplicate entry') || 
+          errorMessage.includes('ER_DUP_ENTRY') ||
+          errorMessage.includes('UNIQUE constraint') ||
+          errorMessage.includes('email')) {
+        return res.status(409).json({ 
+          success: false, 
+          message: 'Email address is already taken' 
+        });
+      }
+      
+      // Re-throw other errors to be handled by asyncHandler
+      throw error;
+    }
   }),
 );
 
@@ -113,3 +158,111 @@ userRouter.post(
   }),
 );
 
+/**
+ * Email verification endpoint.
+ * Users click the verification link in their email, which calls this endpoint.
+ * Verifies the token and marks the user's email as verified.
+ */
+userRouter.get(
+  '/verify-email',
+  asyncHandler(async (req, res) => {
+    const token = req.query.token as string;
+    
+    if (!token) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Verification token is required' 
+      });
+    }
+
+    try {
+      const user = await verifyUserEmail(token);
+      res.json({ 
+        success: true, 
+        message: 'Email verified successfully',
+        data: user 
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to verify email';
+      res.status(400).json({ 
+        success: false, 
+        message 
+      });
+    }
+  }),
+);
+
+/**
+ * Email verification by code endpoint.
+ * Allows users to verify their email by entering a 6-character code instead of clicking a link.
+ */
+userRouter.post(
+  '/verify-email-code',
+  asyncHandler(async (req, res) => {
+    const code = req.body.code as string;
+    
+    if (!code || code.trim().length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Verification code is required' 
+      });
+    }
+
+    try {
+      const user = await verifyUserEmailByCode(code.trim().toUpperCase());
+      res.json({ 
+        success: true, 
+        message: 'Email verified successfully',
+        data: user 
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid or expired verification code';
+      res.status(400).json({ 
+        success: false, 
+        message 
+      });
+    }
+  }),
+);/**
+ * Resend verification email endpoint.
+ * Allows users to request a new verification email if they didn't receive the first one
+ * or if their token expired.
+ */
+userRouter.post(
+  '/:id/resend-verification',
+  asyncHandler(async (req, res) => {
+    const userId = req.params.id;
+    
+    try {
+      // Generate new verification token and code
+      const { token, code } = await resendVerificationToken(userId);
+      
+      // Get user to send email
+      const user = await findUserById(userId);
+      if (!user) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }      // Send verification email using frontend URL from config
+      await EmailService.sendVerificationEmail(
+        user.email,
+        user.fullName,
+        token,
+        code,
+        undefined, // Will use FRONTEND_URL from config
+      );
+
+      res.json({ 
+        success: true, 
+        message: 'Verification email sent successfully' 
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to resend verification email';
+      res.status(500).json({ 
+        success: false, 
+        message 
+      });
+    }
+  }),
+);

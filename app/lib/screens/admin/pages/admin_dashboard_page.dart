@@ -5,7 +5,6 @@ import '../../../models/product.dart';
 import '../../../models/review.dart';
 import '../../../models/user.dart';
 import '../../../services/mysql_database_service.dart';
-import '../admin_theme.dart';
 import '../widgets/admin_summary_card.dart';
 
 class AdminDashboardPage extends StatefulWidget {
@@ -169,27 +168,28 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         .toSet();
     final int activeUsersCount = (activeUserIds.union(recentLoginUsers)).length;
     
-    // Calculate total orders per month (excluding cancelled and expired)
+    // Calculate total orders per month (excluding cancelled)
     final int monthlyOrders = _orders
         .where((order) => 
             (order.createdAt.isAfter(currentMonthStart.subtract(const Duration(milliseconds: 1))) ||
              order.createdAt.isAtSameMomentAs(currentMonthStart)) &&
-            order.status.toLowerCase() != 'cancelled' &&
-            order.status.toLowerCase() != 'expired')
+            order.status.toLowerCase() != 'cancelled')
         .length;
     
-    // Calculate total orders (excluding cancelled and expired) for comparison
+    // Calculate total orders (excluding cancelled) for comparison
     final int totalValidOrders = _orders
         .where((order) => 
-            order.status.toLowerCase() != 'cancelled' &&
-            order.status.toLowerCase() != 'expired')
+            order.status.toLowerCase() != 'cancelled')
         .length;
     
     // Calculate total products count
     final int totalProducts = _products.length;
     
-    // Calculate low stock products (inventory < 10)
-    final int lowStockProducts = _products.where((p) => p.inventoryQty > 0 && p.inventoryQty < 10).length;
+    // Calculate low stock products (inventory 1..3).
+    // Threshold requested: "at least 3 lower" → we treat <= 3 as low stock.
+    const int lowStockThreshold = 3;
+    final int lowStockProducts =
+        _products.where((p) => p.inventoryQty > 0 && p.inventoryQty <= lowStockThreshold).length;
     
     return [
       AdminSummaryMetric(
@@ -197,28 +197,29 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         value: '₱${totalRevenue.toStringAsFixed(1)}',
         deltaLabel: '₱${monthlyRevenue.toStringAsFixed(1)} this month',
         icon: Icons.payments_rounded,
-        background: AdminPalette.brown,
+        // Distinct grid colors to make each card instantly recognizable.
+        background: const Color(0xFF1D4ED8), // Blue
       ),
       AdminSummaryMetric(
         title: 'Active users',
         value: activeUsersCount.toString(),
         deltaLabel: '${_users.length} total users',
         icon: Icons.group_outlined,
-        background: AdminPalette.accent,
+        background: const Color(0xFF059669), // Emerald
       ),
       AdminSummaryMetric(
         title: 'Orders this month',
         value: monthlyOrders.toString(),
         deltaLabel: '$totalValidOrders total valid orders',
         icon: Icons.shopping_bag_outlined,
-        background: AdminPalette.brown,
+        background: const Color(0xFFF97316), // Orange
       ),
       AdminSummaryMetric(
         title: 'Products',
         value: totalProducts.toString(),
         deltaLabel: lowStockProducts > 0 ? '$lowStockProducts low stock' : 'All in stock',
         icon: Icons.inventory_2_outlined,
-        background: AdminPalette.clay,
+        background: const Color(0xFF7C3AED), // Purple
       ),
     ];
   }

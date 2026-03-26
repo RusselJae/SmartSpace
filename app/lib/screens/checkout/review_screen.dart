@@ -33,6 +33,8 @@ class ReviewScreen extends StatelessWidget {
           return 'GCash (Online)';
         case PaymentMethod.cod:
           return 'Cash on Delivery (COD)';
+        case PaymentMethod.paymongo:
+          return 'PayMongo (Test)';
       }
     }();
 

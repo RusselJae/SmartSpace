@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/address_entry.dart';
 import '../../models/app_settings.dart';
@@ -19,7 +22,16 @@ import '../../utils/model_path_helper.dart';
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
 import 'models.dart';
-import 'payment_confirmation_screen.dart';
+import 'success_screen.dart';
+
+// ---------------------------------------------------------------------------
+// Walnut-forward palette (warm wood tone — Apple HIG: legible contrast, calm CTAs).
+// ---------------------------------------------------------------------------
+const Color _kWalnut = Color(0xFF5C4033);
+const Color _kWalnutDeep = Color(0xFF3E2723);
+const Color _kWalnutSoftBg = Color(0xFFEFE8E3);
+const double _kDownMin = 3000;
+const double _kDownMax = 5000;
 
 /// Unified Order Summary page with all editable fields
 class OrderSummaryScreen extends StatefulWidget {
@@ -43,6 +55,8 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
   // Contact Information
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _downPaymentInputController = TextEditingController(text: '3500');
   
   // Address Information - Updated to match address screen format
   final TextEditingController _addressLine1Controller = TextEditingController(); // Block and Lot
@@ -57,11 +71,24 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
   String? _selectedBarangay;
   bool _loadingLocations = true;
   
-  // Payment Method
-  PaymentMethod _paymentMethod = PaymentMethod.gcash;
-  
+  /// PayMongo-only: full pay vs split (down payment path).
+  CheckoutPaymentPlan _paymentPlan = CheckoutPaymentPlan.full;
+
+  /// Lay-away vs Hulugan — only when [_paymentPlan] is [CheckoutPaymentPlan.downpayment].
+  CheckoutOrderOption _orderOption = CheckoutOrderOption.layaway;
+
+  /// User-chosen down payment (₱3k–₱5k, capped by order total). **Lay-away only.**
+  double _downPaymentPesos = 3500;
+
+  /// One government ID — required before checkout.
+  XFile? _validIdXFile;
+
+  final ImagePicker _imagePicker = ImagePicker();
+
   bool _loading = false;
   bool _prefilling = true;
+  List<AddressEntry> _savedAddresses = [];
+  String? _selectedAddressId;
 
   List<CartItem> get _checkoutItems {
     final ids = widget.productIds;
@@ -116,56 +143,225 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     return (baseFee + additionalFee).clamp(baseFee, maxFee);
   }
 
-  /// Calculates downpayment amount based on payment method
-  /// 
-  /// COD: Configurable downpayment percentage (from settings)
-  /// GCash: No downpayment (full payment upfront via GCash)
-  double _calculateDownpayment() {
-    if (_paymentMethod == PaymentMethod.cod) {
-      final settings = _settings ?? const AppSettings();
-      // COD requires configurable downpayment percentage via GCash
-      final subtotal = _checkoutSubtotal;
-      final shipping = _calculateShippingFee();
-      final total = subtotal + shipping;
-      return total * (settings.codDownpaymentPercentage / 100.0);
-    } else {
-      // GCash requires full payment upfront, no downpayment
-      return 0.0;
+  /// Merchandise + shipping (no 6% hulugan interest).
+  double _baseOrderTotal() {
+    return _checkoutSubtotal + _calculateShippingFee();
+  }
+
+  /// Lay-away path needs order total ≥ ₱3k (for ₱3k–₱5k DP band).
+  bool get _canOfferLayawaySplit => _baseOrderTotal() >= _kDownMin;
+
+  /// Hulugan: in-stock SKUs only (inventory policy).
+  bool get _allItemsEligibleForHulugan {
+    return _checkoutItems.every((i) => i.product.inStock && i.product.inventoryQty > 0);
+  }
+
+  bool get _canOfferHuluganSplit => _allItemsEligibleForHulugan && _baseOrderTotal() > 0;
+
+  /// User may pick “split pay” if at least one sub-option is valid.
+  bool get _canUseAnySplitPlan => _canOfferLayawaySplit || _canOfferHuluganSplit;
+
+  /// 40% of base (subtotal + shipping).
+  double _huluganDownPaymentPesos() => _baseOrderTotal() * 0.4;
+
+  /// Principal after 40% DP (before 6% add-on).
+  double _huluganFinancedPrincipal() => _baseOrderTotal() - _huluganDownPaymentPesos();
+
+  /// 6% on financed principal.
+  double _huluganInterestPesos() => _huluganFinancedPrincipal() * 0.06;
+
+  /// Full amount customer pays on hulugan (base + interest on financed portion).
+  double _huluganGrandTotalPayable() => _baseOrderTotal() + _huluganInterestPesos();
+
+  /// Balance after first PayMongo (40% DP): financed × 1.06.
+  double _huluganRemainingAfterDownPesos() => _huluganFinancedPrincipal() * 1.06;
+
+  /// Grand total stored on the order (matches PayMongo full settle).
+  double _orderGrandTotalForOrder() {
+    if (_paymentPlan == CheckoutPaymentPlan.full) return _baseOrderTotal();
+    if (_orderOption == CheckoutOrderOption.hulugan) return _huluganGrandTotalPayable();
+    return _baseOrderTotal();
+  }
+
+  /// Lay-away: slider clamp. Hulugan: fixed 40%. Full: full.
+  double _effectiveDownPaymentPesos() {
+    if (_paymentPlan == CheckoutPaymentPlan.full) return _baseOrderTotal();
+    if (_orderOption == CheckoutOrderOption.hulugan) return _huluganDownPaymentPesos();
+    final total = _baseOrderTotal();
+    if (total < _kDownMin) return total;
+    final cap = math.min(_kDownMax, total);
+    return _downPaymentPesos.clamp(_kDownMin, cap);
+  }
+
+  /// Shared required label chip (`* Required`) used beside field names.
+  Widget _requiredLabel(String label, {double fontSize = 13}) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: GoogleFonts.poppins(
+              fontSize: fontSize,
+              fontWeight: FontWeight.w600,
+              color: _kWalnutDeep,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
+        Text(
+          '* Required',
+          style: GoogleFonts.poppins(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: CupertinoColors.systemRed,
+            decoration: TextDecoration.none,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Amount charged on the **first** PayMongo session for the selected plan.
+  double _paymongoChargeAmountPesos() {
+    if (_paymentPlan == CheckoutPaymentPlan.full) return _orderGrandTotalForOrder();
+    return _effectiveDownPaymentPesos();
+  }
+
+  /// Remaining balance after the first tranche (0 for full pay).
+  double _remainingAfterDownPesos() {
+    if (_paymentPlan == CheckoutPaymentPlan.full) return 0;
+    if (_orderOption == CheckoutOrderOption.hulugan) return _huluganRemainingAfterDownPesos();
+    return (_baseOrderTotal() - _effectiveDownPaymentPesos()).clamp(0, double.infinity);
+  }
+
+  /// Info sheet: Lay-away vs Hulugan (matches business rules).
+  void _showOrderOptionsInfoSheet() {
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (ctx) => Material(
+        color: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Order options',
+                          style: GoogleFonts.poppins(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: _kWalnutDeep,
+                          ),
+                        ),
+                      ),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Icon(CupertinoIcons.xmark_circle_fill, color: _kWalnut.withValues(alpha: 0.7)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '3 months HULUGAN (Installments)',
+                    style: GoogleFonts.poppins(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: _kWalnut,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '• Available (in-stock) items only\n'
+                    '• 6% interest \n'
+                    '• 40% down payment via PayMongo\n'
+                    '• Estimated delivery 10–12 days after the order is confirmed (admin)\n'
+                    '• Shipping fee applies as shown in your summary',
+                    style: GoogleFonts.poppins(fontSize: 13, height: 1.45, color: _kWalnutDeep),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '3 months LAY-AWAY',
+                    style: GoogleFonts.poppins(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: _kWalnut,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '• ₱3,000–₱5,000 down payment (you choose within the band)\n'
+                    '• 0% / no interest on the plan\n'
+                    '• Custom design choices where applicable\n'
+                    '• Pay the balance within 3 months (from first PayMongo payment)\n'
+                    '• Delivery when fully paid',
+                    style: GoogleFonts.poppins(fontSize: 13, height: 1.45, color: _kWalnutDeep),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickValidId() async {
+    try {
+      final x = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+      if (!mounted) return;
+      setState(() => _validIdXFile = x);
+    } catch (e) {
+      if (!mounted) return;
+      Toast.warning(context, 'Could not pick image: $e');
     }
   }
 
-  /// Calculates remaining balance after downpayment
-  /// 
-  /// COD: remaining balance is (100% - downpayment%) of total (paid upon delivery)
-  /// GCash: no remaining balance (full payment upfront)
-  double _calculateRemainingBalance() {
-    final subtotal = _checkoutSubtotal;
-    final shipping = _calculateShippingFee();
-    final total = subtotal + shipping;
-    
-    if (_paymentMethod == PaymentMethod.cod) {
-      final settings = _settings ?? const AppSettings();
-      // For COD, remaining balance is (100% - downpayment%) of total
-      final downpaymentPercentage = settings.codDownpaymentPercentage / 100.0;
-      return total * (1.0 - downpaymentPercentage);
-    } else {
-      // For GCash, full payment is made upfront, no remaining balance
-      return 0.0;
+  String _successSubtitle() {
+    if (_paymentPlan == CheckoutPaymentPlan.full) {
+      return 'PayMongo checkout should open in your browser. Your order updates when payment '
+          'clears (usually seconds).';
     }
+    if (_orderOption == CheckoutOrderOption.hulugan) {
+      return 'First PayMongo charge is your 40% down payment. Balance includes 6% on the financed '
+          'amount. Estimated delivery is set 10–12 days after your order is confirmed.';
+    }
+    return 'First PayMongo payment is your lay-away down payment. Your 3-month 0% window starts '
+        'when that payment clears. Delivery ships after you’re fully paid.';
   }
 
-  /// Gets the payment amount required upfront
-  /// 
-  /// COD: 20% downpayment
-  /// GCash: Full amount
-  double _getUpfrontPaymentAmount() {
-    if (_paymentMethod == PaymentMethod.cod) {
-      return _calculateDownpayment();
-    } else {
-      final subtotal = _checkoutSubtotal;
-      final shipping = _calculateShippingFee();
-      return subtotal + shipping;
+  /// Short policy copy that tracks Lay-away vs Hulugan vs full pay.
+  String _policySummaryText() {
+    const noRefund =
+        '• No refunds on placed orders or payments — including if you cancel after a down payment.\n'
+        '• You can cancel anytime; the no-refund rule still applies.\n';
+    if (_paymentPlan == CheckoutPaymentPlan.full) {
+      return '${noRefund}'
+          '• Full payment via PayMongo confirms the order; shipping fee is in your total.';
     }
+    if (_orderOption == CheckoutOrderOption.hulugan) {
+      return '${noRefund}'
+          '• Hulugan: in-stock items only; 40% down via PayMongo; 6% on the financed balance.\n'
+          '• Balance due within 3 months from your first PayMongo payment; ₱100/day after month 3 until settled.\n'
+          '• Estimated delivery 10–12 days after the order is confirmed (admin). Shipping fee included in total.';
+    }
+    return '${noRefund}'
+        '• Lay-away: ₱3,000–₱5,000 down via PayMongo; 0% for 3 months from first PayMongo payment.\n'
+        '• Balance within 3 months from then; ₱100/day after month 3 until settled.\n'
+        '• Delivery only after the order is fully paid. Custom design choices where applicable.';
   }
 
   @override
@@ -249,20 +445,135 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     }
   }
 
-  /// Opens the address editor modal matching the exact design from addresses screen
+  /// Applies a selected saved address into the editable checkout form.
+  /// This only updates local order form controllers and never updates the profile.
+  void _applyAddressToForm(AddressEntry entry) {
+    _postalCodeController.text = entry.postalCode;
+
+    // Stored `street` may contain both line-1 and line-2 joined by commas.
+    final streetParts = entry.street.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+    if (streetParts.isNotEmpty) {
+      _addressLine1Controller.text = streetParts.first;
+      _addressLine2Controller.text = streetParts.length > 1 ? streetParts.sublist(1).join(', ') : '';
+    } else {
+      _addressLine1Controller.text = '';
+      _addressLine2Controller.text = '';
+    }
+
+    final regionParts = entry.region.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+    _selectedProvince = regionParts.isNotEmpty ? regionParts[0] : null;
+    _selectedCity = regionParts.length > 1 ? regionParts[1] : null;
+    _selectedBarangay = regionParts.length > 2 ? regionParts[2] : null;
+  }
+
+  /// Opens a local contact editor for this checkout only.
+  /// Changes here are intentionally not persisted back to profile storage.
+  void _openContactEditor() {
+    final nameCtrl = TextEditingController(text: _nameController.text.trim());
+    final emailCtrl = TextEditingController(text: _emailController.text.trim());
+    final phoneCtrl = TextEditingController(text: _phoneController.text.trim());
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (ctx) => Material(
+        color: Colors.black.withValues(alpha: 0.55),
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Edit Contact',
+                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                _buildSimpleSheetField(label: 'Full Name', controller: nameCtrl, required: true),
+                _buildSimpleSheetField(
+                  label: 'Email',
+                  controller: emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                _buildSimpleSheetField(
+                  label: 'Phone Number',
+                  controller: phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: CupertinoButton(
+                        color: _kWalnutSoftBg,
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: Text(
+                          'Cancel',
+                          style: GoogleFonts.poppins(
+                            color: _kWalnut,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: CupertinoButton(
+                        color: _kWalnut,
+                        onPressed: () {
+                          setState(() {
+                            _nameController.text = nameCtrl.text.trim();
+                            _emailController.text = emailCtrl.text.trim();
+                            _phoneController.text = phoneCtrl.text.trim();
+                          });
+                          Navigator.of(ctx).pop();
+                        },
+                        child: Text(
+                          'Save',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ).whenComplete(() {
+      nameCtrl.dispose();
+      emailCtrl.dispose();
+      phoneCtrl.dispose();
+    });
+  }
+
+  /// Opens the address editor modal matching the exact design from addresses screen.
+  /// Saving updates only this checkout form state.
   void _openAddressEditor() {
-    // Create a temporary AddressEntry from current form data for editing
-    // Note: The address editor uses "street" field which combines block/lot and street
-    // We'll combine them for the editor, then split them back when updating
     final combinedStreet = [
       _addressLine1Controller.text.trim(),
       if (_addressLine2Controller.text.trim().isNotEmpty) _addressLine2Controller.text.trim(),
     ].join(', ');
     
+    final currentUser = _auth.currentUser;
+    final currentFullName = currentUser?.fullName ?? _nameController.text.trim();
+    final currentPhone = currentUser?.phoneNumber ?? _phoneController.text.trim();
+
     final currentEntry = AddressEntry(
       id: '',
-      fullName: _nameController.text.trim(),
-      phoneNumber: _phoneController.text.trim(),
+      // Name + contact are read-only (sourced from profile) during address edits.
+      fullName: currentFullName,
+      phoneNumber: currentPhone,
       region: [
         _selectedProvince,
         _selectedCity,
@@ -279,49 +590,50 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       builder: (_) => _AddressEditorSheet(
         entry: currentEntry,
         onSubmit: (updatedEntry) {
-          // Update all form fields from the edited entry
           setState(() {
-            _nameController.text = updatedEntry.fullName;
-            _phoneController.text = updatedEntry.phoneNumber;
-            _postalCodeController.text = updatedEntry.postalCode;
-            
-            // Split the street field back into block/lot and street
-            // The street field from editor contains "Block and Lot, Street"
-            final streetParts = updatedEntry.street.split(',').map((p) => p.trim()).toList();
-            if (streetParts.isNotEmpty) {
-              _addressLine1Controller.text = streetParts[0];
-              if (streetParts.length > 1) {
-                _addressLine2Controller.text = streetParts.sublist(1).join(', ');
-              } else {
-                _addressLine2Controller.text = '';
-              }
-            } else {
-              _addressLine1Controller.text = updatedEntry.street;
-              _addressLine2Controller.text = '';
-            }
-            
-            // Parse region to extract province, city, barangay
-            final regionParts = updatedEntry.region.split(',').map((p) => p.trim()).toList();
-            if (regionParts.isNotEmpty && _provinceToCities.containsKey(regionParts[0])) {
-              _selectedProvince = regionParts[0];
-              if (regionParts.length > 1 && _provinceToCities[_selectedProvince]!.contains(regionParts[1])) {
-                _selectedCity = regionParts[1];
-                if (regionParts.length > 2 && _cityToBarangays[_selectedCity]?.contains(regionParts[2]) == true) {
-                  _selectedBarangay = regionParts[2];
-                } else {
-                  _selectedBarangay = null;
-                }
-              } else {
-                _selectedCity = null;
-                _selectedBarangay = null;
-              }
-            } else {
-              _selectedProvince = null;
-              _selectedCity = null;
-              _selectedBarangay = null;
-            }
+            _applyAddressToForm(updatedEntry);
+            _selectedAddressId = null;
           });
         },
+      ),
+    );
+  }
+
+  Widget _buildSimpleSheetField({
+    required String label,
+    required TextEditingController controller,
+    TextInputType? keyboardType,
+    bool required = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (required)
+            _requiredLabel(label, fontSize: 12)
+          else
+            Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: _kWalnutDeep,
+              ),
+            ),
+          const SizedBox(height: 4),
+          CupertinoTextField(
+            controller: controller,
+            keyboardType: keyboardType,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _kWalnut.withValues(alpha: 0.2)),
+            ),
+            style: GoogleFonts.poppins(fontSize: 13),
+          ),
+        ],
       ),
     );
   }
@@ -338,12 +650,14 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     if (user != null) {
       // Pull base info from the signed-in user profile.
       _nameController.text = user.fullName;
+      _emailController.text = user.email;
       if (user.phoneNumber?.isNotEmpty ?? false) {
         _phoneController.text = user.phoneNumber!;
       }
 
       // Pull the richer address objects that live inside the profile storage.
       final savedAddresses = await _storage.loadAddresses(user.id);
+      _savedAddresses = savedAddresses;
       if (savedAddresses.isNotEmpty) {
         // Always surface the default address; if the user somehow deleted the flag
         // we gracefully fall back to the first entry.
@@ -352,35 +666,9 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
           orElse: () => savedAddresses.first,
         );
 
-        // Mirror the saved info to the editable form fields.
-        if (defaultAddress.fullName.trim().isNotEmpty) {
-          _nameController.text = defaultAddress.fullName;
-        }
-        if (defaultAddress.phoneNumber.trim().isNotEmpty) {
-          _phoneController.text = defaultAddress.phoneNumber;
-        }
-        // Parse the region string to extract province, city, barangay
-        final regionParts = defaultAddress.region.split(',').map((p) => p.trim()).toList();
-        if (regionParts.isNotEmpty && _provinceToCities.containsKey(regionParts[0])) {
-          _selectedProvince = regionParts[0];
-          if (regionParts.length > 1 && _provinceToCities[_selectedProvince]!.contains(regionParts[1])) {
-            _selectedCity = regionParts[1];
-            if (regionParts.length > 2 && _cityToBarangays[_selectedCity]?.contains(regionParts[2]) == true) {
-              _selectedBarangay = regionParts[2];
-            }
-          }
-        }
-        // Split street field into block/lot and street if it contains a comma
-        final streetParts = defaultAddress.street.split(',').map((p) => p.trim()).toList();
-        if (streetParts.isNotEmpty) {
-          _addressLine1Controller.text = streetParts[0];
-          if (streetParts.length > 1) {
-            _addressLine2Controller.text = streetParts.sublist(1).join(', ');
-          }
-        } else {
-          _addressLine1Controller.text = defaultAddress.street;
-        }
-        _postalCodeController.text = defaultAddress.postalCode;
+        // Address selection defaults to the user's default address.
+        _selectedAddressId = defaultAddress.id;
+        _applyAddressToForm(defaultAddress);
       } else if (user.addresses.isNotEmpty) {
         // Legacy fallback where addresses were kept as a raw string list.
         final legacy = user.addresses.first;
@@ -390,6 +678,8 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
           _postalCodeController.text = parts[2];
         }
       }
+    } else {
+      _savedAddresses = [];
     }
 
     if (!mounted) return;
@@ -402,6 +692,8 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
+    _emailController.dispose();
+    _downPaymentInputController.dispose();
     _addressLine1Controller.dispose();
     _addressLine2Controller.dispose();
     _postalCodeController.dispose();
@@ -417,13 +709,13 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     // Validate required fields - using toast messages instead of error banner
     if (_nameController.text.trim().isEmpty) {
       setState(() => _loading = false);
-      Toast.warning(context, 'Please enter your full name');
+      Toast.warning(context, 'Please add your full name in your profile');
       return;
     }
 
     if (_phoneController.text.trim().isEmpty) {
       setState(() => _loading = false);
-      Toast.warning(context, 'Please enter your phone number');
+      Toast.warning(context, 'Please add your phone number in your profile');
       return;
     }
 
@@ -463,6 +755,43 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       return;
     }
 
+    if (_validIdXFile == null) {
+      setState(() => _loading = false);
+      Toast.warning(context, 'Upload one valid government ID to continue');
+      return;
+    }
+
+    if (_paymentPlan == CheckoutPaymentPlan.downpayment) {
+      if (_orderOption == CheckoutOrderOption.layaway && !_canOfferLayawaySplit) {
+        setState(() => _loading = false);
+        Toast.warning(context, 'Lay-away needs at least ₱3,000 order total — pick full pay or Hulugan');
+        return;
+      }
+      if (_orderOption == CheckoutOrderOption.layaway) {
+        final parsed = double.tryParse(_downPaymentInputController.text.replaceAll(',', '').trim());
+        if (parsed == null) {
+          setState(() => _loading = false);
+          Toast.warning(context, 'Enter a valid down payment amount');
+          return;
+        }
+        final maxDp = math.min(_kDownMax, _baseOrderTotal());
+        if (parsed < _kDownMin || parsed > maxDp) {
+          setState(() => _loading = false);
+          Toast.warning(context, 'Down payment must be between ₱${_kDownMin.toStringAsFixed(0)} and ₱${maxDp.toStringAsFixed(0)}');
+          return;
+        }
+        _downPaymentPesos = parsed;
+      }
+      if (_orderOption == CheckoutOrderOption.hulugan && !_canOfferHuluganSplit) {
+        setState(() => _loading = false);
+        Toast.warning(
+          context,
+          'Hulugan is for in-stock items only — adjust your cart or choose Lay-away / full pay',
+        );
+        return;
+      }
+    }
+
     final user = _auth.currentUser;
     if (user == null) {
       setState(() => _loading = false);
@@ -486,26 +815,29 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
 
       final subtotal = _checkoutSubtotal;
       final shipping = _calculateShippingFee();
-      final total = subtotal + shipping;
-      final downpayment = _calculateDownpayment();
-      final remainingBalance = _calculateRemainingBalance();
-      
-      // Convert payment method to string for backend
-      final paymentMethodString = _paymentMethod == PaymentMethod.gcash ? 'gcash' : 'cod';
-      
+      final totalForOrder = _orderGrandTotalForOrder();
+
+      final planLabel = _paymentPlan == CheckoutPaymentPlan.full ? 'full' : 'downpayment';
+      final downLine = _paymentPlan == CheckoutPaymentPlan.full
+          ? totalForOrder
+          : _effectiveDownPaymentPesos();
+      final remainingLine = _paymentPlan == CheckoutPaymentPlan.full
+          ? 0.0
+          : _remainingAfterDownPesos();
+
       // Build merged address line 1 (Block & Lot + Street)
       final mergedLine1 = [
         _addressLine1Controller.text.trim(),
         if (_addressLine2Controller.text.trim().isNotEmpty) _addressLine2Controller.text.trim(),
       ].join(', ');
-      
+
       // Build region string from selected dropdowns
       final region = [
         _selectedProvince,
         _selectedCity,
         _selectedBarangay,
       ].whereType<String>().join(', ');
-      
+
       final shippingAddress = {
         'name': _nameController.text.trim(),
         'phone': _phoneController.text.trim(),
@@ -513,20 +845,45 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         'city': _selectedCity ?? '',
         'region': region,
         'postalCode': _postalCodeController.text.trim(),
-        'shippingFee': shipping, // Pass shipping fee to backend for accurate record keeping
-        'paymentMethod': paymentMethodString, // Pass payment method to backend
-        'downpayment': downpayment, // Pass downpayment amount for GCash orders
-        'remainingBalance': remainingBalance, // Pass remaining balance for GCash orders
+        'shippingFee': shipping,
+        // Hosted PayMongo only — backend routes checkout + webhooks to this method.
+        'paymentMethod': 'paymongo',
+        'paymentPlan': planLabel,
+        'downpayment': downLine,
+        'remainingBalance': remainingLine,
+        // Line items only — correct subtotal in DB when total includes hulugan interest.
+        'merchandiseSubtotal': subtotal,
+        if (_paymentPlan == CheckoutPaymentPlan.downpayment)
+          'orderOption': _orderOption == CheckoutOrderOption.layaway ? 'layaway' : 'hulugan',
       };
 
       final order = await _db.createOrder(
         userId: user.id,
         userName: user.fullName,
         productIds: checkoutItems.map((item) => item.product.id).toList(),
-        totalAmount: total,
+        totalAmount: totalForOrder,
         shippingAddress: shippingAddress,
         status: 'pending',
       );
+
+      // KYC: one valid ID, stored server-side before we send the user to PayMongo.
+      final idFile = _validIdXFile!;
+      final idBytes = await idFile.readAsBytes();
+      final idName = idFile.name.isNotEmpty ? idFile.name : 'valid_id.jpg';
+      try {
+        await _db.uploadOrderValidId(
+          orderId: order.id,
+          userId: user.id,
+          imageBytes: idBytes,
+          fileName: idName,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        Toast.error(context, 'ID upload failed: $e');
+        developer.log('Valid ID upload error: $e', name: 'OrderSummary');
+        return;
+      }
 
       final updatedOrders = [...user.orderIds];
       if (!updatedOrders.contains(order.id)) {
@@ -547,22 +904,42 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       setState(() {
         _loading = false;
       });
-      Toast.success(context, 'Order placed successfully!');
-      
-      // Redirect to payment confirmation screen for both COD and GCash
-      // COD needs 20% downpayment, GCash needs full payment
-      Navigator.of(context).pushAndRemoveUntil(
-        CupertinoPageRoute(
-          builder: (_) => PaymentConfirmationScreen(
-            orderId: order.id,
-            paymentAmount: _getUpfrontPaymentAmount(),
-            paymentMethod: _paymentMethod,
-            totalAmount: total,
-            orderCreatedAt: order.createdAt,
+      Toast.success(context, 'Order created — opening PayMongo checkout');
+
+      // PayMongo: full pay and down payment both use hosted checkout (amount decided server-side).
+      try {
+        final checkoutUrl = await _db.createPaymongoCheckoutSession(
+          orderId: order.id,
+          userId: user.id,
+        );
+        if (!mounted) return;
+        final payUri = Uri.parse(checkoutUrl);
+        final opened = await launchUrl(
+          payUri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (!opened && mounted) {
+          Toast.warning(
+            context,
+            'Could not open browser — complete payment from Orders when ready.',
+          );
+        } else if (mounted) {
+          Toast.info(context, 'Complete payment in the browser window.');
+        }
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          CupertinoPageRoute(
+            builder: (_) => SuccessScreen(
+              subtitle: _successSubtitle(),
+            ),
           ),
-        ),
-        (route) => route.isFirst,
-      );
+          (route) => route.isFirst,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        Toast.error(context, 'PayMongo checkout failed: $e');
+        developer.log('PayMongo checkout error: $e', name: 'OrderSummary');
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -578,13 +955,27 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     final items = _checkoutItems;
     final subtotal = _checkoutSubtotal;
     final shipping = _calculateShippingFee();
-    final total = subtotal + shipping;
+    final base = subtotal + shipping;
+    final grand = _orderGrandTotalForOrder();
+
+    // Keep split option valid if cart / stock changes while this screen is open.
+    final validSplitOptions = <CheckoutOrderOption>[
+      if (_canOfferLayawaySplit) CheckoutOrderOption.layaway,
+      if (_canOfferHuluganSplit) CheckoutOrderOption.hulugan,
+    ];
+    if (_paymentPlan == CheckoutPaymentPlan.downpayment &&
+        validSplitOptions.isNotEmpty &&
+        !validSplitOptions.contains(_orderOption)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _orderOption = validSplitOptions.first);
+      });
+    }
 
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
         leading: CupertinoNavigationBarBackButton(
           onPressed: () => Navigator.of(context).maybePop(),
-          color: const Color(0xFF8D6E63),
+          color: _kWalnut,
         ),
         middle: Text(
           'Order Summary',
@@ -632,6 +1023,9 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                       src: ModelPathHelper.normalize(item.product.modelPath),
                       alt: '3D preview of ${item.product.name}',
                       ar: false,
+                      environmentImage: 'neutral',
+                      exposure: 1.35,
+                      shadowIntensity: 0.18,
                       autoRotate: false,
                       cameraControls: false,
                       disableZoom: true,
@@ -666,7 +1060,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                         Text(
                           '₱${item.subtotal.toStringAsFixed(2)}',
                           style: GoogleFonts.poppins(
-                            color: const Color(0xFF8D6E63),
+                            color: _kWalnut,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                             decoration: TextDecoration.none,
@@ -680,115 +1074,108 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
             )),
             const SizedBox(height: 20),
 
-            // Contact and Address Card - Read-only with Edit option
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color(0xFF8D6E63).withValues(alpha: 0.2),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
+            // Contact card (editable only in this checkout).
+            _CheckoutSectionCard(
+              title: 'Contact',
+              buttonLabel: 'Edit',
+              onTapEdit: _openContactEditor,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header with Edit button
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Contact & Address',
-                        style: GoogleFonts.poppins(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF6D4C41),
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        minimumSize: Size.zero,
-                        onPressed: _openAddressEditor,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF8D6E63),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                CupertinoIcons.pencil,
-                                size: 14,
-                                color: Colors.white,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Edit',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                  decoration: TextDecoration.none,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Contact Information
                   _InfoRow(
                     label: 'Full Name',
                     value: _nameController.text.isEmpty ? 'Not provided' : _nameController.text,
                   ),
                   const SizedBox(height: 8),
                   _InfoRow(
+                    label: 'Email',
+                    value: _emailController.text.isEmpty ? 'Not provided' : _emailController.text,
+                  ),
+                  const SizedBox(height: 8),
+                  _InfoRow(
                     label: 'Phone Number',
                     value: _phoneController.text.isEmpty ? 'Not provided' : _phoneController.text,
                   ),
-                  const SizedBox(height: 16),
-                  const Divider(height: 1, color: Color(0xFFE0E0E0)),
-                  const SizedBox(height: 16),
-                  // Address Information - Displayed in descending order: Province, City, Barangay, Block and Lot, Street, Postal Code
-                  _InfoRow(
-                    label: 'Province',
-                    value: _selectedProvince ?? 'Not selected',
-                  ),
-                  const SizedBox(height: 8),
-                  _InfoRow(
-                    label: 'City',
-                    value: _selectedCity ?? 'Not selected',
-                  ),
-                  const SizedBox(height: 8),
-                  _InfoRow(
-                    label: 'Barangay',
-                    value: _selectedBarangay ?? 'Not selected',
-                  ),
-                  const SizedBox(height: 8),
-                  _InfoRow(
-                    label: 'Block and Lot',
-                    value: _addressLine1Controller.text.isEmpty ? 'Not provided' : _addressLine1Controller.text,
-                  ),
-                  if (_addressLine2Controller.text.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    _InfoRow(
-                      label: 'Street',
-                      value: _addressLine2Controller.text,
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Address card with saved-address selector and local editor.
+            _CheckoutSectionCard(
+              title: 'Address',
+              buttonLabel: 'Edit',
+              onTapEdit: _openAddressEditor,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_savedAddresses.isNotEmpty) ...[
+                    Text(
+                      'Saved address',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _kWalnutDeep,
+                        decoration: TextDecoration.none,
+                      ),
                     ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: _kWalnutSoftBg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _kWalnut.withValues(alpha: 0.22)),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedAddressId,
+                          isExpanded: true,
+                          icon: Icon(Icons.expand_more, color: _kWalnut),
+                          style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: _kWalnutDeep,
+                          ),
+                          items: _savedAddresses.asMap().entries.map((entry) {
+                            final idx = entry.key;
+                            final address = entry.value;
+                            final title = 'Address ${idx + 1}${address.isDefault ? ' (Default)' : ''}';
+                            return DropdownMenuItem<String>(
+                              value: address.id,
+                              child: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            final picked = _savedAddresses.where((a) => a.id == value).toList();
+                            if (picked.isEmpty) return;
+                            setState(() {
+                              _selectedAddressId = value;
+                              _applyAddressToForm(picked.first);
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                   ],
+                  _InfoRow(label: 'Province', value: _selectedProvince ?? 'Not selected'),
+                  const SizedBox(height: 8),
+                  _InfoRow(label: 'City', value: _selectedCity ?? 'Not selected'),
+                  const SizedBox(height: 8),
+                  _InfoRow(label: 'Barangay', value: _selectedBarangay ?? 'Not selected'),
+                  const SizedBox(height: 8),
+                  _InfoRow(
+                    label: 'St./Bldg/House No.',
+                    value: [
+                      _addressLine1Controller.text.trim(),
+                      if (_addressLine2Controller.text.trim().isNotEmpty) _addressLine2Controller.text.trim(),
+                    ].where((line) => line.isNotEmpty).join(', ').isEmpty
+                        ? 'Not provided'
+                        : [
+                            _addressLine1Controller.text.trim(),
+                            if (_addressLine2Controller.text.trim().isNotEmpty) _addressLine2Controller.text.trim(),
+                          ].where((line) => line.isNotEmpty).join(', '),
+                  ),
                   const SizedBox(height: 8),
                   _InfoRow(
                     label: 'Postal Code',
@@ -799,141 +1186,407 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Payment Method Section
+            // -----------------------------------------------------------------
+            // Payment: PayMongo — payment type dropdown + order option (Lay-away / Hulugan).
+            // -----------------------------------------------------------------
             Text(
-              'Payment Method',
+              'Payment',
               style: GoogleFonts.poppins(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
-                color: Colors.black,
+                color: _kWalnutDeep,
                 decoration: TextDecoration.none,
               ),
             ),
-            const SizedBox(height: 12),
-            // Payment Method Selection with Label
+            const SizedBox(height: 8),
             Text(
-              'Select Payment Method',
+              'Checkout is PayMongo. Choose full pay or split pay, then your plan.',
               style: GoogleFonts.poppins(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: Colors.black,
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                color: CupertinoColors.systemGrey,
                 decoration: TextDecoration.none,
               ),
             ),
-            const SizedBox(height: 8),
-            _PaymentPill(
-              label: 'GCash (Online)',
-              selected: _paymentMethod == PaymentMethod.gcash,
-              onTap: () => setState(() => _paymentMethod = PaymentMethod.gcash),
+            const SizedBox(height: 10),
+            Text(
+              'Payment type',
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: _kWalnutDeep,
+                decoration: TextDecoration.none,
+              ),
             ),
-            const SizedBox(height: 8),
-            _PaymentPill(
-              label: 'Cash on Delivery (COD)',
-              selected: _paymentMethod == PaymentMethod.cod,
-              onTap: () => setState(() => _paymentMethod = PaymentMethod.cod),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: _kWalnutSoftBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _kWalnut.withValues(alpha: 0.25)),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<CheckoutPaymentPlan>(
+                  value: _paymentPlan,
+                  isExpanded: true,
+                  icon: Icon(Icons.expand_more, color: _kWalnut),
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: _kWalnutDeep,
+                  ),
+                  items: [
+                    DropdownMenuItem(
+                      value: CheckoutPaymentPlan.full,
+                      child: Text('Full payment', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                    ),
+                    if (_canUseAnySplitPlan)
+                      DropdownMenuItem(
+                        value: CheckoutPaymentPlan.downpayment,
+                        child: Text(
+                          'Down Payment',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() {
+                      _paymentPlan = v;
+                      if (v == CheckoutPaymentPlan.downpayment) {
+                        if (!_canOfferLayawaySplit && _canOfferHuluganSplit) {
+                          _orderOption = CheckoutOrderOption.hulugan;
+                        } else if (_canOfferLayawaySplit && !_canOfferHuluganSplit) {
+                          _orderOption = CheckoutOrderOption.layaway;
+                        }
+                      }
+                    });
+                  },
+                ),
+              ),
+            ),
+            if (!_canUseAnySplitPlan) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Split pay needs either ₱3,000+ total (Lay-away) or in-stock items (Hulugan).',
+                style: GoogleFonts.poppins(fontSize: 12, color: CupertinoColors.systemGrey),
+              ),
+            ],
+            if (_paymentPlan == CheckoutPaymentPlan.downpayment) ...[
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Order option',
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _kWalnutDeep,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ),
+                  CupertinoButton(
+                    padding: const EdgeInsets.all(4),
+                    minimumSize: Size.zero,
+                    onPressed: _showOrderOptionsInfoSheet,
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: _kWalnut.withValues(alpha: 0.45)),
+                        color: Colors.white,
+                      ),
+                      child: Text(
+                        '?',
+                        style: GoogleFonts.poppins(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: _kWalnut,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: _kWalnutSoftBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _kWalnut.withValues(alpha: 0.25)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<CheckoutOrderOption>(
+                    value: _orderOption,
+                    isExpanded: true,
+                    icon: Icon(Icons.expand_more, color: _kWalnut),
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: _kWalnutDeep,
+                    ),
+                    items: [
+                      if (_canOfferLayawaySplit)
+                        DropdownMenuItem(
+                          value: CheckoutOrderOption.layaway,
+                          child: Text(
+                            'Lay-Away',
+                            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      if (_canOfferHuluganSplit)
+                        DropdownMenuItem(
+                          value: CheckoutOrderOption.hulugan,
+                          child: Text(
+                            'Hulugan',
+                            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _orderOption = v);
+                    },
+                  ),
+                ),
+              ),
+              if (_orderOption == CheckoutOrderOption.layaway && _canOfferLayawaySplit) ...[
+                const SizedBox(height: 16),
+                Builder(
+                  builder: (context) {
+                    final maxDp = math.min(_kDownMax, base);
+                    final minDp = math.min(_kDownMin, maxDp);
+                    if (maxDp - minDp < 0.01) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Lay-away down payment',
+                            style: GoogleFonts.poppins(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: _kWalnutDeep,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Fixed at ₱${maxDp.toStringAsFixed(0)} (order total)',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _kWalnut,
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _requiredLabel('Lay-away down payment ₱3k–₱5k', fontSize: 14),
+                        const SizedBox(height: 6),
+                        CupertinoTextField(
+                          controller: _downPaymentInputController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          prefix: Padding(
+                            padding: const EdgeInsets.only(left: 10),
+                            child: Text(
+                              '₱',
+                              style: GoogleFonts.poppins(
+                                fontWeight: FontWeight.w600,
+                                color: _kWalnutDeep,
+                              ),
+                            ),
+                          ),
+                          onChanged: (value) {
+                            final parsed = double.tryParse(value.replaceAll(',', '').trim());
+                            if (parsed != null) {
+                              setState(() => _downPaymentPesos = parsed.clamp(minDp, maxDp));
+                            }
+                          },
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: _kWalnut.withValues(alpha: 0.25)),
+                          ),
+                        ),
+                        Text(
+                          'Allowed range: ₱${minDp.toStringAsFixed(0)} to ₱${maxDp.toStringAsFixed(0)}',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: CupertinoColors.systemGrey,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+              if (_orderOption == CheckoutOrderOption.hulugan && _canOfferHuluganSplit) ...[
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _kWalnutSoftBg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _kWalnut.withValues(alpha: 0.2)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Hulugan (installment)',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: _kWalnutDeep,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '40% down now: ₱${_huluganDownPaymentPesos().toStringAsFixed(2)}\n'
+                        '6% on financed balance: ₱${_huluganInterestPesos().toStringAsFixed(2)}\n'
+                        'Balance after down: ₱${_huluganRemainingAfterDownPesos().toStringAsFixed(2)}',
+                        style: GoogleFonts.poppins(fontSize: 12, height: 1.45, color: _kWalnutDeep),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _kWalnutSoftBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _kWalnut.withValues(alpha: 0.18)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(CupertinoIcons.doc_text_fill, color: _kWalnut, size: 22),
+                      const SizedBox(width: 10),
+                      Expanded(child: _requiredLabel('Valid ID', fontSize: 15)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Upload one clear photo of a government-issued ID. Required before PayMongo opens.',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      height: 1.35,
+                      color: _kWalnutDeep.withValues(alpha: 0.85),
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_validIdXFile != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _validIdXFile!.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: _kWalnut,
+                                fontWeight: FontWeight.w500,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ),
+                          CupertinoButton(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            minimumSize: Size.zero,
+                            onPressed: () => setState(() => _validIdXFile = null),
+                            child: Text(
+                              'Remove',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: CupertinoColors.systemRed,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    onPressed: _pickValidId,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _kWalnut.withValues(alpha: 0.35)),
+                      ),
+                      child: Center(
+                        child: Text(
+                          _validIdXFile == null ? 'Choose ID photo' : 'Change ID photo',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            color: _kWalnut,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: CupertinoColors.systemBackground,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _kWalnut.withValues(alpha: 0.15)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Policy & schedule',
+                    style: GoogleFonts.poppins(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: _kWalnutDeep,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _policySummaryText(),
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      height: 1.45,
+                      color: _kWalnutDeep.withValues(alpha: 0.88),
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 20),
-
-            // Payment Method Notice
-            if (_paymentMethod == PaymentMethod.cod) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3E0),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFFFF9800).withValues(alpha: 0.3),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      CupertinoIcons.info_circle_fill,
-                      color: Color(0xFFFF9800),
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'COD: Downpayment Required',
-                            style: GoogleFonts.poppins(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFFE65100),
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'A 20% downpayment via GCash is required to confirm your order. The remaining balance will be collected upon delivery.',
-                            style: GoogleFonts.poppins(
-                              fontSize: 12,
-                              fontWeight: FontWeight.normal,
-                              color: const Color(0xFFE65100),
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-            ] else if (_paymentMethod == PaymentMethod.gcash) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFF4CAF50).withValues(alpha: 0.3),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      CupertinoIcons.check_mark_circled_solid,
-                      color: Color(0xFF4CAF50),
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'GCash: Full Payment Upfront',
-                            style: GoogleFonts.poppins(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFF2E7D32),
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Full payment is required via GCash to confirm your order. No additional payment upon delivery.',
-                            style: GoogleFonts.poppins(
-                              fontSize: 12,
-                              fontWeight: FontWeight.normal,
-                              color: const Color(0xFF2E7D32),
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
 
             // Order Total Section
             Container(
@@ -958,29 +1611,41 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   _TotalRow(label: 'Subtotal', value: '₱${subtotal.toStringAsFixed(2)}'),
                   const SizedBox(height: 6),
                   _TotalRow(label: 'Shipping', value: '₱${shipping.toStringAsFixed(2)}'),
+                  if (_paymentPlan == CheckoutPaymentPlan.downpayment &&
+                      _orderOption == CheckoutOrderOption.hulugan) ...[
+                    const SizedBox(height: 6),
+                    _TotalRow(
+                      label: '6% financing (on balance after 40% DP)',
+                      value: '₱${_huluganInterestPesos().toStringAsFixed(2)}',
+                    ),
+                  ],
                   const Divider(height: 24),
                   _TotalRow(
-                    label: 'Total',
-                    value: '₱${total.toStringAsFixed(2)}',
+                    label: 'Order total',
+                    value: '₱${grand.toStringAsFixed(2)}',
                     isTotal: false,
                   ),
-                  // Show downpayment and remaining balance for COD
-                  if (_paymentMethod == PaymentMethod.cod) ...[
+                  if (_paymentPlan == CheckoutPaymentPlan.downpayment &&
+                      ((_orderOption == CheckoutOrderOption.layaway && _canOfferLayawaySplit) ||
+                          (_orderOption == CheckoutOrderOption.hulugan && _canOfferHuluganSplit))) ...[
                     const SizedBox(height: 12),
                     const Divider(height: 24),
                     _TotalRow(
-                      label: 'Downpayment (${(_settings?.codDownpaymentPercentage ?? 20.0).toStringAsFixed(0)}%)',
-                      value: '₱${_calculateDownpayment().toStringAsFixed(2)}',
+                      label: 'Pay now',
+                      value: '₱${_paymongoChargeAmountPesos().toStringAsFixed(2)}',
                       isHighlighted: true,
                     ),
                     const SizedBox(height: 6),
                     _TotalRow(
-                      label: 'Remaining Balance',
-                      value: '₱${_calculateRemainingBalance().toStringAsFixed(2)}',
+                      label: 'Remaining balance',
+                      value: '₱${_remainingAfterDownPesos().toStringAsFixed(2)}',
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Payable upon delivery',
+                      _orderOption == CheckoutOrderOption.hulugan
+                          ? 'After down payment, balance includes 6% on the financed portion. Second charge via PayMongo from Orders. '
+                              'Delivery target: 10–12 days after the order is confirmed.'
+                          : 'Second payment via PayMongo from Orders. 0% for 3 months from first payment; delivery after full payment.',
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         fontStyle: FontStyle.italic,
@@ -994,30 +1659,48 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
             ),
             const SizedBox(height: 24),
 
-            // Place Order Button - simplified to just "Place Order"
-            CupertinoButton.filled(
+            CupertinoButton(
+              padding: EdgeInsets.zero,
               onPressed: _loading ? null : _placeOrder,
-              child: _loading
-                  ? const CupertinoActivityIndicator()
-                  : Text(
-                      'Place Order',
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: _loading ? _kWalnut.withValues(alpha: 0.45) : _kWalnut,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _kWalnut.withValues(alpha: 0.22),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
                     ),
-            ),
-            // Additional info based on payment method
-            const SizedBox(height: 8),
-            Text(
-              _paymentMethod == PaymentMethod.cod
-                  ? 'After placing your order, you will be redirected to pay the 20% downpayment via GCash. The remaining balance will be collected upon delivery.'
-                  : 'After placing your order, you will be redirected to complete full payment via GCash. No additional payment upon delivery.',
-              style: GoogleFonts.poppins(
-                fontSize: 12,
-                color: CupertinoColors.systemGrey,
-                decoration: TextDecoration.none,
+                  ],
+                ),
+                child: _loading
+                    ? const CupertinoActivityIndicator(color: Colors.white)
+                    : Text(
+                        'Proceed to Pay',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
               ),
-              textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
+            // const SizedBox(height: 10),
+            // Text(
+            //   'PayMongo opens next — complete payment there. '
+            //   'If you cancel, your order will be cancelled automatically.',
+            //   style: GoogleFonts.poppins(
+            //     fontSize: 12,
+            //     color: CupertinoColors.systemGrey,
+            //     decoration: TextDecoration.none,
+            //   ),
+            //   textAlign: TextAlign.center,
+            // ),
+            // const SizedBox(height: 8),
           ],
         ),
       ),
@@ -1037,7 +1720,7 @@ class _PaymentPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       // Improved inactive color - lighter beige with better contrast
       // Active: rich brown, Inactive: light beige background with brown border
-      color: selected ? const Color(0xFF8D6E63) : const Color(0xFFF4E6D4),
+      color: selected ? _kWalnut : _kWalnutSoftBg,
       onPressed: onTap,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1046,12 +1729,102 @@ class _PaymentPill extends StatelessWidget {
             label,
             style: GoogleFonts.poppins(
               fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : const Color(0xFF8D6E63),
+              color: selected ? Colors.white : _kWalnut,
               decoration: TextDecoration.none,
             ),
           ),
           if (selected)
             const Icon(CupertinoIcons.check_mark, color: Colors.white),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shared card chrome used by checkout sections that have an "Edit" action.
+class _CheckoutSectionCard extends StatelessWidget {
+  const _CheckoutSectionCard({
+    required this.title,
+    required this.buttonLabel,
+    required this.onTapEdit,
+    required this.child,
+  });
+
+  final String title;
+  final String buttonLabel;
+  final VoidCallback onTapEdit;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _kWalnut.withValues(alpha: 0.22),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                title,
+                style: GoogleFonts.poppins(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: _kWalnutDeep,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              CupertinoButton(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                onPressed: onTapEdit,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _kWalnut,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        CupertinoIcons.pencil,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        buttonLabel,
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
         ],
       ),
     );
@@ -1080,7 +1853,7 @@ class _InfoRow extends StatelessWidget {
             style: GoogleFonts.poppins(
               fontSize: 13,
               fontWeight: FontWeight.w500,
-              color: const Color(0xFF6D4C41).withValues(alpha: 0.7),
+              color: _kWalnutDeep.withValues(alpha: 0.72),
               decoration: TextDecoration.none,
             ),
           ),
@@ -1092,7 +1865,55 @@ class _InfoRow extends StatelessWidget {
             style: GoogleFonts.poppins(
               fontSize: 13,
               fontWeight: FontWeight.normal,
-              color: const Color(0xFF6D4C41),
+              color: _kWalnutDeep,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Field-style info row used for the contact card.
+/// Keeps labels readable while rendering values on white backgrounds.
+class _InfoFieldRow extends StatelessWidget {
+  const _InfoFieldRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.poppins(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: _kWalnutDeep.withValues(alpha: 0.75),
+            decoration: TextDecoration.none,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _kWalnut.withValues(alpha: 0.2)),
+          ),
+          child: Text(
+            value,
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              color: _kWalnutDeep,
               decoration: TextDecoration.none,
             ),
           ),
@@ -1113,11 +1934,11 @@ class _AddressEditorSheet extends StatefulWidget {
 }
 
 class _AddressEditorSheetState extends State<_AddressEditorSheet> {
-  final TextEditingController _fullName = TextEditingController();
-  final TextEditingController _phone = TextEditingController();
   final TextEditingController _postal = TextEditingController();
   final TextEditingController _street = TextEditingController();
   String _label = 'Home';
+
+  final AuthService _auth = AuthService();
 
   // Cascading PH address selection state
   final Map<String, List<String>> _provinceToCities = {};
@@ -1137,8 +1958,6 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
     _loadPhilippinesLocationData();
     final entry = widget.entry;
     if (entry != null) {
-      _fullName.text = entry.fullName;
-      _phone.text = entry.phoneNumber;
       _postal.text = entry.postalCode;
       _street.text = entry.street;
       _label = entry.label;
@@ -1209,9 +2028,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
 
   bool get _hasValidationError {
     return _submitted &&
-        (_fullName.text.trim().isEmpty ||
-            _phone.text.trim().isEmpty ||
-            _selectedProvince == null ||
+        (_selectedProvince == null ||
             _selectedCity == null ||
             _selectedBarangay == null ||
             _street.text.trim().isEmpty);
@@ -1220,7 +2037,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFF6D4C41).withValues(alpha: 0.5),
+      color: Colors.black.withValues(alpha: 0.55),
       child: Center(
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -1238,12 +2055,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                   style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 16),
-                _buildSmallField('Full Name *', _fullName, showError: _submitted && _fullName.text.trim().isEmpty),
-                _buildSmallField('Phone Number *', _phone,
-                    keyboard: TextInputType.phone,
-                    showError: _submitted && _phone.text.trim().isEmpty),
-                const SizedBox(height: 4),
-                Text('Address (Philippines)', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500)),
+                Text('Address Philippines', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500)),
                 const SizedBox(height: 6),
                 if (_loadingLocations)
                   const Center(child: CupertinoActivityIndicator())
@@ -1324,14 +2136,26 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                   children: [
                     Expanded(
                       child: CupertinoButton(
-                        color: const Color(0xFFF4E6D4),
+                        color: Colors.white,
                         onPressed: () => Navigator.of(context).pop(),
-                        child: Text(
-                          'Cancel',
-                          style: GoogleFonts.poppins(
-                            color: const Color(0xFF8D6E63),
-                            fontWeight: FontWeight.w600,
-                            decoration: TextDecoration.none,
+                        borderRadius: BorderRadius.circular(10),
+                        padding: EdgeInsets.zero,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF8D6E63), width: 1),
+                          ),
+                          child: Text(
+                            'Cancel',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.poppins(
+                              color: const Color(0xFF8D6E63),
+                              fontWeight: FontWeight.w600,
+                              decoration: TextDecoration.none,
+                            ),
                           ),
                         ),
                       ),
@@ -1340,6 +2164,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                     Expanded(
                       child: CupertinoButton(
                         color: const Color(0xFF8D6E63),
+                        borderRadius: BorderRadius.circular(10),
                         onPressed: () {
                           setState(() {
                             _submitted = true;
@@ -1352,11 +2177,16 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                             _selectedBarangay,
                           ].whereType<String>().join(', ');
 
+                          final user = _auth.currentUser;
+                          final fullName = user?.fullName ?? widget.entry?.fullName ?? '';
+                          final phone = user?.phoneNumber ?? widget.entry?.phoneNumber ?? '';
+
                           widget.onSubmit(
                             AddressEntry(
                               id: widget.entry?.id ?? '',
-                              fullName: _fullName.text.trim(),
-                              phoneNumber: _phone.text.trim(),
+                              // Name + contact are sourced from profile; user cannot edit them here.
+                              fullName: fullName,
+                              phoneNumber: phone,
                               region: region,
                               postalCode: _postal.text.trim(),
                               street: _street.text.trim(),
@@ -1513,7 +2343,7 @@ class _TotalRow extends StatelessWidget {
         Text(
           label,
           style: GoogleFonts.poppins(
-            color: isHighlighted ? const Color(0xFF1976D2) : Colors.black,
+            color: isHighlighted ? _kWalnut : Colors.black,
             fontSize: isTotal ? 18 : (isHighlighted ? 16 : 16),
             fontWeight: isTotal
                 ? FontWeight.w700
@@ -1524,7 +2354,7 @@ class _TotalRow extends StatelessWidget {
         Text(
           value,
           style: GoogleFonts.poppins(
-            color: isHighlighted ? const Color(0xFF1976D2) : Colors.black,
+            color: isHighlighted ? _kWalnut : Colors.black,
             fontSize: isTotal ? 18 : (isHighlighted ? 16 : 16),
             fontWeight: isTotal
                 ? FontWeight.w700

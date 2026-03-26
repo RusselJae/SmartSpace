@@ -12,7 +12,6 @@ import '../../services/auth_service.dart';
 import '../../services/cart_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
-import '../../services/wishlist_service.dart';
 import '../../widgets/loading_screen.dart';
 import '../shell/tab_shell.dart';
 import '../profile/addresses_screen.dart';
@@ -20,9 +19,10 @@ import '../profile/my_profile_screen.dart';
 import '../profile/reviews.dart';
 import '../profile/help_center_screen.dart';
 import '../profile/about_us_screen.dart';
-import '../profile/rate_us_screen.dart';
 import '../profile/settings_screen.dart';
 import '../views/sign_in.dart';
+import '../support/support_chat_screen.dart';
+import '../../widgets/global_profile_sidebar.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -35,13 +35,17 @@ class _ProfileTabState extends State<ProfileTab> {
   final AuthService _auth = AuthService();
   final ProfileStorage _storage = ProfileStorage();
   final CartService _cart = CartService();
-  final WishlistService _wishlist = WishlistService();
 
   ProfileExtras? _extras;
   Uint8List? _avatarBytes;
   String? _avatarPath;
   String? _avatarNetworkUrl;
   bool _loading = true;
+
+  // NOTE:
+  // The sidebar overlay is now global (mounted in TabShell), so the
+  // Profile tab itself stays simple and just shows a lightweight
+  // "Profile" surface behind the overlay.
 
   @override
   void initState() {
@@ -121,6 +125,89 @@ class _ProfileTabState extends State<ProfileTab> {
     }
   }
 
+  Widget _buildAvatar({required double radius}) {
+    if (_avatarBytes != null) {
+      return CircleAvatar(radius: radius, backgroundImage: MemoryImage(_avatarBytes!));
+    }
+    if (_avatarNetworkUrl != null) {
+      return CircleAvatar(radius: radius, backgroundImage: NetworkImage(_avatarNetworkUrl!));
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: const Color(0xFFE0E0E0),
+      child: Icon(
+        CupertinoIcons.person_circle,
+        size: radius * 1.15,
+        color: Colors.grey.shade600,
+      ),
+    );
+  }
+
+  Widget _buildSidebarHeader(User user) {
+    final extras = _extras;
+    final name = user.fullName.isNotEmpty ? user.fullName : (extras?.username ?? 'Guest');
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: const Color(0xFF8D6E63).withValues(alpha: 0.18),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  minSize: 0,
+                  onPressed: () async {
+                    await Navigator.of(context, rootNavigator: true)
+                        .push(CupertinoPageRoute(builder: (_) => const MyProfileScreen()));
+                    if (mounted) {
+                      await _hydrate();
+                    }
+                  },
+                  child: Text(
+                    'View profile',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF8D6E63),
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Right-to-left visual: avatar on the far right.
+          _buildAvatar(radius: 22),
+        ],
+      ),
+    );
+  }
+
   /// Menu tile with consistent styling - white background, no subtitle
   /// Wider tiles, no padding inside, minimal gaps between tiles, centered
   Widget _buildTile({
@@ -192,15 +279,7 @@ class _ProfileTabState extends State<ProfileTab> {
   Widget _buildHeader(User user) {
     final extras = _extras;
     // Avatar at increased size (increased by half of reduced size)
-    final avatar = _avatarBytes != null
-        ? CircleAvatar(radius: 35, backgroundImage: MemoryImage(_avatarBytes!)) // 26 + (43 - 26) * 0.5 = 26 + 8.5 = 34.5 ≈ 35
-        : _avatarNetworkUrl != null
-            ? CircleAvatar(radius: 35, backgroundImage: NetworkImage(_avatarNetworkUrl!)) // 26 + (43 - 26) * 0.5 = 26 + 8.5 = 34.5 ≈ 35
-            : CircleAvatar(
-                radius: 35, // 26 + (43 - 26) * 0.5 = 26 + 8.5 = 34.5 ≈ 35
-                backgroundColor: const Color(0xFFE0E0E0),
-                child: Icon(CupertinoIcons.person_circle, size: 41, color: Colors.grey.shade600), // 31 + (51 - 31) * 0.5 = 31 + 10 = 41
-              );
+    final avatar = _buildAvatar(radius: 35);
 
     return Column(
       children: [
@@ -266,7 +345,7 @@ class _ProfileTabState extends State<ProfileTab> {
 
   /// Menu items with consistent tile styling - grouped with divider
   /// Group 1: Address, Reviews
-  /// Group 2: Help Center, About Us, Rate Us, Logout
+  /// Group 2: Help Center, About Us, Logout
   Widget _buildButtons(User user) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -289,7 +368,7 @@ class _ProfileTabState extends State<ProfileTab> {
             CupertinoPageRoute(builder: (_) => const ReviewsScreen()),
           ),
         ),
-        // Group 2: Help Center, About Us, Rate Us, Logout
+        // Group 2: Help Center, About Us, Logout
         // Help Center - using headset icon
         _buildTile(
           icon: CupertinoIcons.headphones,
@@ -298,20 +377,20 @@ class _ProfileTabState extends State<ProfileTab> {
             CupertinoPageRoute(builder: (_) => const HelpCenterScreen()),
           ),
         ),
+        // Support chat - direct customer support messaging
+        _buildTile(
+          icon: CupertinoIcons.chat_bubble_2,
+          title: 'Support Chat',
+          onTap: () => Navigator.of(context, rootNavigator: true).push(
+            CupertinoPageRoute(builder: (_) => const SupportChatScreen()),
+          ),
+        ),
         // About Us - using info circle icon
         _buildTile(
           icon: CupertinoIcons.info_circle,
           title: 'About Us',
           onTap: () => Navigator.of(context, rootNavigator: true).push(
             CupertinoPageRoute(builder: (_) => const AboutUsScreen()),
-          ),
-        ),
-        // Rate Us - using star icon
-        _buildTile(
-          icon: CupertinoIcons.star,
-          title: 'Rate Us',
-          onTap: () => Navigator.of(context, rootNavigator: true).push(
-            CupertinoPageRoute(builder: (_) => const RateUsScreen()),
           ),
         ),
         // Settings - for account/password related actions
@@ -336,7 +415,6 @@ class _ProfileTabState extends State<ProfileTab> {
   Future<void> _handleLogout() async {
     final user = _auth.currentUser;
     setState(() => _loading = true);
-    _wishlist.clear();
     if (user != null) {
       await _storage.clearUserData(user.id);
     }
@@ -436,30 +514,20 @@ class _ProfileTabState extends State<ProfileTab> {
             ? const Center(child: CupertinoActivityIndicator())
             : user == null
                 ? _buildGuest()
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      // Calculate available height and adjust layout to fit
-                      final availableHeight = constraints.maxHeight;
-                      return SingleChildScrollView(
-                        // Add bottom padding to prevent content from being blocked by tab bar
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: availableHeight - 90, // Account for bottom padding
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildHeader(user),
-                              const SizedBox(height: 14), // 12 + (8 * 0.25) = 12 + 2 = 14
-                              _buildButtons(user),
-                            ],
-                          ),
+                : Center(
+                    child: CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: () => GlobalProfileSidebarController.instance.open(),
+                      child: Text(
+                        'Profile menu',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.black.withValues(alpha: 0.55),
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.none,
                         ),
-                      );
-                    },
+                      ),
+                    ),
                   ),
       ),
     );

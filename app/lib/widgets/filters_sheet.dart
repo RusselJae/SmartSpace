@@ -22,14 +22,16 @@ class FilterData {
 
   /// Returns true if any filters are active (not default values)
   bool get hasActiveFilters {
-    return minPrice > 50 ||
-        maxPrice < 900 ||
+    return minPrice > 1 ||
+        maxPrice < 100000 ||
         styles.isNotEmpty ||
         materials.isNotEmpty ||
         colors.isNotEmpty ||
         size != 'M';
   }
 }
+
+const Color _kWalnut = Color(0xFF5C4033);
 
 class FiltersSheet extends StatefulWidget {
   const FiltersSheet({super.key, this.initialFilters});
@@ -72,8 +74,8 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
     
     // Initialize filter values from initialFilters or defaults
     final initial = widget.initialFilters;
-    _minPrice = initial?.minPrice ?? 50;
-    _maxPrice = initial?.maxPrice ?? 900;
+    _minPrice = initial?.minPrice ?? 1;
+    _maxPrice = initial?.maxPrice ?? 100000;
     _styles = Set<String>.from(initial?.styles ?? <String>{});
     _materials = Set<String>.from(initial?.materials ?? <String>{});
     _colors = Set<Color>.from(initial?.colors ?? <Color>{});
@@ -97,14 +99,37 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
 
   void _reset() {
     setState(() {
-      _minPrice = 50;
-      _maxPrice = 900;
+      _minPrice = 1;
+      _maxPrice = 100000;
       _styles.clear();
       _materials.clear();
       _colors.clear();
       _size = 'M';
     });
   }
+
+  String _formatPesos(int amount) {
+    final text = amount.toString();
+    final buffer = StringBuffer();
+    for (int i = 0; i < text.length; i++) {
+      final isBoundary = i > 0 && (text.length - i) % 3 == 0;
+      if (isBoundary) buffer.write(',');
+      buffer.write(text[i]);
+    }
+    return buffer.toString();
+  }
+
+  static const List<_LabeledColor> _adminProductColors = [
+    // Keep in sync with admin add/edit common colors.
+    _LabeledColor(color: Color(0xFF8D6E63), label: 'Brown'),
+    _LabeledColor(color: Color(0xFF212121), label: 'Black'),
+    _LabeledColor(color: Color(0xFFFFFFFF), label: 'White'),
+    _LabeledColor(color: Color(0xFFBCAAA4), label: 'Light Brown'),
+    _LabeledColor(color: Color(0xFF5D4037), label: 'Dark Brown'),
+    _LabeledColor(color: Color(0xFFD7CCC8), label: 'Natural'),
+    _LabeledColor(color: Color(0xFF9E9E9E), label: 'Gray'),
+    _LabeledColor(color: Color(0xFFF5F5DC), label: 'Beige'),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -163,51 +188,34 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: CupertinoSlider(
-                          min: 0,
-                          max: _maxPrice,
-                          value: _minPrice.clamp(0, _maxPrice),
-                          onChanged: (v) => setState(() => _minPrice = v),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '₱${_minPrice.toStringAsFixed(0)}',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.black,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: CupertinoSlider(
-                          min: _minPrice,
-                          max: 2000,
-                          value: _maxPrice.clamp(_minPrice, 2000),
-                          onChanged: (v) => setState(() => _maxPrice = v),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '₱${_maxPrice.toStringAsFixed(0)}',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.black,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ],
+                  RangeSlider(
+                    min: 1,
+                    max: 100000,
+                    values: RangeValues(
+                      _minPrice.clamp(1, 100000),
+                      _maxPrice.clamp(1, 100000),
+                    ),
+                    onChanged: (values) {
+                      setState(() {
+                        _minPrice = values.start.clamp(1, 100000);
+                        _maxPrice = values.end.clamp(_minPrice, 100000);
+                      });
+                    },
                   ),
                   const SizedBox(height: 8),
+                  // Single-line combined price range display.
+                  Text(
+                    '₱${_formatPesos(_minPrice.toInt())} - ₱${_formatPesos(_maxPrice.toInt())}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      fontWeight: FontWeight.normal,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   Text(
                     'Style',
                     style: GoogleFonts.poppins(
@@ -219,7 +227,8 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                   ),
                   const SizedBox(height: 6),
                   _Chips(
-                    options: const ['Modern', 'Classic', 'Minimal', 'Industrial'],
+                    // Keep style options in sync with admin product form
+                    options: const ['Modern', 'Classic', 'Minimal', 'Traditional'],
                     selected: _styles,
                     onToggle: (s) => setState(() => _styles.toggle(s)),
                   ),
@@ -235,7 +244,8 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                   ),
                   const SizedBox(height: 6),
                   _Chips(
-                    options: const ['Wood', 'Metal', 'Fabric', 'Leather'],
+                    // Restrict materials to the four supported species
+                    options: const ['Mahogany', 'Acacia', 'Molave', 'Yakal'],
                     selected: _materials,
                     onToggle: (s) => setState(() => _materials.toggle(s)),
                   ),
@@ -250,34 +260,16 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      // Color palette: light brown to brown and orange tones
-                      // Removed all dark brown variations for a warmer aesthetic
-                      for (final c in const [
-                        Color(0xFFD7CCC8), // very light brown
-                        Color(0xFFBCAAA4), // light brown
-                        Color(0xFFA1887F), // medium-light brown
-                        Color(0xFF8D6E63), // medium brown
-                        Color(0xFF6D4C41), // brown
-                        Color(0xFFFFB74D), // light orange
-                        Color(0xFFFF9800), // orange
-                        Color(0xFFF57C00), // deeper orange
-                      ])
-                        _ColorDot(
-                          color: c,
-                          selected: _colors.contains(c),
-                          onTap: () => setState(() {
-                            if (_colors.contains(c)) {
-                              _colors.remove(c);
-                            } else {
-                              _colors.add(c);
-                            }
-                          }),
-                        )
-                    ],
+                  _ColorDotPicker(
+                    options: _adminProductColors,
+                    selected: _colors,
+                    onToggle: (c) => setState(() {
+                      if (_colors.contains(c)) {
+                        _colors.remove(c);
+                      } else {
+                        _colors.add(c);
+                      }
+                    }),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -296,17 +288,24 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: CupertinoButton(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            // Light brown when inactive, normal brown when active
-                            color: _size == s ? const Color(0xFF8D6E63) : const Color(0xFFBCAAA4),
+                            padding: EdgeInsets.zero,
+                            borderRadius: BorderRadius.zero,
                             onPressed: () => setState(() => _size = s),
-                            child: Text(
-                              s,
-                              style: GoogleFonts.poppins(
-                                color: Colors.black,
-                                fontSize: 16,
-                                fontWeight: FontWeight.normal,
-                                decoration: TextDecoration.none,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _size == s ? _kWalnut : Colors.white,
+                                borderRadius: BorderRadius.zero,
+                                border: Border.all(color: _kWalnut, width: 1),
+                              ),
+                              child: Text(
+                                s,
+                                style: GoogleFonts.poppins(
+                                  color: _size == s ? Colors.white : _kWalnut,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.normal,
+                                  decoration: TextDecoration.none,
+                                ),
                               ),
                             ),
                           ),
@@ -317,17 +316,24 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                   Row(
                     children: [
                       Expanded(
-                        child: CupertinoButton(
-                          // Light brown for cancel button
-                          color: const Color(0xFFBCAAA4),
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: Text(
-                            'Cancel',
-                            style: GoogleFonts.poppins(
-                              color: Colors.black,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              decoration: TextDecoration.none,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.zero,
+                            border: Border.all(color: _kWalnut, width: 1),
+                          ),
+                          child: CupertinoButton(
+                            borderRadius: BorderRadius.zero,
+                            padding: EdgeInsets.zero,
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: Text(
+                              'Cancel',
+                              style: GoogleFonts.poppins(
+                                color: _kWalnut,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                decoration: TextDecoration.none,
+                              ),
                             ),
                           ),
                         ),
@@ -336,45 +342,35 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
                       Expanded(
                         child: Container(
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF8D6E63), Color(0xFFFF9800)],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFFFF9800).withValues(alpha: 0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
+                            color: _kWalnut,
+                            borderRadius: BorderRadius.zero,
+                            border: Border.all(color: _kWalnut, width: 1),
                           ),
                           child: CupertinoButton(
                             padding: EdgeInsets.zero,
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.zero,
                             onPressed: () {
-                            // Return the filter data when Apply is clicked
-                            final filterData = FilterData(
-                              minPrice: _minPrice,
-                              maxPrice: _maxPrice,
-                              styles: Set<String>.from(_styles),
-                              materials: Set<String>.from(_materials),
-                              colors: Set<Color>.from(_colors),
-                              size: _size,
-                            );
-                            Navigator.of(context).pop(filterData);
-                          },
-                          child: Text(
-                            'Apply Filters',
-                            style: GoogleFonts.poppins(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 16,
-                              decoration: TextDecoration.none,
+                              // Return the filter data when Apply is clicked
+                              final filterData = FilterData(
+                                minPrice: _minPrice,
+                                maxPrice: _maxPrice,
+                                styles: Set<String>.from(_styles),
+                                materials: Set<String>.from(_materials),
+                                colors: Set<Color>.from(_colors),
+                                size: _size,
+                              );
+                              Navigator.of(context).pop(filterData);
+                            },
+                            child: Text(
+                              'Apply Filters',
+                              style: GoogleFonts.poppins(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                                decoration: TextDecoration.none,
+                              ),
                             ),
                           ),
-                        ),
                         ),
                       ),
                     ],
@@ -385,6 +381,61 @@ class _FiltersSheetState extends State<FiltersSheet> with SingleTickerProviderSt
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LabeledColor {
+  const _LabeledColor({required this.color, required this.label});
+  final Color color;
+  final String label;
+}
+
+class _ColorDotPicker extends StatelessWidget {
+  const _ColorDotPicker({
+    required this.options,
+    required this.selected,
+    required this.onToggle,
+  });
+
+  final List<_LabeledColor> options;
+  final Set<Color> selected;
+  final void Function(Color) onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        for (final opt in options)
+          Tooltip(
+            message: opt.label,
+            child: GestureDetector(
+              onTap: () => onToggle(opt.color),
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: opt.color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected.contains(opt.color) ? _kWalnut : CupertinoColors.separator,
+                    width: selected.contains(opt.color) ? 3 : 1.5,
+                  ),
+                  boxShadow: [
+                    if (selected.contains(opt.color))
+                      BoxShadow(
+                        color: _kWalnut.withValues(alpha: 0.22),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -403,47 +454,28 @@ class _Chips extends StatelessWidget {
       children: [
         for (final o in options)
           CupertinoButton(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            // Light brown when inactive, normal brown when active
-            color: selected.contains(o) ? const Color(0xFF8D6E63) : const Color(0xFFBCAAA4),
+            padding: EdgeInsets.zero,
+            borderRadius: BorderRadius.zero,
             onPressed: () => onToggle(o),
-            child: Text(
-              o,
-              style: GoogleFonts.poppins(
-                color: Colors.black,
-                fontSize: 14,
-                fontWeight: FontWeight.normal,
-                decoration: TextDecoration.none,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: selected.contains(o) ? _kWalnut : Colors.white,
+                borderRadius: BorderRadius.zero,
+                border: Border.all(color: _kWalnut, width: 1),
+              ),
+              child: Text(
+                o,
+                style: GoogleFonts.poppins(
+                  color: selected.contains(o) ? Colors.white : _kWalnut,
+                  fontSize: 14,
+                  fontWeight: FontWeight.normal,
+                  decoration: TextDecoration.none,
+                ),
               ),
             ),
           ),
       ],
-    );
-  }
-}
-
-class _ColorDot extends StatelessWidget {
-  const _ColorDot({required this.color, required this.selected, required this.onTap});
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: selected ? const Color(0xFF8D6E63) : CupertinoColors.separator,
-            width: 2.5,
-          ),
-        ),
-      ),
     );
   }
 }

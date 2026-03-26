@@ -1,6 +1,9 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'terms_and_conditions_screen.dart';
+import 'privacy_policy_screen.dart';
+import 'change_password_screen.dart';
 
 /// Simple settings screen placeholder for user account actions.
 class SettingsScreen extends StatelessWidget {
@@ -121,8 +124,7 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: ListView(
           children: [
             const SizedBox(height: 12),
             Padding(
@@ -140,12 +142,46 @@ class SettingsScreen extends StatelessWidget {
             _buildTile(
               icon: CupertinoIcons.lock,
               title: 'Change Password',
-              onTap: () => _showComingSoon(context, 'Change Password'),
+              onTap: () {
+                Navigator.of(context).push(
+                  CupertinoPageRoute(builder: (_) => const ChangePasswordScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 18),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18.0),
+              child: Text(
+                'Legal',
+                style: GoogleFonts.poppins(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black54,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            _buildTile(
+              icon: CupertinoIcons.doc_text,
+              title: 'Terms & Conditions',
+              onTap: () {
+                Navigator.of(context).push(
+                  CupertinoPageRoute(
+                    builder: (_) => const TermsAndConditionsScreen(),
+                  ),
+                );
+              },
             ),
             _buildTile(
-              icon: CupertinoIcons.person_crop_circle_badge_checkmark,
-              title: 'Security & Privacy',
-              onTap: () => _showComingSoon(context, 'Security & Privacy'),
+              icon: CupertinoIcons.hand_raised,
+              title: 'Privacy Policy',
+              onTap: () {
+                Navigator.of(context).push(
+                  CupertinoPageRoute(
+                    builder: (_) => const PrivacyPolicyScreen(),
+                  ),
+                );
+              },
             ),
           ],
         ),

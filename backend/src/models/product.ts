@@ -20,6 +20,7 @@ export interface Product {
   readonly isPopular: boolean;
   readonly isNewArrival: boolean;
   readonly inStock: boolean;
+  readonly isArchived: boolean;
   readonly createdAt: Date;
 }
 

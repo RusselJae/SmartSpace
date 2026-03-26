@@ -32,6 +32,8 @@ type CartItemRow = RowDataPacket & {
   readonly product_is_popular: number | boolean | null;
   readonly product_is_new_arrival: number | boolean | null;
   readonly product_in_stock: number | boolean | null;
+  readonly product_inventory_qty: number | null;
+  readonly product_is_archived: number | boolean | null;
   readonly product_created_at: Date;
 };
 
@@ -77,6 +79,8 @@ const CART_SELECT = `
     p.is_popular AS product_is_popular,
     p.is_new_arrival AS product_is_new_arrival,
     p.in_stock AS product_in_stock,
+    p.inventory_qty AS product_inventory_qty,
+    p.is_archived AS product_is_archived,
     p.created_at AS product_created_at
   FROM cart_items ci
   INNER JOIN products p ON p.id = ci.product_id
@@ -102,6 +106,8 @@ const mapProduct = (row: CartItemRow): Product => ({
   isPopular: parseBooleanFlag(row.product_is_popular),
   isNewArrival: parseBooleanFlag(row.product_is_new_arrival),
   inStock: parseBooleanFlag(row.product_in_stock),
+  inventoryQty: Number(row.product_inventory_qty ?? 0),
+  isArchived: parseBooleanFlag(row.product_is_archived),
   createdAt: row.product_created_at ?? new Date(),
 });
 

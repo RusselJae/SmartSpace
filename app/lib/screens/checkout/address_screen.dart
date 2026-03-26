@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../services/auth_service.dart';
 import 'models.dart';
 import 'delivery_screen.dart';
 
@@ -20,6 +21,8 @@ class AddressScreen extends StatefulWidget {
 }
 
 class _AddressScreenState extends State<AddressScreen> {
+  final AuthService _auth = AuthService();
+
   // =============================================================
   // Core text controllers
   // -------------------------------------------------------------
@@ -35,12 +38,10 @@ class _AddressScreenState extends State<AddressScreen> {
   //   - _postal -> Postal code (kept as-is for now)
   //   - _name / _phone -> unchanged
   // =============================================================
-  final TextEditingController _name = TextEditingController();
   final TextEditingController _line1 = TextEditingController();
   final TextEditingController _line2 = TextEditingController();
   final TextEditingController _city = TextEditingController();
   final TextEditingController _postal = TextEditingController();
-  final TextEditingController _phone = TextEditingController();
 
   // -------------------------------------------------------------
   // Cascading dropdown data source
@@ -59,6 +60,11 @@ class _AddressScreenState extends State<AddressScreen> {
   String? _selectedCity;
   String? _selectedBarangay;
 
+  /// After first submit attempt, show per-field errors (red border + message) instead of banner.
+  bool _submitted = false;
+
+  /// Non-blocking load error (location dropdowns).
+  /// The form stays usable; we surface a small banner for visibility.
   String? _error;
 
   // Removed unused _loadingLocations field
@@ -123,23 +129,15 @@ class _AddressScreenState extends State<AddressScreen> {
   }
 
   bool get _hasValidationError =>
-      _name.text.isEmpty ||
       _line1.text.isEmpty ||
       _selectedProvince == null ||
       _selectedCity == null ||
       _selectedBarangay == null ||
-      _postal.text.isEmpty ||
-      _phone.text.isEmpty;
+      _postal.text.isEmpty;
 
   void _next() {
-    // Reset any previous error before validating again so the user
-    // clearly sees the most recent result of their action.
-    setState(() => _error = null);
-
-    if (_hasValidationError) {
-      setState(() => _error = 'Please fill in all required fields');
-      return;
-    }
+    setState(() => _submitted = true);
+    if (_hasValidationError) return;
 
     // NOTE: We keep the outbound data contract untouched so the
     // downstream checkout flow keeps working:
@@ -153,13 +151,16 @@ class _AddressScreenState extends State<AddressScreen> {
       if (_line2.text.trim().isNotEmpty) _line2.text.trim(), // Street
     ].join(', ');
 
+    final user = _auth.currentUser;
+    if (user == null) return;
+
     final address = AddressData(
-      fullName: _name.text,
+      fullName: user.fullName,
       addressLine1: mergedLine1,
       addressLine2: '$_selectedBarangay, $_selectedCity', // lightweight hint
       city: _selectedCity ?? '',
       postalCode: _postal.text,
-      phone: _phone.text,
+      phone: user.phoneNumber ?? '',
     );
     Navigator.of(context).push(
       CupertinoPageRoute(builder: (_) => DeliveryScreen(address: address)),
@@ -183,47 +184,45 @@ class _AddressScreenState extends State<AddressScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            Builder(
+              builder: (_) {
+                final user = _auth.currentUser;
+                final recipientName = user?.fullName ?? '';
+                final phone = user?.phoneNumber ?? '';
+                return Column(
+                  children: [
             if (_error != null) ...[
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0x1FFF3B30),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _error!,
-                  style: GoogleFonts.poppins(
-                    color: _inkTitle,
-                    fontSize: 16,
-                    fontWeight: FontWeight.normal,
-                    decoration: TextDecoration.none,
+                  color: CupertinoColors.systemYellow.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: CupertinoColors.systemYellow.withValues(alpha: 0.35),
+                    width: 1,
                   ),
                 ),
+                child: Row(
+                  children: [
+                    const Icon(CupertinoIcons.exclamationmark_triangle, size: 18, color: CupertinoColors.systemYellow),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          color: _inkTitle,
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
             ],
-            // ---------------------------------------------------
-            // Contact information
-            // Required label markers are rendered in red to make
-            // them visually unambiguous, as requested.
-            // ---------------------------------------------------
-            _SectionTitle('Contact Information', isRequired: true),
-            const SizedBox(height: 8),
-            _CupertinoField(
-              controller: _name,
-              placeholder: 'Full name',
-              isRequired: true,
-              showError: _error != null && _name.text.isEmpty,
-            ),
-            const SizedBox(height: 12),
-            _CupertinoField(
-              controller: _phone,
-              placeholder: 'Phone number',
-              keyboardType: TextInputType.phone,
-              isRequired: true,
-              showError: _error != null && _phone.text.isEmpty,
-            ),
-            const SizedBox(height: 20),
+                    const SizedBox(height: 20),
             // ---------------------------------------------------
             // Address section
             // City / Barangay are now dropdown‑driven while the
@@ -235,9 +234,10 @@ class _AddressScreenState extends State<AddressScreen> {
             const SizedBox(height: 8),
             _CupertinoField(
               controller: _line1,
+              label: 'Block and Lot',
               placeholder: 'Block and Lot',
               isRequired: true,
-              showError: _error != null && _line1.text.isEmpty,
+              showError: _submitted && _line1.text.isEmpty,
             ),
             const SizedBox(height: 12),
             _CupertinoField(
@@ -245,17 +245,15 @@ class _AddressScreenState extends State<AddressScreen> {
               placeholder: 'Street (optional but recommended)',
             ),
             const SizedBox(height: 12),
-            // Province dropdown (first level in the cascade).
             _DropdownField(
               label: 'Province',
               isRequired: true,
               value: _selectedProvince,
               options: _allProvinces,
-              showError: _error != null && _selectedProvince == null,
+              showError: _submitted && _selectedProvince == null,
               onChanged: (value) {
                 setState(() {
                   _selectedProvince = value;
-                  // When province changes, reset the downstream picks.
                   _selectedCity = null;
                   _selectedBarangay = null;
                   _city.text = '';
@@ -270,12 +268,10 @@ class _AddressScreenState extends State<AddressScreen> {
               options: _selectedProvince == null
                   ? const []
                   : (_provinceToCities[_selectedProvince] ?? const []),
-              showError: _error != null && _selectedCity == null,
+              showError: _submitted && _selectedCity == null,
               onChanged: (value) {
                 setState(() {
                   _selectedCity = value;
-                  // Reset barangay whenever the city changes so we
-                  // never end up with a mismatched pair.
                   _selectedBarangay = null;
                   _city.text = value ?? '';
                 });
@@ -289,7 +285,7 @@ class _AddressScreenState extends State<AddressScreen> {
               options: _selectedCity == null
                   ? const []
                   : _cityToBarangays[_selectedCity] ?? const [],
-              showError: _error != null && _selectedBarangay == null,
+              showError: _submitted && _selectedBarangay == null,
               onChanged: (value) {
                 setState(() {
                   _selectedBarangay = value;
@@ -299,10 +295,11 @@ class _AddressScreenState extends State<AddressScreen> {
             const SizedBox(height: 12),
             _CupertinoField(
               controller: _postal,
+              label: 'Postal code',
               placeholder: 'Postal code',
               keyboardType: TextInputType.number,
               isRequired: true,
-              showError: _error != null && _postal.text.isEmpty,
+              showError: _submitted && _postal.text.isEmpty,
             ),
             const SizedBox(height: 20),
             Text(
@@ -324,9 +321,15 @@ class _AddressScreenState extends State<AddressScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _SummaryRow(label: 'Recipient', value: _name.text.isEmpty ? '-' : _name.text),
+                  _SummaryRow(
+                    label: 'Recipient',
+                    value: recipientName.isEmpty ? '-' : recipientName,
+                  ),
                   const SizedBox(height: 6),
-                  _SummaryRow(label: 'Phone', value: _phone.text.isEmpty ? '-' : _phone.text),
+                  _SummaryRow(
+                    label: 'Phone',
+                    value: phone.isEmpty ? '-' : phone,
+                  ),
                   const SizedBox(height: 6),
                   _SummaryRow(
                     label: 'Block & Lot',
@@ -362,6 +365,10 @@ class _AddressScreenState extends State<AddressScreen> {
                 style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
               ),
             ),
+                  ],
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -369,14 +376,40 @@ class _AddressScreenState extends State<AddressScreen> {
   }
 }
 
-/// Lightweight Cupertino text field wrapper that:
-/// - Aligns with the rest of the app’s glassy card aesthetic
-/// - Knows whether it is a required field and can tint the border
-///   red when the form is submitted with missing data.
+/// Label’s /// Label: "Label " with red asterisk (same as add address / product form).
+Widget _requiredLabel(String label) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Expanded(
+        child: Text(
+          label,
+          style: GoogleFonts.poppins(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: _inkTitle,
+            decoration: TextDecoration.none,
+          ),
+        ),
+      ),
+      Text(
+        '* Required',
+        style: GoogleFonts.poppins(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          color: CupertinoColors.systemRed,
+          decoration: TextDecoration.none,
+        ),
+      ),
+    ],
+  );
+}
+
 class _CupertinoField extends StatelessWidget {
   const _CupertinoField({
     required this.controller,
     required this.placeholder,
+    this.label,
     this.keyboardType,
     this.isRequired = false,
     this.showError = false,
@@ -384,6 +417,7 @@ class _CupertinoField extends StatelessWidget {
 
   final TextEditingController controller;
   final String placeholder;
+  final String? label;
   final TextInputType? keyboardType;
   final bool isRequired;
   final bool showError;
@@ -393,35 +427,54 @@ class _CupertinoField extends StatelessWidget {
     final baseBorderColor = CupertinoColors.separator.withValues(alpha: 0.1);
     final effectiveBorderColor = showError ? CupertinoColors.systemRed : baseBorderColor;
 
-    final effectivePlaceholder = isRequired ? '$placeholder *' : placeholder;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F8F8),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: effectiveBorderColor,
-          width: showError ? 1.4 : 1,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (label != null && isRequired) ...[
+          _requiredLabel(label!),
+          const SizedBox(height: 6),
+        ],
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F8F8),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: effectiveBorderColor,
+              width: showError ? 1.4 : 1,
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: CupertinoTextField(
+            controller: controller,
+            placeholder: placeholder,
+            placeholderStyle: GoogleFonts.poppins(
+              color: CupertinoColors.placeholderText,
+              fontSize: 15,
+              decoration: TextDecoration.none,
+            ),
+            style: const TextStyle(color: Color(0xFF6D4C41)),
+            keyboardType: keyboardType,
+            decoration: null,
+            onChanged: (_) {
+              // ignore: invalid_use_of_protected_member
+              (context as Element).markNeedsBuild();
+            },
+          ),
         ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: CupertinoTextField(
-        controller: controller,
-        placeholder: effectivePlaceholder,
-        placeholderStyle: GoogleFonts.poppins(
-          color: CupertinoColors.placeholderText,
-          fontSize: 15,
-          decoration: TextDecoration.none,
-        ),
-        style: const TextStyle(color: Color(0xFF6D4C41)),
-        keyboardType: keyboardType,
-        decoration: null,
-        onChanged: (_) {
-          // trigger rebuild for summary
-          // ignore: invalid_use_of_protected_member
-          (context as Element).markNeedsBuild();
-        },
-      ),
+        if (showError)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Required',
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                color: CupertinoColors.systemRed,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -452,10 +505,10 @@ class _SectionTitle extends StatelessWidget {
         if (isRequired) ...[
           const SizedBox(width: 4),
           Text(
-            '*',
+            '* Required',
             style: GoogleFonts.poppins(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
               color: CupertinoColors.systemRed,
               decoration: TextDecoration.none,
             ),
@@ -490,58 +543,72 @@ class _DropdownField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>(
-      // ignore: deprecated_member_use
-      value: options.contains(value) ? value : null, // DropdownButtonFormField uses 'value' for controlled components
-      decoration: InputDecoration(
-        labelText: isRequired ? '$label *' : label,
-        labelStyle: GoogleFonts.poppins(
-          fontSize: 15,
-          color: showError ? CupertinoColors.systemRed : _inkTitle,
-        ),
-        floatingLabelBehavior: FloatingLabelBehavior.never,
-        filled: true,
-        fillColor: CupertinoColors.secondarySystemGroupedBackground,
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: CupertinoColors.separator.withValues(alpha: 0.1),
-          ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: CupertinoColors.separator.withValues(alpha: 0.1),
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: showError ? CupertinoColors.systemRed : const Color(0xFF8D6E63),
-            width: 1.4,
-          ),
-        ),
-        errorText: showError ? 'Required' : null,
-      ),
-      icon: const Icon(CupertinoIcons.chevron_down, size: 16, color: CupertinoColors.systemGrey),
-      items: options
-          .map(
-            (option) => DropdownMenuItem<String>(
-              value: option,
-              child: Text(
-                option,
-                style: GoogleFonts.poppins(
-                  fontSize: 15,
-                  color: const Color(0xFF6D4C41),
-                  decoration: TextDecoration.none,
-                ),
+    final borderColor = showError ? CupertinoColors.systemRed : CupertinoColors.separator.withValues(alpha: 0.1);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isRequired)
+          _requiredLabel(label)
+        else
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+                color: _inkTitle,
+                decoration: TextDecoration.none,
               ),
             ),
-          )
-          .toList(),
-      onChanged: options.isEmpty ? null : onChanged,
+          ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<String>(
+          // ignore: deprecated_member_use
+          value: options.contains(value) ? value : null,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: CupertinoColors.secondarySystemGroupedBackground,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: borderColor),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: borderColor, width: showError ? 1.4 : 1),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: showError ? CupertinoColors.systemRed : const Color(0xFF8D6E63),
+                width: 1.4,
+              ),
+            ),
+            errorText: showError ? 'Required' : null,
+            errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
+          ),
+          icon: const Icon(CupertinoIcons.chevron_down, size: 16, color: CupertinoColors.systemGrey),
+          items: options
+              .map(
+                (option) => DropdownMenuItem<String>(
+                  value: option,
+                  child: Text(
+                    option,
+                    style: GoogleFonts.poppins(
+                      fontSize: 15,
+                      color: const Color(0xFF6D4C41),
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: options.isEmpty ? null : onChanged,
+        ),
+      ],
     );
   }
 }

@@ -3,10 +3,13 @@ import 'dart:developer' as developer;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/order_record.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
+import '../../widgets/toast.dart';
+import '../../widgets/order_installment_balance_callout.dart';
 import '../checkout/models.dart';
 import '../checkout/payment_confirmation_screen.dart';
 
@@ -59,7 +62,11 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
         if (order.status == 'cancelled' || order.status == 'confirmed') return false;
         
         final paymentStatus = order.shippingAddress['paymentStatus'] as String?;
-        if (paymentStatus == 'confirmed' || paymentStatus == 'downpayment_paid') return false;
+        if (paymentStatus == 'confirmed' ||
+            paymentStatus == 'completed' ||
+            paymentStatus == 'downpayment_paid') {
+          return false;
+        }
         
         return true;
       }).toList()
@@ -92,19 +99,81 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
     } else if (downpaymentRaw is String) {
       downpayment = double.tryParse(downpaymentRaw);
     }
-    
+
+    final remRaw = order.shippingAddress['remainingBalance'];
+    double? remaining;
+    if (remRaw is num) {
+      remaining = remRaw.toDouble();
+    } else if (remRaw is String) {
+      remaining = double.tryParse(remRaw);
+    }
+
     if (paymentMethod == 'cod') {
-      // COD: 20% downpayment (fallback if downpayment missing)
       return downpayment ?? (totalAmount * 0.20);
     }
-    // GCash: Full payment upfront
+    if (paymentMethod == 'paymongo') {
+      final ps = order.shippingAddress['paymentStatus']?.toString();
+      if (ps == 'downpayment_received' && (remaining ?? 0) > 0.01) {
+        return remaining ?? totalAmount;
+      }
+      if ((remaining ?? 0) > 0.01 && (downpayment ?? 0) > 0) {
+        return downpayment ?? totalAmount;
+      }
+    }
     return totalAmount;
   }
 
   /// Get payment method enum
   PaymentMethod _getPaymentMethod(OrderRecord order) {
     final paymentMethod = order.shippingAddress['paymentMethod'] as String?;
-    return paymentMethod == 'gcash' ? PaymentMethod.gcash : PaymentMethod.cod;
+    switch (paymentMethod) {
+      case 'gcash':
+        return PaymentMethod.gcash;
+      case 'paymongo':
+        return PaymentMethod.paymongo;
+      case 'cod':
+      default:
+        return PaymentMethod.cod;
+    }
+  }
+
+  /// PayMongo opens hosted checkout; COD/GCash use manual proof screen.
+  Future<void> _openPaymentForOrder(OrderRecord order) async {
+    final pm = order.shippingAddress['paymentMethod']?.toString();
+    if (pm == 'paymongo') {
+      final user = _auth.currentUser;
+      if (user == null) {
+        if (mounted) Toast.error(context, 'Please sign in');
+        return;
+      }
+      try {
+        final url = await _db.createPaymongoCheckoutSession(
+          orderId: order.id,
+          userId: user.id,
+        );
+        if (!mounted) return;
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        if (mounted) Toast.info(context, 'Complete payment in the browser');
+      } catch (e) {
+        if (mounted) Toast.error(context, 'PayMongo: $e');
+      }
+      await _loadPendingOrders();
+      return;
+    }
+
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      CupertinoPageRoute(
+        builder: (_) => PaymentConfirmationScreen(
+          orderId: order.id,
+          paymentAmount: _getPaymentAmount(order),
+          paymentMethod: _getPaymentMethod(order),
+          totalAmount: order.totalAmount,
+          orderCreatedAt: order.createdAt,
+        ),
+      ),
+    );
+    await _loadPendingOrders();
   }
 
   @override
@@ -239,7 +308,7 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
                                               ),
                                               const SizedBox(height: 4),
                                               Text(
-                                                'Amount: ₱${_getPaymentAmount(order).toStringAsFixed(2)}',
+                                                'Pay next: ₱${_getPaymentAmount(order).toStringAsFixed(2)}',
                                                 style: GoogleFonts.poppins(
                                                   fontSize: 14,
                                                   fontWeight: FontWeight.w500,
@@ -262,7 +331,9 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
                                           child: Text(
                                             _getPaymentMethod(order) == PaymentMethod.cod
                                                 ? 'COD (20%)'
-                                                : 'GCash (Full)',
+                                                : _getPaymentMethod(order) == PaymentMethod.paymongo
+                                                    ? 'PayMongo'
+                                                    : 'GCash (Full)',
                                             style: GoogleFonts.poppins(
                                               fontSize: 12,
                                               fontWeight: FontWeight.w600,
@@ -274,24 +345,14 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
                                       ],
                                     ),
                                     const SizedBox(height: 12),
+                                    OrderInstallmentBalanceCallout(
+                                      order: order,
+                                      accentColor: const Color(0xFF5C4033),
+                                    ),
+                                    const SizedBox(height: 12),
                                     CupertinoButton.filled(
                                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                      onPressed: () {
-                                        Navigator.of(context).push(
-                                          CupertinoPageRoute(
-                                            builder: (_) => PaymentConfirmationScreen(
-                                              orderId: order.id,
-                                              paymentAmount: _getPaymentAmount(order),
-                                              paymentMethod: _getPaymentMethod(order),
-                                              totalAmount: order.totalAmount,
-                                              orderCreatedAt: order.createdAt,
-                                            ),
-                                          ),
-                                        ).then((_) {
-                                          // Reload pending orders after returning
-                                          _loadPendingOrders();
-                                        });
-                                      },
+                                      onPressed: () => _openPaymentForOrder(order),
                                       child: Text(
                                         'Complete Payment',
                                         style: GoogleFonts.poppins(fontWeight: FontWeight.w600),

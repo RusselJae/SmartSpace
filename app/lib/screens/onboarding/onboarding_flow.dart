@@ -7,12 +7,24 @@ import '../shell/tab_shell.dart';
 /// =============================================================
 /// OnboardingFlow
 ///
-/// A modern, clean onboarding flow with centered content and
-/// an illustration at the top. Introduces the app and guides
-/// users to get started.
+/// Uses the same typography-forward, left-aligned style as the
+/// loading screen, but layered over a wood furniture hero image.
+/// Three pages, three dots, and a simple Next / Get started flow.
 /// =============================================================
-class OnboardingFlow extends StatelessWidget {
+class OnboardingFlow extends StatefulWidget {
   const OnboardingFlow({super.key});
+
+  @override
+  State<OnboardingFlow> createState() => _OnboardingFlowState();
+}
+
+class _OnboardingFlowState extends State<OnboardingFlow> {
+  static const Color _kBrownDark = Color(0xFF6D4C41);
+  static const Color _kWalnut = Color(0xFF5C4033);
+  static const int _pageCount = 3;
+
+  late final PageController _pageController;
+  int _pageIndex = 0;
 
   void _goToApp(BuildContext context) {
     // Replace onboarding with the main tab shell. In a real app, we
@@ -20,104 +32,174 @@ class OnboardingFlow extends StatelessWidget {
     Navigator.of(context).pushReplacementNamed(TabShell.route);
   }
 
+  void _handleNext() {
+    if (_pageIndex < _pageCount - 1) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
+    } else {
+      _goToApp(context);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    const Color kBrown = Color(0xFF8D6E63);
-    const Color kLight = Color(0xFFF4E6D4);
+    final pages = <({String title, String body})>[
+      (
+        title: 'Design your space in AR',
+        body: 'Drop full‑scale furniture into your room and see how it fits.'
+      ),
+      (
+        title: 'Real furniture. Real materials.',
+        body: 'Browse solid wood pieces that look the same in AR and in real life.'
+      ),
+      (
+        title: 'Save favorites. Checkout fast.',
+        body: 'Save what you love, compare options, and check out in a few taps.'
+      ),
+    ];
 
     return CupertinoPageScaffold(
       backgroundColor: Colors.white,
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              // Illustration/Image at the top
-              Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  color: kLight.withValues(alpha: 0.3),
-                  shape: BoxShape.circle,
-                ),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // AR/3D Icon Illustration
-                    Container(
-                      width: 140,
-                      height: 140,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            kBrown.withValues(alpha: 0.1),
-                            kBrown.withValues(alpha: 0.2),
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      child: Icon(
-                        CupertinoIcons.cube_box_fill,
-                        size: 70,
-                        color: kBrown,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 40),
-              // Centered Title
-              Text(
-                'Design your space\nin AR',
-                style: GoogleFonts.poppins(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
-                  height: 1.2,
-                  decoration: TextDecoration.none,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              // Centered Subtitle
-              Text(
-                'Browse furniture and preview in your room',
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.normal,
-                  color: Colors.black,
-                  height: 1.4,
-                  decoration: TextDecoration.none,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 48),
-              // Get Started Button
-              SizedBox(
-                width: double.infinity,
-                child: CupertinoButton.filled(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  borderRadius: BorderRadius.circular(16),
-                  color: kBrown,
-                  onPressed: () => _goToApp(context),
-                  child: Text(
-                    'Get Started',
-                    style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Fullscreen onboarding background image
+          const Positioned.fill(
+            child: Image(
+              image: AssetImage('assets/images/onboarding_background.png'),
+              fit: BoxFit.cover,
+              alignment: Alignment.bottomCenter,
+            ),
+          ),
+          // Slight veil so text stays readable on top of the photo
+          Positioned.fill(
+            child: Container(
+              color: Colors.white.withValues(alpha: 0.04),
+            ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28.0),
+              child: Column(
+                children: [
+                  const SizedBox(height: 40),
+                  // Text & dots float over the background image
+                  Expanded(
+                    child: PageView.builder(
+                      controller: _pageController,
+                      physics: const BouncingScrollPhysics(),
+                      onPageChanged: (index) {
+                        setState(() {
+                          _pageIndex = index;
+                        });
+                      },
+                      itemCount: pages.length,
+                      itemBuilder: (context, index) {
+                        final item = pages[index];
+                        return Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 340),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.title,
+                                  textAlign: TextAlign.left,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.15,
+                                    color: _kBrownDark,
+                                    letterSpacing: 0.2,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  item.body,
+                                  textAlign: TextAlign.left,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w400,
+                                    height: 1.4,
+                                    color:
+                                        _kBrownDark.withValues(alpha: 0.78),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                // Three dots directly under paragraph
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children:
+                                      List.generate(_pageCount, (dotIndex) {
+                                    final bool isActive =
+                                        dotIndex == _pageIndex;
+                                    return AnimatedContainer(
+                                      duration:
+                                          const Duration(milliseconds: 220),
+                                      curve: Curves.easeOutCubic,
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                      ),
+                                      width: 8,
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: isActive
+                                            ? _kBrownDark
+                                            : _kBrownDark.withValues(
+                                                alpha: 0.24),
+                                      ),
+                                    );
+                                  }),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
-                ),
+                  const SizedBox(height: 18),
+                  // Bottom primary button: Next / Get started
+                  SizedBox(
+                    width: double.infinity,
+                    child: CupertinoButton.filled(
+                      // ~20% shorter than before (16 -> ~13)
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      borderRadius: BorderRadius.circular(16),
+                      color: _kWalnut,
+                      onPressed: _handleNext,
+                      child: Text(
+                        _pageIndex < 2 ? 'Next' : 'Get started',
+                        style: GoogleFonts.poppins(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

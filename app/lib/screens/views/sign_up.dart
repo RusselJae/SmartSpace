@@ -49,9 +49,35 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
   final TextEditingController _lastNameController = TextEditingController();
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
   DateTime? _selectedBirthday;
   
   bool _loading = false;
+
+  // Password strength criteria (used for inline suggestions)
+  bool get _pwHasMinLength => _passwordController.text.length >= 8;
+  bool get _pwHasUpper => RegExp(r'[A-Z]').hasMatch(_passwordController.text);
+  bool get _pwHasLower => RegExp(r'[a-z]').hasMatch(_passwordController.text);
+  bool get _pwHasNumber => RegExp(r'\d').hasMatch(_passwordController.text);
+  bool get _pwHasSymbol => RegExp(r'[^\w\s]').hasMatch(_passwordController.text);
+
+  bool get _pwIsStrong => _pwHasMinLength && _pwHasUpper && _pwHasLower && _pwHasNumber && _pwHasSymbol;
+
+  bool get _pwPasswordsMatch =>
+      _confirmPasswordController.text.isNotEmpty &&
+      _passwordController.text == _confirmPasswordController.text;
+
+  void _handlePasswordChanged() {
+    // Live-update password strength hints while typing.
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _handleConfirmPasswordChanged() {
+    // Live-update confirm-password match hint while typing.
+    if (!mounted) return;
+    setState(() {});
+  }
 
   @override
   void initState() {
@@ -65,6 +91,11 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
       curve: Curves.easeInOut,
     );
     _animationController.forward();
+
+    // The password strength widget is driven by controller text,
+    // so we need to trigger rebuilds as the user types.
+    _passwordController.addListener(_handlePasswordChanged);
+    _confirmPasswordController.addListener(_handleConfirmPasswordChanged);
   }
 
   @override
@@ -75,6 +106,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     _lastNameController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -134,12 +166,15 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
           Toast.warning(context, 'Please select your birthday');
           return;
         }
-        // Check if user is at least 13 years old
+        // Check if user is at least 18 years old
         final now = DateTime.now();
-        final age = now.year - _selectedBirthday!.year;
-        if (age < 13 || (age == 13 && now.month < _selectedBirthday!.month) ||
-            (age == 13 && now.month == _selectedBirthday!.month && now.day < _selectedBirthday!.day)) {
-          Toast.warning(context, 'You must be at least 13 years old');
+        final age = now.year - _selectedBirthday!.year -
+            ((now.month < _selectedBirthday!.month ||
+                    (now.month == _selectedBirthday!.month && now.day < _selectedBirthday!.day))
+                ? 1
+                : 0);
+        if (age < 18) {
+          Toast.warning(context, 'You must be at least 18 years old');
           return;
         }
         _nextStep();
@@ -153,13 +188,20 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
 
   // Final sign up submission
   Future<void> _handleSignUp() async {
-    if (_usernameController.text.trim().isEmpty || _passwordController.text.isEmpty) {
+    if (_usernameController.text.trim().isEmpty ||
+        _passwordController.text.isEmpty ||
+        _confirmPasswordController.text.isEmpty) {
       Toast.warning(context, 'Please fill in all fields');
       return;
     }
 
-    if (_passwordController.text.length < 6) {
-      Toast.warning(context, 'Password must be at least 6 characters');
+    if (!_pwPasswordsMatch) {
+      Toast.warning(context, 'Passwords do not match');
+      return;
+    }
+
+    if (!_pwIsStrong) {
+      Toast.warning(context, 'Use a stronger password');
       return;
     }
 
@@ -176,6 +218,11 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         email: email,
         fullName: fullName,
         password: _passwordController.text,
+        username: _usernameController.text.trim(),
+        dateOfBirth: _selectedBirthday,
+        // Keep username + DOB available for backend now / future validation.
+        // If backend ignores them, UI still enforces the 18+ rule.
+        phoneNumber: null,
       );
       if (!mounted) return;
       
@@ -215,7 +262,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     final now = DateTime.now();
     final initialDate = _selectedBirthday ?? DateTime(now.year - 18, 1, 1);
     final firstDate = DateTime(now.year - 100);
-    final lastDate = DateTime(now.year - 13);
+    final lastDate = DateTime(now.year - 18);
     
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -274,21 +321,29 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         ),
       ),
       child: SafeArea(
-        bottom: false,
+        bottom: true,
         child: LayoutBuilder(
           builder: (context, constraints) {
             final availableHeight = constraints.maxHeight;
             final isSmallScreen = availableHeight < 700;
-            
+            final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+
             return FadeTransition(
               opacity: _fadeAnimation,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+              child: AnimatedPadding(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                padding: EdgeInsets.only(bottom: keyboardInset),
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
                     // ------------------------------
                     // Progress indicator
                     // ------------------------------
@@ -308,39 +363,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                     ),
                     SizedBox(height: isSmallScreen ? 24 : 32),
 
-                    // ------------------------------
-                    // App Logo (only on first step)
-                    // ------------------------------
-                    if (_currentStep == 0) ...[
-                      Container(
-                        width: isSmallScreen ? 70 : 90,
-                        height: isSmallScreen ? 70 : 90,
-                        decoration: BoxDecoration(
-                          color: kLight.withValues(alpha: 0.3),
-                          shape: BoxShape.circle,
-                        ),
-                        child: ClipOval(
-                          child: Image.asset(
-                            'assets/images/logo.jpg',
-                            width: isSmallScreen ? 70 : 90,
-                            height: isSmallScreen ? 70 : 90,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: isSmallScreen ? 6 : 8),
-                      Text(
-                        'Wood Home Furniture Trading',
-                        style: GoogleFonts.poppins(
-                          fontSize: isSmallScreen ? 16 : 20,
-                          fontWeight: FontWeight.w700,
-                          color: kTextPrimary,
-                          decoration: TextDecoration.none,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      SizedBox(height: isSmallScreen ? 28 : 36),
-                    ],
+                    // (Removed app logo + name from the email step per request.)
 
                     // ------------------------------
                     // Step content
@@ -412,7 +435,9 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                         ),
                       ],
                     ),
-                  ],
+                      ],
+                    ),
+                  ),
                 ),
               ),
             );
@@ -542,7 +567,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         ),
         SizedBox(height: isSmallScreen ? 6 : 8),
         Text(
-          'You must be at least 13 years old',
+          'You must be at least 18 years old',
           style: GoogleFonts.poppins(
             color: CupertinoColors.secondaryLabel,
             fontSize: isSmallScreen ? 14 : 16,
@@ -631,11 +656,151 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
           label: 'Password',
           icon: Icons.lock_outline,
           obscureText: true,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _validateAndProceed(),
+          textInputAction: TextInputAction.next,
           placeholder: '••••••••',
         ),
+        SizedBox(height: isSmallScreen ? 16 : 20),
+        StyledTextField(
+          controller: _confirmPasswordController,
+          label: 'Confirm Password',
+          icon: Icons.lock_outline,
+          obscureText: true,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _validateAndProceed(),
+          placeholder: 'Re-enter your password',
+        ),
+        const SizedBox(height: 12),
+        // Strong password suggestions (inline, no toast spam)
+        _PasswordStrengthHints(
+          hasMinLength: _pwHasMinLength,
+          hasUpper: _pwHasUpper,
+          hasLower: _pwHasLower,
+          hasNumber: _pwHasNumber,
+          hasSymbol: _pwHasSymbol,
+        ),
+        const SizedBox(height: 10),
+        _ConfirmPasswordMatchHint(hasValue: _confirmPasswordController.text.isNotEmpty, isMatch: _pwPasswordsMatch),
       ],
+    );
+  }
+}
+
+class _PasswordStrengthHints extends StatelessWidget {
+  const _PasswordStrengthHints({
+    required this.hasMinLength,
+    required this.hasUpper,
+    required this.hasLower,
+    required this.hasNumber,
+    required this.hasSymbol,
+  });
+
+  final bool hasMinLength;
+  final bool hasUpper;
+  final bool hasLower;
+  final bool hasNumber;
+  final bool hasSymbol;
+
+  @override
+  Widget build(BuildContext context) {
+    const ok = Color(0xFF2E7D32);
+    const bad = CupertinoColors.systemGrey;
+
+    Widget row(bool met, String text) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(
+          children: [
+            Icon(
+              met ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.circle,
+              size: 16,
+              color: met ? ok : bad,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  color: met ? ok : const Color(0xFF6D4C41).withValues(alpha: 0.7),
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F8F8),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Strong password suggestions',
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF6D4C41),
+              decoration: TextDecoration.none,
+            ),
+          ),
+          const SizedBox(height: 10),
+          row(hasMinLength, 'At least 8 characters'),
+          row(hasUpper, 'One uppercase letter'),
+          row(hasLower, 'One lowercase letter'),
+          row(hasNumber, 'One number'),
+          row(hasSymbol, 'One symbol (like !@#\$)'),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConfirmPasswordMatchHint extends StatelessWidget {
+  const _ConfirmPasswordMatchHint({
+    required this.hasValue,
+    required this.isMatch,
+  });
+
+  final bool hasValue;
+  final bool isMatch;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasValue) return const SizedBox.shrink();
+
+    final okColor = const Color(0xFF2E7D32);
+    final badColor = const Color(0xFFB00020);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Icon(
+            isMatch ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.xmark_circle_fill,
+            size: 16,
+            color: isMatch ? okColor : badColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              isMatch ? 'Passwords match' : 'Passwords do not match',
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                color: (isMatch ? okColor : badColor).withValues(alpha: 0.9),
+                fontWeight: FontWeight.w600,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

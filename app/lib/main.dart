@@ -14,6 +14,11 @@ import 'screens/admin/admin_shell.dart';
 import 'screens/admin/auth/admin_login_page.dart';
 import 'screens/admin/auth/admin_signup_page.dart';
 import 'screens/views/verify_email_screen.dart';
+import 'screens/profile/how_to_order_screen.dart';
+import 'screens/profile/terms_and_conditions_screen.dart';
+import 'screens/profile/privacy_policy_screen.dart';
+import 'screens/profile/security_privacy_screen.dart';
+import 'screens/profile/change_password_screen.dart';
 import 'utils/env_loader.dart';
 import 'services/mysql_database_service.dart';
 import 'config/database_config.dart';
@@ -91,7 +96,8 @@ class WoodHomeFurnitureApp extends StatelessWidget {
     /// Color palette with light brown to brown and orange tones
     /// Following Apple's Human Interface Guidelines for a sleek, modern aesthetic
     const Color kTextPrimary = Color(0xFF6D4C41); // Medium brown for text
-    const Color kBrown = Color(0xFF8D6E63); // Primary brown
+    const Color kBrown = Color(0xFF8D6E63); // Primary brown (legacy)
+    const Color kWalnut = Color(0xFF5C4033); // Walnut (brand accent)
     const Color kOrange = Color(0xFFFF9800); // Primary orange (used in color scheme)
     const Color kSurface = Color(0xFFFFFBF7);
 
@@ -115,7 +121,8 @@ class WoodHomeFurnitureApp extends StatelessWidget {
     /// Cupertino theme data so the interface keeps that sleek Apple-inspired
     /// aesthetic the design system calls for.
     final cupertinoTheme = CupertinoThemeData(
-      primaryColor: kBrown,
+      // Ensures Cupertino back button + navigation accents match walnut across screens.
+      primaryColor: kWalnut,
       barBackgroundColor: Colors.white,
       scaffoldBackgroundColor: Colors.white,
       textTheme: CupertinoTextThemeData(
@@ -211,6 +218,11 @@ class WoodHomeFurnitureApp extends StatelessWidget {
           final token = uri.queryParameters['token'];
           return VerifyEmailScreen(token: token);
         },
+        TermsAndConditionsScreen.route: (_) => const TermsAndConditionsScreen(),
+        HowToOrderScreen.route: (_) => const HowToOrderScreen(),
+        PrivacyPolicyScreen.route: (_) => const PrivacyPolicyScreen(),
+        SecurityPrivacyScreen.route: (_) => const SecurityPrivacyScreen(),
+        ChangePasswordScreen.route: (_) => const ChangePasswordScreen(),
       },
     );
   }

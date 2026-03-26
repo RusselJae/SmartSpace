@@ -2,13 +2,108 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
+
+import '../../config/api_config.dart';
+import '../../models/cart_item.dart';
+import '../../models/product.dart';
+import '../../services/auth_service.dart';
+import '../../services/cart_service.dart';
+import '../../utils/model_path_helper.dart';
+import '../../widgets/toast.dart';
 import '../checkout/order_summary_screen.dart';
 import '../views/sign_in.dart';
-import '../../services/cart_service.dart';
-import '../../services/auth_service.dart';
-import '../../models/cart_item.dart';
-import '../../widgets/toast.dart';
+
+// Matches wishlist tile: resolve GLB URLs for web; peso formatting for cart rows/footer.
+final NumberFormat _cartPesoFormat = NumberFormat('#,##0.00', 'en_US');
+
+String _formatCartPeso(double amount) => '₱${_cartPesoFormat.format(amount)}';
+
+bool _productHasModel(Product p) {
+  final src = p.modelPath.trim();
+  if (src.isEmpty) return false;
+  return src.toLowerCase().endsWith('.glb') || src.toLowerCase().endsWith('.gltf');
+}
+
+String? _productResolvedModelSrc(Product p) {
+  final raw = p.modelPath.trim();
+  if (raw.isEmpty) return null;
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  final apiUri = Uri.parse(ApiConfig.baseUrl);
+  final origin = apiUri.origin;
+  if (raw.startsWith('/uploads/')) return '$origin$raw';
+  if (raw.startsWith('uploads/')) return '$origin/$raw';
+  if (raw.contains('backend/uploads/')) {
+    final idx = raw.indexOf('backend/uploads/');
+    final tail = raw.substring(idx + 'backend/'.length);
+    return '$origin/$tail';
+  }
+  return ModelPathHelper.normalize(raw);
+}
+
+bool _productHasNetworkImage(Product p) {
+  if (p.imageUrls.isEmpty) return false;
+  final first = p.imageUrls.first.trim();
+  return first.startsWith('http://') || first.startsWith('https://');
+}
+
+/// Same priority as [Wishlist] tiles: GLB model when available, else first network image.
+Widget _buildCartLineThumbnail(Product product) {
+  if (_productHasModel(product)) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const Center(
+          child: Icon(
+            CupertinoIcons.cube_box,
+            color: Colors.black26,
+            size: 22,
+          ),
+        ),
+        IgnorePointer(
+          ignoring: true,
+          child: ModelViewer(
+            backgroundColor: Colors.transparent,
+            src: _productResolvedModelSrc(product) ?? product.modelPath,
+            alt: '3D preview of ${product.name}',
+            ar: false,
+            environmentImage: 'neutral',
+            exposure: 1.35,
+            shadowIntensity: 0.18,
+            autoRotate: false,
+            cameraControls: false,
+            disableZoom: true,
+          ),
+        ),
+      ],
+    );
+  }
+  if (_productHasNetworkImage(product)) {
+    return Image.network(
+      product.imageUrls.first,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => const Center(
+        child: Icon(
+          CupertinoIcons.photo,
+          color: Colors.black26,
+          size: 22,
+        ),
+      ),
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return const Center(child: CupertinoActivityIndicator(radius: 10));
+      },
+    );
+  }
+  return const Center(
+    child: Icon(
+      CupertinoIcons.cube_box,
+      color: Colors.black26,
+      size: 22,
+    ),
+  );
+}
 
 /// =============================================================
 /// CartScreen
@@ -122,9 +217,8 @@ class _CartScreenState extends State<CartScreen> {
     final selectedCount = selectedItems.length;
     final selectedTotal = selectedItems.fold<double>(0.0, (sum, item) => sum + item.subtotal);
 
-    // Light brown color for navigation bar
     const lightBrown = Color(0xFFF4E6D4);
-    const mediumBrown = Color(0xFF8D6E63);
+    const kWalnut = Color(0xFF5D4037);
     
     return CupertinoPageScaffold(
       backgroundColor: Colors.white,
@@ -132,7 +226,7 @@ class _CartScreenState extends State<CartScreen> {
         backgroundColor: lightBrown,
         border: Border(
           bottom: BorderSide(
-            color: mediumBrown.withValues(alpha: 0.2),
+            color: kWalnut.withValues(alpha: 0.2),
             width: 0.5,
           ),
         ),
@@ -140,7 +234,7 @@ class _CartScreenState extends State<CartScreen> {
           'Cart',
           style: GoogleFonts.poppins(
             fontWeight: FontWeight.w600,
-            color: mediumBrown,
+            color: kWalnut,
           ),
         ),
       ),
@@ -157,7 +251,7 @@ class _CartScreenState extends State<CartScreen> {
                       child: Text(
                         'Selected $selectedCount / ${items.length}',
                         style: GoogleFonts.poppins(
-                          color: Colors.black,
+                          color: kWalnut,
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
                           decoration: TextDecoration.none,
@@ -165,14 +259,14 @@ class _CartScreenState extends State<CartScreen> {
                       ),
                     ),
                     CupertinoButton(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      color: const Color(0xFFF0E6E0),
-                      borderRadius: BorderRadius.circular(20),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      minimumSize: Size.zero,
+                      color: Colors.transparent,
                       onPressed: _toggleSelectAll,
                       child: Text(
                         _selectedProductIds.length == items.length ? 'Clear All' : 'Select All',
                         style: GoogleFonts.poppins(
-                          color: const Color(0xFF8D6E63),
+                          color: kWalnut,
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                           decoration: TextDecoration.none,
@@ -188,8 +282,8 @@ class _CartScreenState extends State<CartScreen> {
                       child: Text(
                         'Your cart is empty',
                         style: GoogleFonts.poppins(
-                          color: Colors.black,
-                          fontSize: 16,
+                          color: const Color(0xFF5D4037).withValues(alpha: 0.75),
+                          fontSize: 14,
                           fontWeight: FontWeight.normal,
                           decoration: TextDecoration.none,
                         ),
@@ -236,30 +330,30 @@ class _CartScreenState extends State<CartScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Selected Total',
+                          'Total',
                           style: GoogleFonts.poppins(
-                            color: Colors.black,
+                            color: const Color(0xFF5D4037),
                             fontSize: 16,
-                            fontWeight: FontWeight.normal,
+                            fontWeight: FontWeight.w600,
                             decoration: TextDecoration.none,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '₱${selectedTotal.toStringAsFixed(2)}',
+                          _formatCartPeso(selectedTotal),
                           style: GoogleFonts.poppins(
-                            color: Colors.black,
-                            fontSize: 16,
-                            fontWeight: FontWeight.normal,
+                            color: const Color(0xFF5D4037),
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
                             decoration: TextDecoration.none,
                           ),
                         ),
                         if (selectedCount < items.length) ...[
                           const SizedBox(height: 2),
                           Text(
-                            'Cart total: ₱${cartTotal.toStringAsFixed(2)}',
+                            'Cart total: ${_formatCartPeso(cartTotal)}',
                             style: GoogleFonts.poppins(
-                              color: Colors.black.withValues(alpha: 0.7),
+                              color: const Color(0xFF5D4037).withValues(alpha: 0.7),
                               fontSize: 13,
                               fontWeight: FontWeight.normal,
                               decoration: TextDecoration.none,
@@ -269,13 +363,23 @@ class _CartScreenState extends State<CartScreen> {
                       ],
                     ),
                   ),
-                  CupertinoButton.filled(
+                  CupertinoButton(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    minimumSize: Size.zero,
+                    color: selectedCount == 0
+                        ? CupertinoColors.systemGrey4
+                        : const Color(0xFF5D4037),
+                    borderRadius: BorderRadius.circular(10),
                     onPressed: selectedCount == 0 ? null : () => _proceedToCheckout(context),
                     child: Text(
                       selectedCount == items.length
                           ? 'Proceed to Checkout'
                           : 'Checkout ($selectedCount)',
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w600,
+                        color: selectedCount == 0 ? Colors.grey : Colors.white,
+                        decoration: TextDecoration.none,
+                      ),
                     ),
                   ),
                 ],
@@ -524,206 +628,192 @@ class _CartRowState extends State<_CartRow> {
 
   @override
   Widget build(BuildContext context) {
-    // Color constants matching catalog_home.dart
-    const Color kBrown = Color(0xFF8D6E63); // Primary brown
-    const Color kLight = Color(0xFFF4E6D4); // Light color
+    const Color kWalnut = Color(0xFF5D4037);
 
     return Container(
       decoration: BoxDecoration(
         color: CupertinoColors.systemGroupedBackground,
         borderRadius: BorderRadius.circular(12),
       ),
-      padding: const EdgeInsets.all(6), // Further reduced from 8 to 6 to fix overflow
+      padding: const EdgeInsets.all(6),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Checkbox button with minimal constraints
           SizedBox(
-            width: 24,
-            height: 24,
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              minimumSize: Size.zero,
-              onPressed: widget.onToggleSelected,
-              child: Icon(
-                widget.selected ? CupertinoIcons.check_mark_circled_solid : CupertinoIcons.circle,
-                // Light brown when inactive, normal brown when active
-                color: widget.selected ? kBrown : const Color(0xFFBCAAA4),
-                size: 24,
+            width: 32,
+            child: Center(
+              child: CupertinoButton(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                onPressed: widget.onToggleSelected,
+                child: Icon(
+                  widget.selected
+                      ? CupertinoIcons.check_mark_circled_solid
+                      : CupertinoIcons.circle,
+                  color: widget.selected ? kWalnut : const Color(0xFFBCAAA4),
+                  size: 26,
+                ),
               ),
             ),
           ),
-          const SizedBox(width: 4), // Reduced from 6 to 4
+          const SizedBox(width: 4),
           Container(
-            width: 60, // Further reduced from 64 to 60
-            height: 60, // Further reduced from 64 to 60
+            width: 60,
+            height: 60,
             decoration: BoxDecoration(
-              color: CupertinoColors.systemGrey4,
+              color: const Color(0xFFF2F2F7),
               borderRadius: BorderRadius.circular(8),
             ),
             clipBehavior: Clip.hardEdge,
-            child: ModelViewer(
-              backgroundColor: const Color(0xFFEFEFEF),
-              src: widget.item.product.modelPath,
-              alt: '3D preview of ${widget.item.product.name}',
-              ar: false,
-              autoRotate: false,
-              cameraControls: false,
-              disableZoom: true,
-            ),
+            child: _buildCartLineThumbnail(widget.item.product),
           ),
-          const SizedBox(width: 6), // Further reduced from 8 to 6
+          const SizedBox(width: 6),
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  widget.item.product.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(
-                    color: const Color(0xFF8D6E63), // Brown instead of black
-                    fontSize: 14, // Further reduced from 15 to 14
-                    fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.none,
-                  ),
-                ),
-                const SizedBox(height: 2), // Reduced from 3 to 2
-                Text(
-                  '₱${widget.item.unitPrice.toStringAsFixed(2)}',
-                  style: GoogleFonts.poppins(
-                    color: const Color(0xFF5F5B56), // Dark grey instead of black
-                    fontSize: 13, // Further reduced from 14 to 13
-                    fontWeight: FontWeight.normal,
-                    decoration: TextDecoration.none,
-                  ),
-                ),
-                const SizedBox(height: 4), // Reduced from 6 to 4
-                // Quantity controls with input field matching product detail screen
+                // Line 1: product name (left, 1 line + ellipsis) — total (far right).
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // Minus button matching catalog_home.dart style
-                    CupertinoButton(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Further reduced padding
-                      minimumSize: Size.zero,
-                      color: kLight,
-                      borderRadius: BorderRadius.circular(6), // Further reduced from 8 to 6
-                      onPressed: widget.onDecrement,
-                      child: const Icon(CupertinoIcons.minus, size: 14, color: kBrown), // Further reduced from 16 to 14
-                    ),
-                    const SizedBox(width: 4), // Reduced from 6 to 4
-                    // Input field for quantity
-                    Container(
-                      width: 40, // Further reduced from 45 to 40
-                      height: 28, // Further reduced from 32 to 28
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: kBrown.withValues(alpha: 0.3),
-                          width: 1,
-                        ),
-                      ),
-                      child: CupertinoTextField(
-                        controller: _quantityController,
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.center,
+                    Expanded(
+                      child: Text(
+                        widget.item.product.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.poppins(
-                          color: Colors.black,
-                          fontSize: 14, // Reduced from 16 to 14
+                          color: kWalnut,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                           decoration: TextDecoration.none,
                         ),
-                        decoration: const BoxDecoration(),
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4), // Further reduced padding
-                        inputFormatters: [
-                          // Only allow numeric input
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
-                        onChanged: (value) {
-                          // Mark as editing when user starts typing
-                          if (!_isEditing) {
-                            setState(() {
-                              _isEditing = true;
-                            });
-                          }
-                        },
-                        onSubmitted: (value) {
-                          // Update quantity only when user finishes editing (on submit)
-                          setState(() {
-                            _isEditing = false;
-                          });
-                          final newQuantity = int.tryParse(value);
-                          if (newQuantity == null || newQuantity < 1) {
-                            // Invalid input, revert to current quantity
-                            _quantityController.text = widget.item.quantity.toString();
-                          } else {
-                            // Update quantity to the new value
-                            _updateQuantity(newQuantity);
-                            // Sync controller with actual quantity (may differ if cart has limits)
-                            _quantityController.text = widget.item.quantity.toString();
-                          }
-                          // Move cursor to end
-                          _quantityController.selection = TextSelection.fromPosition(
-                            TextPosition(offset: _quantityController.text.length),
-                          );
-                        },
-                        onTap: () {
-                          // Select all text when user taps to edit
-                          setState(() {
-                            _isEditing = true;
-                          });
-                          _quantityController.selection = TextSelection(
-                            baseOffset: 0,
-                            extentOffset: _quantityController.text.length,
-                          );
-                        },
                       ),
                     ),
-                    const SizedBox(width: 4), // Reduced from 6 to 4
-                    // Plus button matching catalog_home.dart style
-                    CupertinoButton(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Further reduced padding
-                      minimumSize: Size.zero,
-                      color: kLight,
-                      borderRadius: BorderRadius.circular(6), // Further reduced from 8 to 6
-                      onPressed: widget.onIncrement,
-                      child: const Icon(CupertinoIcons.plus, size: 14, color: kBrown), // Further reduced from 16 to 14
+                    const SizedBox(width: 8),
+                    Text(
+                      _formatCartPeso(widget.item.subtotal),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        color: kWalnut,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.none,
+                      ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          // Vertical divider to separate product info from total price
-          Container(
-            width: 1,
-            margin: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: CupertinoColors.separator.withValues(alpha: 0.3),
-            ),
-          ),
-          // Price display - use SizedBox to prevent overflow instead of Flexible
-          SizedBox(
-            width: 75, // Fixed width to prevent overflow
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                Text(
-                  '₱${widget.item.subtotal.toStringAsFixed(2)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: GoogleFonts.poppins(
-                    color: const Color(0xFF8D6E63), // Brown instead of black
-                    fontSize: 13, // Further reduced from 14 to 13
-                    fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.none,
-                  ),
+                const SizedBox(height: 8),
+                // Line 2: unit price (left) — qty stepper (right), same vertical center.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _formatCartPeso(widget.item.unitPrice),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                          color: kWalnut.withValues(alpha: 0.72),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        CupertinoButton(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          minimumSize: Size.zero,
+                          color: kWalnut,
+                          borderRadius: BorderRadius.zero,
+                          onPressed: widget.onDecrement,
+                          child: const Icon(
+                            CupertinoIcons.minus,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                        Container(
+                          width: 40,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.zero,
+                            border: Border.all(
+                              color: kWalnut.withValues(alpha: 0.35),
+                              width: 1,
+                            ),
+                          ),
+                          child: CupertinoTextField(
+                            controller: _quantityController,
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.poppins(
+                              color: kWalnut,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              decoration: TextDecoration.none,
+                            ),
+                            decoration: const BoxDecoration(),
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            onChanged: (value) {
+                              if (!_isEditing) {
+                                setState(() {
+                                  _isEditing = true;
+                                });
+                              }
+                            },
+                            onSubmitted: (value) {
+                              setState(() {
+                                _isEditing = false;
+                              });
+                              final newQuantity = int.tryParse(value);
+                              if (newQuantity == null || newQuantity < 1) {
+                                _quantityController.text = widget.item.quantity.toString();
+                              } else {
+                                _updateQuantity(newQuantity);
+                                _quantityController.text = widget.item.quantity.toString();
+                              }
+                              _quantityController.selection = TextSelection.fromPosition(
+                                TextPosition(offset: _quantityController.text.length),
+                              );
+                            },
+                            onTap: () {
+                              setState(() {
+                                _isEditing = true;
+                              });
+                              _quantityController.selection = TextSelection(
+                                baseOffset: 0,
+                                extentOffset: _quantityController.text.length,
+                              );
+                            },
+                          ),
+                        ),
+                        CupertinoButton(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          minimumSize: Size.zero,
+                          color: kWalnut,
+                          borderRadius: BorderRadius.zero,
+                          onPressed: widget.onIncrement,
+                          child: const Icon(
+                            CupertinoIcons.plus,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ],
             ),

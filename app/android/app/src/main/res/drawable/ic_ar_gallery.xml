@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple filled image/gallery icon (white) for the AR action bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M21 19V8c0-1.1-.9-2-2-2H16l-2-2H10L8 6H5c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM7 15l2-2 3 3 4-4 1 1v4H7v-2z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12 12a1.5 1.5 0 1 0-1.5-1.5A1.5 1.5 0 0 0 12 12z" />
+</vector>
+

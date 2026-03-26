@@ -12,8 +12,12 @@ import '../models/address_entry.dart';
 import '../models/admin.dart';
 import '../models/cart_item.dart';
 import '../models/order_record.dart';
+import '../models/made_to_order_request.dart';
 import '../models/product.dart';
 import '../models/review.dart';
+import '../models/faq.dart';
+import '../models/support_conversation.dart';
+import '../models/support_message.dart';
 import '../models/user.dart';
 
 /// Service that now talks to the Node.js API and falls back to mock data if needed.
@@ -30,6 +34,7 @@ class MySQLDatabaseService {
   final List<User> _mockUsers = [];
   final List<OrderRecord> _mockOrders = [];
   final Map<String, List<CartItem>> _mockCartByUser = {};
+  final List<Review> _mockReviews = [];
 
   bool get isConnected => _useApi;
 
@@ -153,8 +158,11 @@ class MySQLDatabaseService {
       normalizedBase = normalizedBase.substring(0, normalizedBase.indexOf('#'));
     }
     
-    // Normalize the path
+    // Normalize the path and extract query (so `path` can be like `/foo?bar=baz`).
     final normalizedPath = path.startsWith('/') ? path : '/$path';
+    final queryIndex = normalizedPath.indexOf('?');
+    final pathPart = queryIndex >= 0 ? normalizedPath.substring(0, queryIndex) : normalizedPath;
+    final pathQueryPart = queryIndex >= 0 ? normalizedPath.substring(queryIndex + 1) : '';
     
     // Parse base URL to extract components
     final baseUri = Uri.parse(normalizedBase);
@@ -164,8 +172,13 @@ class MySQLDatabaseService {
       scheme: baseUri.scheme,
       host: baseUri.host,
       port: baseUri.port,
-      path: '${baseUri.path}$normalizedPath',
-      query: baseUri.query,
+      path: '${baseUri.path}$pathPart',
+      query: () {
+        final baseQuery = baseUri.query;
+        if (pathQueryPart.isEmpty) return baseQuery;
+        if (baseQuery.isEmpty) return pathQueryPart;
+        return '$baseQuery&$pathQueryPart';
+      }(),
       // Explicitly no fragment - fragments are not sent to server
     );
   }
@@ -350,12 +363,20 @@ class MySQLDatabaseService {
 
   Future<List<Product>> getPopularProducts() async {
     final products = await getAllProducts();
-    return products.where((product) => product.isPopular).toList();
+    return products.where((product) => product.isPopular && !product.isArchived).toList();
   }
 
   Future<List<Product>> getNewArrivalProducts() async {
     final products = await getAllProducts();
-    return products.where((product) => product.isNewArrival).toList();
+    final newArrivals = products
+        .where((product) => product.isNewArrival && !product.isArchived)
+        .toList();
+
+    // Ensure the carousel shows the latest items first.
+    // Backend marks products as "new arrival" (last week), but it may not
+    // guarantee ordering, so we sort locally by `createdAt`.
+    newArrivals.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return newArrivals;
   }
 
   /// Get top rated products sorted by rating (highest first)
@@ -364,7 +385,7 @@ class MySQLDatabaseService {
     final products = await getAllProducts();
     // Filter products with ratings and sort by rating descending
     final topRated = products
-        .where((product) => product.rating > 0)
+        .where((product) => product.rating > 0 && !product.isArchived)
         .toList()
       ..sort((a, b) {
         // Sort by rating descending, then by review count as tiebreaker
@@ -381,7 +402,7 @@ class MySQLDatabaseService {
     final products = await getAllProducts();
     // Filter products with orders and sort by order count descending
     final bestSellers = products
-        .where((product) => (product.orderCount ?? 0) > 0)
+        .where((product) => (product.orderCount ?? 0) > 0 && !product.isArchived)
         .toList()
       ..sort((a, b) {
         // Sort by order count descending
@@ -518,6 +539,27 @@ class MySQLDatabaseService {
     final users = list.map(User.fromJson).toList();
     developer.log('✅ Loaded ${users.length} users from database');
     return users;
+  }
+
+  Future<User?> getUserById(String userId) async {
+    if (!_useApi) {
+      _initializeMockData();
+      try {
+        return _mockUsers.firstWhere((u) => u.id == userId);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    try {
+      final data = await _sendRequest(method: 'GET', path: '/users/$userId');
+      final map = _asMap(data, 'user');
+      return User.fromJson(map);
+    } catch (e) {
+      // Keep callers simple: returning null is a safe fallback for display-only needs.
+      developer.log('❌ Failed to fetch user $userId: $e');
+      return null;
+    }
   }
 
   Future<User> createUser({
@@ -821,6 +863,356 @@ class MySQLDatabaseService {
     }
   }
 
+  /// Creates a PayMongo Checkout Session on the server and returns the hosted [checkoutUrl].
+  ///
+  /// Requires backend [PAYMONGO_SECRET_KEY] (use `sk_test_...` for sandbox). See
+  /// `backend/.env.example` and `docs/PAYMONGO_TESTING.md`.
+  Future<String> createPaymongoCheckoutSession({
+    required String orderId,
+    required String userId,
+    double? amountPesos,
+  }) async {
+    if (!_useApi) {
+      throw Exception('PayMongo requires API mode — connect the backend and set API_BASE_URL.');
+    }
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/$orderId/paymongo-checkout');
+    developer.log('📤 PayMongo checkout session: POST $uri');
+    final response = await http
+        .post(
+          uri,
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            'userId': userId,
+            if (amountPesos != null) 'amountPesos': amountPesos,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      developer.log('❌ PayMongo HTTP ${response.statusCode}: ${response.body}');
+      throw Exception('PayMongo checkout failed (${response.statusCode})');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] != true) {
+      throw Exception(decoded['message']?.toString() ?? 'PayMongo checkout failed');
+    }
+    final data = decoded['data'] as Map<String, dynamic>?;
+    final url = data?['checkoutUrl'] as String?;
+    if (url == null || url.isEmpty) {
+      throw Exception('Server returned no checkout URL');
+    }
+    return url;
+  }
+
+  /// Creates a PayMongo hosted checkout for a made-to-order required down payment.
+  /// Backend validates the allowed range (₱3,000..₱5,000).
+  Future<({String checkoutUrl, String requestRef})> createMadeToOrderPaymongoCheckoutSession({
+    required double amountPesos,
+    required String itemName,
+  }) async {
+    if (!_useApi) {
+      throw Exception('PayMongo requires API mode — connect the backend and set API_BASE_URL.');
+    }
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/made-to-order/paymongo-checkout');
+    developer.log('📤 MTO PayMongo checkout session: POST $uri');
+    final response = await http
+        .post(
+          uri,
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            'amountPesos': amountPesos,
+            'itemName': itemName,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      developer.log('❌ MTO PayMongo HTTP ${response.statusCode}: ${response.body}');
+      throw Exception('Made-to-order PayMongo checkout failed (${response.statusCode})');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] != true) {
+      throw Exception(decoded['message']?.toString() ?? 'Made-to-order PayMongo checkout failed');
+    }
+    final data = decoded['data'] as Map<String, dynamic>?;
+    final url = data?['checkoutUrl'] as String?;
+    final requestRef = data?['requestRef'] as String?;
+    if (url == null || url.isEmpty || requestRef == null || requestRef.isEmpty) {
+      throw Exception('Server returned no checkout URL');
+    }
+    return (checkoutUrl: url, requestRef: requestRef);
+  }
+
+  /// Submits a made-to-order **request only** (no payment). Server assigns [requestRef].
+  Future<({String id, String requestRef})> createMadeToOrderRequest({
+    required String userId,
+    required String userName,
+    required String itemName,
+    String? preferredSize,
+    String? materials,
+    String? notes,
+  }) async {
+    if (!_useApi) {
+      throw Exception('Made-to-order request creation requires API mode.');
+    }
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/made-to-order/requests');
+    final response = await http
+        .post(
+          uri,
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            'userId': userId,
+            'userName': userName,
+            'itemName': itemName,
+            'preferredSize': preferredSize,
+            'materials': materials,
+            'notes': notes,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      developer.log('❌ MTO request HTTP ${response.statusCode}: ${response.body}');
+      throw Exception('Failed to save made-to-order request (${response.statusCode})');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] != true) {
+      throw Exception(decoded['message']?.toString() ?? 'Failed to save made-to-order request');
+    }
+    final data = decoded['data'] as Map<String, dynamic>?;
+    final id = data?['id']?.toString() ?? '';
+    final requestRef = data?['requestRef']?.toString() ?? '';
+    if (id.isEmpty || requestRef.isEmpty) {
+      throw Exception('Server returned no request id');
+    }
+    return (id: id, requestRef: requestRef);
+  }
+
+  /// When [userId] is set, returns only that user's requests (customer app). Omit for admin list.
+  Future<List<MadeToOrderRequest>> getMadeToOrderRequests({String? userId}) async {
+    if (!_useApi) return const [];
+    final path = userId != null && userId.isNotEmpty
+        ? '/orders/made-to-order/requests?userId=${Uri.encodeComponent(userId)}'
+        : '/orders/made-to-order/requests';
+    final data = await _sendRequest(method: 'GET', path: path);
+    final list = _asMapList(data, 'made-to-order requests');
+    return list
+        .map(MadeToOrderRequest.fromJson)
+        .toList(growable: false);
+  }
+
+  /// Admin: attach quote amounts so the customer can create an order and pay.
+  Future<void> quoteMadeToOrderRequest({
+    required String requestId,
+    required double quotedTotal,
+    required double quotedDownpayment,
+    required double quotedRemaining,
+    String? adminMessage,
+  }) async {
+    if (!_useApi) {
+      throw Exception('Made-to-order quote requires API mode.');
+    }
+    await _sendRequest(
+      method: 'PATCH',
+      path: '/orders/made-to-order/requests/$requestId/quote',
+      body: {
+        'quotedTotal': quotedTotal,
+        'quotedDownpayment': quotedDownpayment,
+        'quotedRemaining': quotedRemaining,
+        if (adminMessage != null && adminMessage.trim().isNotEmpty) 'adminMessage': adminMessage.trim(),
+      },
+    );
+  }
+
+  /// Admin: decline a request that cannot be built.
+  Future<void> declineMadeToOrderRequest({
+    required String requestId,
+    String? adminMessage,
+  }) async {
+    if (!_useApi) {
+      throw Exception('Made-to-order decline requires API mode.');
+    }
+    await _sendRequest(
+      method: 'PATCH',
+      path: '/orders/made-to-order/requests/$requestId/decline',
+      body: {
+        if (adminMessage != null && adminMessage.trim().isNotEmpty) 'adminMessage': adminMessage.trim(),
+      },
+    );
+  }
+
+  /// Customer: after admin quotes, create the real order with shipping address (then open PayMongo).
+  Future<OrderRecord> createOrderFromQuotedMadeToOrderRequest({
+    required String requestId,
+    required String userId,
+    required Map<String, dynamic> shippingAddress,
+  }) async {
+    if (!_useApi) {
+      throw Exception('Creating order from MTO request requires API mode.');
+    }
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/orders/made-to-order/requests/$requestId/create-order',
+      body: {
+        'userId': userId,
+        'shippingAddress': shippingAddress,
+      },
+    );
+    final map = _asMap(data, 'made-to-order create-order');
+    final orderMap = map['order'] as Map<String, dynamic>?;
+    if (orderMap == null) {
+      throw Exception('Server returned no order');
+    }
+    return OrderRecord.fromJson(orderMap);
+  }
+
+  /// Upload a made-to-order valid ID image (optional) keyed by requestRef.
+  Future<String> uploadMadeToOrderValidId({
+    required String requestRef,
+    required List<int> imageBytes,
+    required String fileName,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ uploadMadeToOrderValidId: MOCK MODE — returning placeholder URL');
+      return 'https://placehold.co/400x600?text=Valid+ID';
+    }
+
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/made-to-order/$requestRef/valid-id');
+    final request = http.MultipartRequest('POST', uri);
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        imageBytes,
+        filename: fileName,
+      ),
+    );
+
+    final streamedResponse = await request.send().timeout(const Duration(seconds: 90));
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      developer.log('❌ MTO Valid ID upload HTTP ${response.statusCode}: ${response.body}');
+      throw Exception('Made-to-order Valid ID upload failed (${response.statusCode})');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] != true) {
+      throw Exception(decoded['message']?.toString() ?? 'Made-to-order Valid ID upload failed');
+    }
+
+    final data = decoded['data'] as Map<String, dynamic>?;
+    final downloadUrl = data?['downloadUrl'] as String?;
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      throw Exception('Server returned no valid ID URL');
+    }
+
+    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+    return downloadUrl.startsWith('http') ? downloadUrl : '$baseUrl$downloadUrl';
+  }
+
+  /// Upload made-to-order reference images (optional) keyed by requestRef.
+  Future<List<String>> uploadMadeToOrderReferenceImages({
+    required String requestRef,
+    required List<List<int>> filesBytes,
+    required List<String> fileNames,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ uploadMadeToOrderReferenceImages: MOCK MODE — returning placeholder URLs');
+      return List<String>.generate(
+        filesBytes.length,
+        (i) => 'https://placehold.co/800x600?text=Ref+${i + 1}',
+      );
+    }
+    if (filesBytes.isEmpty) return const [];
+
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/made-to-order/$requestRef/reference-images');
+    final request = http.MultipartRequest('POST', uri);
+    for (var i = 0; i < filesBytes.length; i++) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'files',
+          filesBytes[i],
+          filename: i < fileNames.length ? fileNames[i] : 'reference_${i + 1}.jpg',
+        ),
+      );
+    }
+
+    final streamedResponse = await request.send().timeout(const Duration(seconds: 120));
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      developer.log('❌ MTO reference upload HTTP ${response.statusCode}: ${response.body}');
+      throw Exception('Made-to-order reference upload failed (${response.statusCode})');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] != true) {
+      throw Exception(decoded['message']?.toString() ?? 'Made-to-order reference upload failed');
+    }
+
+    final data = decoded['data'] as Map<String, dynamic>?;
+    final downloadUrlsDynamic = data?['downloadUrls'] as List<dynamic>?;
+    final downloadUrls = downloadUrlsDynamic?.map((e) => e.toString()).toList() ?? const <String>[];
+
+    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+    return downloadUrls
+        .map((u) => u.startsWith('http') ? u : '$baseUrl$u')
+        .toList(growable: false);
+  }
+
+  /// Uploads **one** government-issued ID image for an order (multipart `file` + `userId`).
+  ///
+  /// Backend: `POST /api/orders/:id/valid-id` — required before PayMongo for installment policy.
+  Future<String> uploadOrderValidId({
+    required String orderId,
+    required String userId,
+    required List<int> imageBytes,
+    required String fileName,
+  }) async {
+    if (!_useApi) {
+      developer.log('⚠️ uploadOrderValidId: MOCK MODE — returning placeholder URL');
+      return 'https://placehold.co/400x600?text=Valid+ID';
+    }
+
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/$orderId/valid-id');
+    final request = http.MultipartRequest('POST', uri);
+    request.fields['userId'] = userId;
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        imageBytes,
+        filename: fileName,
+      ),
+    );
+
+    final streamedResponse = await request.send().timeout(const Duration(seconds: 90));
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      developer.log('❌ Valid ID upload HTTP ${response.statusCode}: ${response.body}');
+      throw Exception('Valid ID upload failed (${response.statusCode})');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] != true) {
+      throw Exception(decoded['message']?.toString() ?? 'Valid ID upload failed');
+    }
+
+    final data = decoded['data'] as Map<String, dynamic>?;
+    final downloadUrl = data?['downloadUrl'] as String?;
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      throw Exception('Server returned no valid ID URL');
+    }
+
+    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+    final absoluteUrl = downloadUrl.startsWith('http')
+        ? downloadUrl
+        : '$baseUrl$downloadUrl';
+    return absoluteUrl;
+  }
+
   OrderRecord _createLocalOrder({
     required String userId,
     required String userName,
@@ -1010,7 +1402,8 @@ class MySQLDatabaseService {
   Future<List<Review>> getAllReviews() async {
     if (!_useApi) {
       developer.log('⚠️ Using MOCK data for reviews (API not connected)');
-      return _getMockReviews();
+      _initializeMockData();
+      return List.unmodifiable(_mockReviews);
     }
     developer.log('📡 Fetching reviews from API...');
     final data = await _sendRequest(method: 'GET', path: '/reviews');
@@ -1023,18 +1416,34 @@ class MySQLDatabaseService {
   /// Get all published reviews for a specific product.
   /// Only returns reviews with 'published' status.
   /// Returns reviews from ALL users who have reviewed this product.
-  Future<List<Review>> getReviewsByProductId(String productId) async {
+  Future<List<Review>> getReviewsByProductId(
+    String productId, {
+    bool includePending = false,
+  }) async {
     if (!_useApi) {
       developer.log('⚠️ Using MOCK data for reviews (API not connected)');
-      // Filter mock reviews by product ID - return ALL published reviews regardless of user
-      final allMock = _getMockReviews();
-      final filtered = allMock.where((r) => r.productId == productId && r.status == 'published').toList();
-      developer.log('✅ Loaded ${filtered.length} mock reviews for product $productId');
+      _initializeMockData();
+
+      final filtered = _mockReviews.where((r) {
+        if (r.productId != productId) return false;
+        final status = r.status.trim().toLowerCase();
+        if (includePending) {
+          return status == 'published' || status == 'pending' || status.isEmpty;
+        }
+        return status == 'published' || status.isEmpty;
+      }).toList();
+
+      developer.log(
+        '✅ Loaded ${filtered.length} mock reviews for product $productId (includePending=$includePending)',
+      );
       return filtered;
     }
     developer.log('📡 Fetching reviews for product $productId from API...');
     try {
-      final response = await _sendRequest(method: 'GET', path: '/reviews?productId=$productId');
+      final response = await _sendRequest(
+        method: 'GET',
+        path: '/reviews?productId=$productId&includePending=$includePending',
+      );
       developer.log('📥 Raw response type: ${response.runtimeType}');
       developer.log('📥 Raw response: $response');
       
@@ -1084,39 +1493,20 @@ class MySQLDatabaseService {
           // Continue with other reviews instead of failing completely
         }
       }
-      
-      // Backend already filters to only published reviews (including null status)
-      // Review.fromJson also defaults null status to 'published'
-      // So we should receive all valid reviews, but double-check status just in case
-      final publishedReviews = reviews.where((r) {
-        // Accept 'published' status or empty/null (which Review.fromJson converts to 'published')
-        final status = r.status.trim().toLowerCase();
-        return status == 'published' || status.isEmpty;
-      }).toList();
-      
-      developer.log('✅ Loaded ${publishedReviews.length} published reviews for product $productId (from ${reviews.length} total parsed)');
-      
-      // Log any filtered out reviews for debugging
-      final filteredOut = reviews.where((r) {
-        final status = r.status.trim().toLowerCase();
-        return status != 'published' && status.isNotEmpty;
-      }).toList();
-      if (filteredOut.isNotEmpty) {
-        developer.log('⚠️ Filtered out ${filteredOut.length} non-published reviews: ${filteredOut.map((r) => '${r.userName} (status: "${r.status}")').join(", ")}');
+
+      // Backend already filters based on includePending. Don't re-filter client-side
+      // or we risk hiding reviews that the backend intentionally included.
+      developer.log(
+        '✅ Loaded ${reviews.length} reviews for product $productId (includePending=$includePending)',
+      );
+
+      if (reviews.isNotEmpty) {
+        developer.log(
+          '👥 Reviews from users: ${reviews.map((r) => '${r.userName} (${r.rating}⭐, status: "${r.status}")').join(", ")}',
+        );
       }
-      
-      if (publishedReviews.isNotEmpty) {
-        developer.log('👥 Reviews from users: ${publishedReviews.map((r) => '${r.userName} (${r.rating}⭐, status: "${r.status}")').join(", ")}');
-      } else {
-        developer.log('⚠️ No published reviews found for product $productId');
-        developer.log('💡 Troubleshooting:');
-        developer.log('   1. Check if reviews exist in database: SELECT * FROM reviews WHERE product_id = "$productId"');
-        developer.log('   2. Verify review status is "published" or NULL');
-        developer.log('   3. Check backend logs for query results');
-        developer.log('   4. Verify productId format matches between product and review records');
-      }
-      
-      return publishedReviews;
+
+      return reviews;
     } catch (e, stackTrace) {
       developer.log('❌ Error loading reviews for product $productId: $e');
       developer.log('📚 Stack trace: $stackTrace');
@@ -1155,7 +1545,20 @@ class MySQLDatabaseService {
     required String content,
   }) async {
     if (!_useApi) {
-      return Review(
+      // Keep mock behavior aligned with backend rules so the UI updates correctly.
+      _initializeMockData();
+
+      final hasPurchased = await hasUserPurchasedProduct(userId, productId);
+      if (!hasPurchased) {
+        throw Exception('You can only review products you have purchased');
+      }
+
+      final alreadyReviewed = _mockReviews.any((r) => r.userId == userId && r.productId == productId);
+      if (alreadyReviewed) {
+        throw Exception('You have already reviewed this product');
+      }
+
+      final review = Review(
         id: _generateId('r'),
         productId: productId,
         productName: productName,
@@ -1166,6 +1569,10 @@ class MySQLDatabaseService {
         status: 'published',
         createdAt: DateTime.now(),
       );
+
+      // Insert at the front to match newest-first rendering.
+      _mockReviews.insert(0, review);
+      return review;
     }
     final payload = {
       'productId': productId,
@@ -1222,6 +1629,394 @@ class MySQLDatabaseService {
     await _sendRequest(method: 'DELETE', path: '/reviews/$reviewId');
   }
 
+  Future<SupportConversation> getOrCreateSupportConversation(String userId) async {
+    if (!_useApi) {
+      return SupportConversation(
+        id: _generateId('sc'),
+        userId: userId,
+        status: 'open',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+    }
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/support/user/conversation',
+      body: {'userId': userId},
+    );
+    final map = _asMap(data, 'support conversation');
+    return SupportConversation.fromJson(map);
+  }
+
+  String? _normalizeSupportAttachmentUrl(String? url) {
+    if (url == null || url.isEmpty) return url;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+    if (url.startsWith('/')) return '$baseUrl$url';
+    return '$baseUrl/$url';
+  }
+
+  Future<List<SupportMessage>> getSupportMessages({
+    required String conversationId,
+    int limit = 50,
+    DateTime? before,
+  }) async {
+    if (!_useApi) {
+      return const [];
+    }
+    final query = <String, String>{
+      'limit': limit.toString(),
+      if (before != null) 'before': before.toIso8601String(),
+    };
+    final uri = _buildUri('/support/user/conversation/$conversationId/messages')
+        .replace(queryParameters: query);
+    final response = await _client.get(uri).timeout(ApiConfig.timeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load support messages: ${response.body}');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final list = _asMapList(decoded['data'], 'support messages');
+    return list.map((m) {
+      final url = m['attachmentUrl'] as String?;
+      if (url != null) {
+        m['attachmentUrl'] = _normalizeSupportAttachmentUrl(url);
+      }
+      return SupportMessage.fromJson(m);
+    }).toList();
+  }
+
+  Future<SupportMessage> sendSupportMessageAsUser({
+    required String conversationId,
+    required String userId,
+    required String body,
+  }) async {
+    if (!_useApi) {
+      return SupportMessage(
+        id: _generateId('sm'),
+        conversationId: conversationId,
+        senderType: 'user',
+        senderUserId: userId,
+        body: body,
+        createdAt: DateTime.now(),
+      );
+    }
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/support/user/conversation/$conversationId/messages',
+      body: {
+        'userId': userId,
+        'body': body,
+      },
+    );
+    final map = _asMap(data, 'support message');
+    final url = map['attachmentUrl'] as String?;
+    if (url != null) {
+      map['attachmentUrl'] = _normalizeSupportAttachmentUrl(url);
+    }
+    return SupportMessage.fromJson(map);
+  }
+
+  Future<SupportMessage> sendSupportMessageAsUserWithAttachment({
+    required String conversationId,
+    required String userId,
+    required String body,
+    required Uint8List attachmentBytes,
+    required String fileName,
+    required String mimeType,
+  }) async {
+    if (!_useApi) {
+      return SupportMessage(
+        id: _generateId('sm'),
+        conversationId: conversationId,
+        senderType: 'user',
+        senderUserId: userId,
+        body: body,
+        createdAt: DateTime.now(),
+        attachmentUrl: null,
+        attachmentType: null,
+        attachmentMime: null,
+        attachmentFilename: fileName,
+      );
+    }
+
+    final uri = _buildUri(
+      '/support/user/conversation/$conversationId/messages/attachment',
+    );
+    final request = http.MultipartRequest('POST', uri);
+    request.fields['userId'] = userId;
+    request.fields['body'] = body;
+    // Kept for debugging/traceability; backend stores the file mimetype from multer.
+    request.fields['mimeType'] = mimeType;
+
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'attachment',
+        attachmentBytes,
+        filename: fileName,
+      ),
+    );
+
+    final streamed = await request.send().timeout(ApiConfig.timeout);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('API request failed (${response.statusCode}): ${response.body}');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] == false) {
+      throw Exception(decoded['message']?.toString() ?? 'Failed to send message');
+    }
+
+    final map = _asMap(decoded['data'], 'support message');
+    final url = map['attachmentUrl'] as String?;
+    if (url != null) {
+      map['attachmentUrl'] = _normalizeSupportAttachmentUrl(url);
+    }
+    return SupportMessage.fromJson(map);
+  }
+
+  Future<List<SupportConversation>> getSupportConversationsForAdmin({String? status}) async {
+    if (!_useApi) {
+      return const [];
+    }
+    final query = <String, String>{
+      if (status != null) 'status': status,
+    };
+    final uri = _buildUri('/support/admin/conversations').replace(queryParameters: query);
+    final response = await _client.get(uri).timeout(ApiConfig.timeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load support conversations: ${response.body}');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final list = _asMapList(decoded['data'], 'support conversations');
+    return list.map(SupportConversation.fromJson).toList();
+  }
+
+  Future<List<SupportMessage>> getSupportMessagesForAdmin({
+    required String conversationId,
+    int limit = 50,
+    DateTime? before,
+  }) async {
+    if (!_useApi) {
+      return const [];
+    }
+    final query = <String, String>{
+      'limit': limit.toString(),
+      if (before != null) 'before': before.toIso8601String(),
+    };
+    final uri = _buildUri('/support/admin/conversation/$conversationId/messages')
+        .replace(queryParameters: query);
+    final response = await _client.get(uri).timeout(ApiConfig.timeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load support messages (admin): ${response.body}');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final list = _asMapList(decoded['data'], 'support messages');
+    return list.map((m) {
+      final url = m['attachmentUrl'] as String?;
+      if (url != null) {
+        m['attachmentUrl'] = _normalizeSupportAttachmentUrl(url);
+      }
+      return SupportMessage.fromJson(m);
+    }).toList();
+  }
+
+  Future<SupportMessage> sendSupportMessageAsAdmin({
+    required String conversationId,
+    required String adminId,
+    required String body,
+  }) async {
+    if (!_useApi) {
+      return SupportMessage(
+        id: _generateId('sm'),
+        conversationId: conversationId,
+        senderType: 'admin',
+        senderAdminId: adminId,
+        body: body,
+        createdAt: DateTime.now(),
+      );
+    }
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/support/admin/conversation/$conversationId/messages',
+      body: {
+        'adminId': adminId,
+        'body': body,
+      },
+    );
+    final map = _asMap(data, 'support message');
+    final url = map['attachmentUrl'] as String?;
+    if (url != null) {
+      map['attachmentUrl'] = _normalizeSupportAttachmentUrl(url);
+    }
+    return SupportMessage.fromJson(map);
+  }
+
+  Future<SupportMessage> sendSupportMessageAsAdminWithAttachment({
+    required String conversationId,
+    required String adminId,
+    required String body,
+    required Uint8List attachmentBytes,
+    required String fileName,
+    required String mimeType,
+  }) async {
+    if (!_useApi) {
+      return SupportMessage(
+        id: _generateId('sm'),
+        conversationId: conversationId,
+        senderType: 'admin',
+        senderAdminId: adminId,
+        body: body,
+        createdAt: DateTime.now(),
+        attachmentUrl: null,
+        attachmentType: null,
+        attachmentMime: null,
+        attachmentFilename: fileName,
+      );
+    }
+
+    final uri = _buildUri(
+      '/support/admin/conversation/$conversationId/messages/attachment',
+    );
+    final request = http.MultipartRequest('POST', uri);
+    request.fields['adminId'] = adminId;
+    request.fields['body'] = body;
+    // Kept for debugging/traceability; backend stores the file mimetype from multer.
+    request.fields['mimeType'] = mimeType;
+
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'attachment',
+        attachmentBytes,
+        filename: fileName,
+      ),
+    );
+
+    final streamed = await request.send().timeout(ApiConfig.timeout);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('API request failed (${response.statusCode}): ${response.body}');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] == false) {
+      throw Exception(decoded['message']?.toString() ?? 'Failed to send message');
+    }
+
+    final map = _asMap(decoded['data'], 'support message');
+    final url = map['attachmentUrl'] as String?;
+    if (url != null) {
+      map['attachmentUrl'] = _normalizeSupportAttachmentUrl(url);
+    }
+    return SupportMessage.fromJson(map);
+  }
+
+  // ---------------------------------------------------------------------------
+  // FAQs (support chat)
+  // ---------------------------------------------------------------------------
+
+  /// Fetches all FAQs from the API. Returns empty list when API unavailable.
+  Future<List<Faq>> getFaqs() async {
+    if (!_useApi) return [];
+    try {
+      final data = await _sendRequest(method: 'GET', path: '/faqs');
+      final list = _asMapList(data, 'faqs');
+      return list.map(Faq.fromJson).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Creates a new FAQ (admin). Requires adminId.
+  Future<Faq> createFaq({
+    required String adminId,
+    required String question,
+    required String answer,
+    int? sortOrder,
+  }) async {
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/faqs/admin',
+      body: {
+        'adminId': adminId,
+        'question': question,
+        'answer': answer,
+        if (sortOrder != null) 'sortOrder': sortOrder,
+      },
+    );
+    final map = _asMap(data, 'faq');
+    return Faq.fromJson(map);
+  }
+
+  /// Updates an existing FAQ (admin).
+  Future<Faq> updateFaq({
+    required String adminId,
+    required String id,
+    String? question,
+    String? answer,
+    int? sortOrder,
+  }) async {
+    final body = <String, dynamic>{'adminId': adminId};
+    if (question != null) body['question'] = question;
+    if (answer != null) body['answer'] = answer;
+    if (sortOrder != null) body['sortOrder'] = sortOrder;
+
+    final data = await _sendRequest(
+      method: 'PUT',
+      path: '/faqs/admin/$id',
+      body: body,
+    );
+    final map = _asMap(data, 'faq');
+    return Faq.fromJson(map);
+  }
+
+  /// Deletes an FAQ (admin).
+  Future<void> deleteFaq({required String adminId, required String id}) async {
+    final uri = _buildUri('/faqs/admin/$id').replace(
+      queryParameters: {'adminId': adminId},
+    );
+    final response = await _client.delete(uri).timeout(ApiConfig.timeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to delete FAQ: ${response.body}');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Legal content (Terms & Conditions, Privacy Policy)
+  // ---------------------------------------------------------------------------
+
+  /// Fetches legal page content by key ('terms' or 'privacy').
+  /// Returns null when not set or API unavailable (client should use default).
+  Future<String?> getLegalContent(String key) async {
+    if (!_useApi) return null;
+    if (key != 'terms' && key != 'privacy') return null;
+    try {
+      final data = await _sendRequest(method: 'GET', path: '/content/legal/$key');
+      final map = _asMap(data, 'legal content');
+      return map['content'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Updates legal page content (admin).
+  Future<String?> updateLegalContent({
+    required String adminId,
+    required String key,
+    required String content,
+  }) async {
+    if (key != 'terms' && key != 'privacy') {
+      throw ArgumentError("key must be 'terms' or 'privacy'");
+    }
+    final data = await _sendRequest(
+      method: 'PATCH',
+      path: '/content/admin/legal/$key',
+      body: {'adminId': adminId, 'content': content},
+    );
+    final map = _asMap(data, 'legal content');
+    return map['content'] as String?;
+  }
+
   String _suggestUsername(String fullName, String email) {
     final normalizedName = fullName.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
     if (normalizedName.isNotEmpty) {
@@ -1255,7 +2050,7 @@ class MySQLDatabaseService {
         style: 'Modern',
         material: 'Wood',
         color: 'Brown',
-        modelPath: 'assets/chair.glb',
+        modelPath: '',
         realWidthMeters: 0.45,
         realHeightMeters: 0.88,
         realDepthMeters: 0.52,
@@ -1278,7 +2073,7 @@ class MySQLDatabaseService {
         style: 'Classic',
         material: 'Leather',
         color: 'Black',
-        modelPath: 'assets/chair.glb',
+        modelPath: '',
         realWidthMeters: 0.6,
         realHeightMeters: 1.1,
         realDepthMeters: 0.65,
@@ -1371,6 +2166,12 @@ class MySQLDatabaseService {
             unitPrice: _mockProducts[2].price,
           ),
       ];
+    }
+
+    // Seed mock reviews only once; this enables the UI to reflect newly created
+    // reviews in mock mode (useful for local development / chrome runs).
+    if (_mockReviews.isEmpty) {
+      _mockReviews.addAll(_getMockReviews());
     }
   }
 

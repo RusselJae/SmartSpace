@@ -5,7 +5,14 @@ import '../shell/tab_shell.dart';
 
 /// Order confirmation
 class SuccessScreen extends StatelessWidget {
-  const SuccessScreen({super.key});
+  const SuccessScreen({
+    super.key,
+    /// When set (e.g. PayMongo test flow), replaces the default body copy.
+    this.subtitle,
+  });
+
+  /// Optional second line under the title (e.g. PayMongo instructions).
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +47,8 @@ class SuccessScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                'Your order has been confirmed and will be processed shortly.',
+                subtitle ??
+                    'Your order has been confirmed and will be processed shortly.',
                 style: GoogleFonts.poppins(
                   fontSize: 16,
                   fontWeight: FontWeight.normal,

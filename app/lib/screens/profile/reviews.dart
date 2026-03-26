@@ -25,10 +25,18 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final DateFormat _dateFormat = DateFormat('MMM d, yyyy');
 
+  static const Color _lightBrown = Color(0xFFF4E6D4);
+  static const Color _mediumBrown = Color(0xFF8D6E63);
+
   List<Review> _reviews = [];
   List<Product> _purchasedProducts = [];
   bool _loading = true;
   String? _error;
+
+  String _starsText(int rating) {
+    final safe = rating.clamp(0, 5);
+    return List.generate(5, (i) => i < safe ? '★' : '☆').join();
+  }
 
   @override
   void initState() {
@@ -151,63 +159,114 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   }
 
   Widget _buildReviewCard(Review review) {
+    final meta = [
+      if (review.status.trim().isNotEmpty) (review.status[0].toUpperCase() + review.status.substring(1)).trim(),
+      _starsText(review.rating),
+      _dateFormat.format(review.createdAt),
+    ].where((e) => e.isNotEmpty).join(' · ');
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: CupertinoColors.systemGroupedBackground,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  review.productName,
-                  style: GoogleFonts.poppins(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black,
-                    decoration: TextDecoration.none,
-                  ),
-                ),
-              ),
-              _ReviewStatusChip(status: review.status),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: List.generate(
-              5,
-              (index) => Icon(
-                index < review.rating ? CupertinoIcons.star_fill : CupertinoIcons.star,
-                size: 18,
-                color: index < review.rating ? const Color(0xFFFFC107) : Colors.black26,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            review.content,
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: Colors.black87,
-              height: 1.4,
-              decoration: TextDecoration.none,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _dateFormat.format(review.createdAt),
-            style: GoogleFonts.poppins(
-              fontSize: 12,
-              color: Colors.black54,
-              decoration: TextDecoration.none,
-            ),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFBCAAA4).withValues(alpha: 0.25),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: _mediumBrown.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(CupertinoIcons.star_fill, size: 16, color: _mediumBrown),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    review.productName,
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: Colors.black87,
+                      decoration: TextDecoration.none,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    meta,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.black54,
+                      decoration: TextDecoration.none,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    review.content,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.black54,
+                      height: 1.35,
+                      decoration: TextDecoration.none,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Align(
+              alignment: Alignment.topRight,
+              child: PopupMenuButton<String>(
+                padding: EdgeInsets.zero,
+                offset: const Offset(0, 28),
+                onSelected: (value) async {
+                  switch (value) {
+                    case 'copy':
+                      await Clipboard.setData(ClipboardData(text: review.content));
+                      if (mounted) Toast.success(context, 'Copied');
+                      break;
+                  }
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem<String>(
+                    value: 'copy',
+                    child: Text('Copy', style: GoogleFonts.poppins()),
+                  ),
+                ],
+                child: const Icon(
+                  CupertinoIcons.ellipsis_vertical,
+                  size: 18,
+                  color: Colors.black45,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -233,7 +292,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
               ),
               const SizedBox(height: 12),
               CupertinoButton(
-                color: const Color(0xFF8D6E63),
+                color: _mediumBrown,
                 onPressed: _loadData,
                 child: Text('Retry', style: GoogleFonts.poppins(color: Colors.white)),
               ),
@@ -270,26 +329,70 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
           )
         else
           ..._reviews.map(_buildReviewCard),
-        if (user != null && !_loading)
-          CupertinoButton.filled(
-            onPressed: _handleWriteReview,
-            child: Text(
-              'Write a review',
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-            ),
-          ),
       ],
     );
 
     return CupertinoPageScaffold(
+      backgroundColor: const Color(0xFFF7F7F7),
       navigationBar: CupertinoNavigationBar(
-        middle: Text('Your Reviews', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        backgroundColor: _lightBrown,
+        border: Border(
+          bottom: BorderSide(
+            color: _mediumBrown.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+        ),
+        middle: Text(
+          'Your Reviews',
+          style: GoogleFonts.poppins(
+            fontWeight: FontWeight.w600,
+            color: _mediumBrown,
+          ),
+        ),
+        trailing: null,
       ),
       child: SafeArea(
-        child: RefreshIndicator(
-          color: const Color(0xFF8D6E63),
-          onRefresh: () => _loadData(showLoader: false),
-          child: list,
+        child: Column(
+          children: [
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  const Spacer(),
+                  if (user != null)
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      minSize: 0,
+                      onPressed: _loading ? null : _handleWriteReview,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: _mediumBrown,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Text(
+                          'Write review',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: RefreshIndicator(
+                color: _mediumBrown,
+                onRefresh: () => _loadData(showLoader: false),
+                child: list,
+              ),
+            ),
+          ],
         ),
       ),
     );

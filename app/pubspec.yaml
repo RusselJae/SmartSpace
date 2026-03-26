@@ -54,6 +54,8 @@ dependencies:
   shared_preferences: ^2.2.3
   firebase_core: ^3.6.0
   firebase_storage: ^12.3.2
+  # Opens PayMongo hosted checkout in browser / external app
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:
@@ -83,15 +85,17 @@ flutter:
   # must be listed individually. When adding new models, just add a new line:
   # - assets/your_new_model.glb
   assets:
-    - assets/chair.glb
-    - assets/glasss_dining_table.glb
-    - assets/loft_bed.glb
-    - assets/wooden_dining_table.glb
-    - assets/wooden_drawer.glb
-    - assets/wooden_sideboard.glb
+    
+
     - assets/philippines_addresses_sample.json
     - assets/images/logo.jpg
     - assets/images/qrcode.jpg
+    # Home banner image strip used on the catalog home page
+    - assets/images/home_banner.png
+    # Onboarding background (wood furniture hero)
+    # Copy your provided PNG into this path:
+    # app/assets/images/onboarding_background.png
+    - assets/images/onboarding_background.png
     - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see

@@ -1,5 +1,6 @@
 import { RowDataPacket } from 'mysql2';
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import { getPool } from '../config/database';
 import { User } from '../models/user';
 import { generateId } from '../utils/id_generator';
@@ -61,6 +62,7 @@ export const listUsers = async (): Promise<User[]> => {
 export interface CreateUserInput {
   readonly email: string;
   readonly fullName: string;
+  readonly password: string;
   readonly username?: string;
   readonly phoneNumber?: string;
   readonly gender?: 'male' | 'female' | 'other';
@@ -119,6 +121,16 @@ export const createUser = async (input: CreateUserInput): Promise<User> => {
   const now = new Date();
   const username = deriveUsername(input, id);
   
+  // Keep password rules centralized here so both API and any internal callers
+  // behave consistently. (This app currently uses a username/email + password login.)
+  const password = input.password?.trim() ?? '';
+  if (password.length < 6) {
+    throw new Error('Password must be at least 6 characters long');
+  }
+
+  // bcrypt with 10 rounds is a sensible default for interactive logins.
+  const passwordHash = await bcrypt.hash(password, 10);
+
   // Generate verification token, code, and expiration date
   // New users start with email_verified = false and need to verify via email
   const verificationToken = generateVerificationToken();
@@ -133,7 +145,7 @@ export const createUser = async (input: CreateUserInput): Promise<User> => {
     [
       id,
       input.email,
-      null,
+      passwordHash,
       input.fullName,
       username,
       input.gender ?? null,
@@ -225,6 +237,120 @@ export const findUserById = async (id: string): Promise<User | null> => {
   const [rows] = await pool.query<UserRow[]>('SELECT * FROM users WHERE id = ?', [id]);
   if (rows.length === 0) return null;
   return mapUser(rows[0]);
+};
+
+type UserAuthRow = RowDataPacket & {
+  readonly id: string;
+  readonly email: string;
+  readonly username: string;
+  readonly password_hash: string | null;
+  readonly email_verified: boolean;
+  readonly last_login_at: Date | null;
+};
+
+/**
+ * Verifies a user's credentials (email/username + password).
+ *
+ * Returns the public user object on success; throws on failure.
+ * This is used by the API login route so the Flutter app never needs to
+ * download the full user list just to authenticate.
+ */
+export const verifyUserCredentials = async (
+  identifier: string,
+  password: string,
+): Promise<User> => {
+  const pool = getPool();
+  const normalized = identifier.trim().toLowerCase();
+
+  if (normalized.length === 0 || password.trim().length === 0) {
+    throw new Error('Email/username and password are required');
+  }
+
+  const [rows] = await pool.query<UserAuthRow[]>(
+    `SELECT id, email, username, password_hash, email_verified, last_login_at
+     FROM users
+     WHERE LOWER(email) = ? OR LOWER(username) = ?
+     LIMIT 1`,
+    [normalized, normalized],
+  );
+
+  if (rows.length === 0) {
+    throw new Error('Invalid username or password');
+  }
+
+  const row = rows[0];
+  if (!row.email_verified) {
+    throw new Error('Please verify your email address before signing in.');
+  }
+
+  if (!row.password_hash) {
+    // This protects older accounts created before password hashing existed.
+    throw new Error('This account does not have a password set. Please create a new account or contact support.');
+  }
+
+  const ok = await bcrypt.compare(password, row.password_hash);
+  if (!ok) {
+    throw new Error('Invalid username or password');
+  }
+
+  await pool.query('UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = ?', [row.id]);
+
+  const user = await findUserById(row.id);
+  if (!user) {
+    throw new Error('User not found');
+  }
+  return user;
+};
+
+/**
+ * Changes a user's password after verifying their current password.
+ */
+export const changeUserPassword = async (
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> => {
+  const pool = getPool();
+
+  const current = (currentPassword ?? '').trim();
+  const next = (newPassword ?? '').trim();
+
+  if (current.length === 0 || next.length === 0) {
+    throw new Error('Current password and new password are required');
+  }
+  if (next.length < 6) {
+    throw new Error('New password must be at least 6 characters long');
+  }
+  if (current === next) {
+    throw new Error('New password must be different from the current password');
+  }
+
+  const [rows] = await pool.query<UserAuthRow[]>(
+    `SELECT id, password_hash
+     FROM users
+     WHERE id = ?
+     LIMIT 1`,
+    [userId],
+  );
+  if (rows.length === 0) {
+    throw new Error('User not found');
+  }
+
+  const row = rows[0];
+  if (!row.password_hash) {
+    throw new Error('This account does not have a password set.');
+  }
+
+  const ok = await bcrypt.compare(current, row.password_hash);
+  if (!ok) {
+    throw new Error('Current password is incorrect');
+  }
+
+  const newHash = await bcrypt.hash(next, 10);
+  await pool.query(
+    'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?',
+    [newHash, userId],
+  );
 };
 
 /**

@@ -23,10 +23,15 @@ reviewRouter.get(
   asyncHandler(async (req, res) => {
     // Support filtering by productId via query parameter
     const productId = req.query.productId as string | undefined;
+    const includePending =
+      typeof req.query.includePending === 'string'
+        ? req.query.includePending.toLowerCase() === 'true' || req.query.includePending === '1'
+        : false;
     console.log(`[ReviewRoute] GET /reviews - productId: ${productId || 'none'}`);
     
     if (productId) {
-      const reviews = await getReviewsByProductId(productId, false);
+      console.log(`[ReviewRoute] includePending: ${includePending}`);
+      const reviews = await getReviewsByProductId(productId, includePending);
       console.log(`[ReviewRoute] Returning ${reviews.length} reviews for productId: ${productId}`);
       res.json({ success: true, data: reviews });
     } else {

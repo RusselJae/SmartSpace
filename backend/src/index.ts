@@ -58,15 +58,8 @@ const initialize = async (): Promise<void> => {
     
     startServer();
     
-    // Start auto-cancellation scheduler for unpaid orders
-    try {
-      const { startAutoCancelScheduler } = await import('./jobs/auto_cancel_job');
-      startAutoCancelScheduler();
-    } catch (error) {
-      console.warn('⚠️ Could not start auto-cancellation scheduler:', error);
-      console.warn('   Install node-cron: npm install node-cron');
-      console.warn('   Or manually call POST /api/orders/auto-cancel periodically');
-    }
+    // Auto-cancellation (expiration) is intentionally disabled.
+    // Orders are cancelled explicitly via PayMongo cancel return route.
     
     // Start cleanup scheduler for unverified user accounts
     try {

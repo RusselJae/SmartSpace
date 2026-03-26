@@ -21,6 +21,7 @@ const _badgeAmberText = Color(0xFF8D6E63);
 const _badgeRose = Color(0xFFF8D7DA);
 const _badgeRoseText = Color(0xFFB23C17);
 const _cardBackground = Color(0xFFFDFBF7);
+const _lightBrown = Color(0xFFF4E6D4);
 
 class AddressesScreen extends StatefulWidget {
   const AddressesScreen({super.key});
@@ -115,31 +116,69 @@ class _AddressesScreenState extends State<AddressesScreen> {
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
+      backgroundColor: const Color(0xFFF7F7F7),
       navigationBar: CupertinoNavigationBar(
+        backgroundColor: _lightBrown,
+        border: Border(
+          bottom: BorderSide(
+            color: _coffeePrimary.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+        ),
         leading: CupertinoNavigationBarBackButton(
           onPressed: () => Navigator.of(context).maybePop(),
           color: _coffeePrimary,
         ),
-        middle: Text('My Addresses', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        middle: Text(
+          'My Addresses',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: _coffeePrimary),
+        ),
+        trailing: null,
       ),
       child: SafeArea(
         child: _loading
             ? const Center(child: CupertinoActivityIndicator())
             : Column(
                 children: [
+                  const SizedBox(height: 16),
                   Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: CupertinoButton.filled(
-                      onPressed: () => _openEditor(),
-                      child: Text('Add New Address', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        const Spacer(),
+                        CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          minSize: 0,
+                          onPressed: () => _openEditor(),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: _coffeePrimary,
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            child: Text(
+                              'Add address',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 10),
                   Expanded(
                     child: _addresses.isEmpty
                         ? Center(
                             child: Text(
                               'No addresses yet. Add one to speed up checkout.',
-                              style: GoogleFonts.poppins(color: _inkBody.withValues(alpha: 0.7), fontSize: 14),
+                              style: GoogleFonts.poppins(
+                                color: _inkBody.withValues(alpha: 0.7),
+                                fontSize: 14,
+                              ),
                               textAlign: TextAlign.center,
                             ),
                           )
@@ -147,7 +186,8 @@ class _AddressesScreenState extends State<AddressesScreen> {
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                             itemBuilder: (context, index) {
                               final address = _addresses[index];
-                              return _AddressCard(
+                              return _AddressTile(
+                                index: index,
                                 entry: address,
                                 onEdit: () => _openEditor(entry: address),
                                 onDelete: () => _delete(address.id),
@@ -163,6 +203,25 @@ class _AddressesScreenState extends State<AddressesScreen> {
       ),
     );
   }
+}
+
+/// Required field label: "Label " with red asterisk (matches add/edit product behavior).
+Widget _requiredLabel(String label) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Expanded(
+        child: Text(
+          label,
+          style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: _inkTitle),
+        ),
+      ),
+      Text(
+        '* Required',
+        style: GoogleFonts.poppins(fontSize: 11.5, fontWeight: FontWeight.w700, color: CupertinoColors.systemRed),
+      ),
+    ],
+  );
 }
 
 /// Compact dropdown field used inside the modal sheet so the PH
@@ -184,37 +243,39 @@ class _DropdownFieldCompact extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>(
-      // ignore: deprecated_member_use
-      value: options.contains(value) ? value : null, // DropdownButtonFormField uses 'value' for controlled components
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: GoogleFonts.poppins(
-          fontSize: 13,
-          color: showError ? CupertinoColors.systemRed : _inkTitle,
-        ),
-        floatingLabelBehavior: FloatingLabelBehavior.never,
-        filled: true,
-        fillColor: CupertinoColors.secondarySystemGroupedBackground,
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: CupertinoColors.separator),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: CupertinoColors.separator),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(
-            color: showError ? CupertinoColors.systemRed : _coffeePrimary,
-            width: 1.4,
+    final borderColor = showError ? CupertinoColors.systemRed : CupertinoColors.separator;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _requiredLabel(label),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<String>(
+          // ignore: deprecated_member_use
+          value: options.contains(value) ? value : null,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: CupertinoColors.secondarySystemGroupedBackground,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: borderColor),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: borderColor, width: showError ? 1.4 : 1),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(
+                color: showError ? CupertinoColors.systemRed : _coffeePrimary,
+                width: 1.4,
+              ),
+            ),
+            errorText: showError ? 'Required' : null,
+            errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
           ),
-        ),
-        errorText: showError ? 'Required' : null,
-      ),
       icon: const Icon(CupertinoIcons.chevron_down, size: 16, color: CupertinoColors.systemGrey),
       items: options
           .map(
@@ -232,6 +293,8 @@ class _DropdownFieldCompact extends StatelessWidget {
           )
           .toList(),
       onChanged: options.isEmpty ? null : onChanged,
+        ),
+      ],
     );
   }
 }
@@ -394,6 +457,173 @@ class _AddressCard extends StatelessWidget {
   }
 }
 
+/// Addresses tile styled to match the Help Center / Settings tiles.
+/// Compact, index-based naming ("Address 1/2/3") with a 3-dots menu.
+class _AddressTile extends StatelessWidget {
+  const _AddressTile({
+    required this.index,
+    required this.entry,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onSetDefault,
+  });
+
+  final int index;
+  final AddressEntry entry;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback? onSetDefault;
+
+  IconData get _icon {
+    switch (entry.label.toLowerCase()) {
+      case 'work':
+        return CupertinoIcons.briefcase;
+      case 'home':
+        return CupertinoIcons.house_alt;
+      default:
+        return CupertinoIcons.location_solid;
+    }
+  }
+
+  String get _detailsLine {
+    final pieces = <String>[];
+    if (entry.street.trim().isNotEmpty) pieces.add(entry.street.trim());
+    if (entry.region.trim().isNotEmpty) pieces.add(entry.region.trim());
+    if (entry.postalCode.trim().isNotEmpty) pieces.add(entry.postalCode.trim());
+    return pieces.isEmpty ? '-' : pieces.join(', ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = 'Address ${index + 1}';
+    final subtitleTop = entry.isDefault ? '${entry.label} · Default' : entry.label;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFBCAAA4).withValues(alpha: 0.25),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Align(
+              alignment: Alignment.topLeft,
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: _coffeePrimary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(_icon, size: 16, color: _coffeePrimary),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitleTop,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _detailsLine,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Align(
+              alignment: Alignment.topRight,
+              child: PopupMenuButton<String>(
+                padding: EdgeInsets.zero,
+                offset: const Offset(0, 28),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'edit':
+                      onEdit();
+                      break;
+                    case 'default':
+                      onSetDefault?.call();
+                      break;
+                    case 'delete':
+                      onDelete();
+                      break;
+                  }
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem<String>(
+                    value: 'edit',
+                    child: Text('Edit', style: GoogleFonts.poppins()),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'default',
+                    enabled: onSetDefault != null,
+                    child: Text(
+                      'Set as default',
+                      style: GoogleFonts.poppins(
+                        color: onSetDefault == null ? Colors.black38 : Colors.black87,
+                      ),
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    value: 'delete',
+                    child: Text(
+                      'Delete',
+                      style: GoogleFonts.poppins(color: CupertinoColors.systemRed),
+                    ),
+                  ),
+                ],
+                child: const Icon(
+                  CupertinoIcons.ellipsis_vertical,
+                  size: 18,
+                  color: Colors.black45,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _AddressEditorSheet extends StatefulWidget {
   const _AddressEditorSheet({this.entry, required this.onSubmit});
   final AddressEntry? entry;
@@ -404,11 +634,11 @@ class _AddressEditorSheet extends StatefulWidget {
 }
 
 class _AddressEditorSheetState extends State<_AddressEditorSheet> {
-  final TextEditingController _fullName = TextEditingController();
-  final TextEditingController _phone = TextEditingController();
   final TextEditingController _postal = TextEditingController();
   final TextEditingController _street = TextEditingController();
   String _label = 'Home';
+
+  final AuthService _auth = AuthService();
 
   // =============================================================
   // Cascading PH address selection state
@@ -435,8 +665,6 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
     _loadPhilippinesLocationData();
     final entry = widget.entry;
     if (entry != null) {
-      _fullName.text = entry.fullName;
-      _phone.text = entry.phoneNumber;
       _postal.text = entry.postalCode;
       _street.text = entry.street;
       _label = entry.label;
@@ -510,9 +738,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
 
   bool get _hasValidationError {
     return _submitted &&
-        (_fullName.text.trim().isEmpty ||
-            _phone.text.trim().isEmpty ||
-            _selectedProvince == null ||
+        (_selectedProvince == null ||
             _selectedCity == null ||
             _selectedBarangay == null ||
             _street.text.trim().isEmpty);
@@ -539,18 +765,13 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                   style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 16),
-                _buildSmallField('Full Name *', _fullName, showError: _submitted && _fullName.text.trim().isEmpty),
-                _buildSmallField('Phone Number *', _phone,
-                    keyboard: TextInputType.phone,
-                    showError: _submitted && _phone.text.trim().isEmpty),
-                const SizedBox(height: 4),
                 Text('Address (Philippines)', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500)),
                 const SizedBox(height: 6),
                 if (_loadingLocations)
                   const Center(child: CupertinoActivityIndicator())
                 else ...[
                   _DropdownFieldCompact(
-                    label: 'Province *',
+                    label: 'Province',
                     value: _selectedProvince,
                     options: _allProvinces,
                     showError: _submitted && _selectedProvince == null,
@@ -564,7 +785,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                   ),
                   const SizedBox(height: 8),
                   _DropdownFieldCompact(
-                    label: 'City / Municipality *',
+                    label: 'City / Municipality',
                     value: _selectedCity,
                     options: _selectedProvince == null
                         ? const []
@@ -579,7 +800,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                   ),
                   const SizedBox(height: 8),
                   _DropdownFieldCompact(
-                    label: 'Barangay *',
+                    label: 'Barangay',
                     value: _selectedBarangay,
                     options: _selectedCity == null
                         ? const []
@@ -597,9 +818,10 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                   'Postal Code',
                   _postal,
                   keyboard: TextInputType.number,
+                  isRequired: false,
                 ),
                 _buildSmallField(
-                  'Street / Building / House No. *',
+                  'Street / Building / House No.',
                   _street,
                   showError: _submitted && _street.text.trim().isEmpty,
                 ),
@@ -649,6 +871,10 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                           });
                           if (_hasValidationError) return;
 
+                          final user = _auth.currentUser;
+                          final fullName = user?.fullName ?? widget.entry?.fullName ?? '';
+                          final phone = user?.phoneNumber ?? widget.entry?.phoneNumber ?? '';
+
                           final region = [
                             _selectedProvince,
                             _selectedCity,
@@ -658,8 +884,10 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
                           widget.onSubmit(
                             AddressEntry(
                               id: widget.entry?.id ?? '',
-                              fullName: _fullName.text.trim(),
-                              phoneNumber: _phone.text.trim(),
+                              // Name + contact are sourced from the authenticated user profile.
+                              // Address editing should not allow overriding these fields.
+                              fullName: fullName,
+                              phoneNumber: phone,
                               region: region,
                               postalCode: _postal.text.trim(),
                               street: _street.text.trim(),
@@ -694,32 +922,46 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
     TextEditingController controller, {
     TextInputType? keyboard,
     bool showError = false,
+    bool isRequired = true,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          if (isRequired) _requiredLabel(label) else Text(
             label,
-            style: GoogleFonts.poppins(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: showError ? CupertinoColors.systemRed : _inkTitle,
-            ),
+            style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: _inkTitle),
           ),
           const SizedBox(height: 4),
-          CupertinoTextField(
-            controller: controller,
-            keyboardType: keyboard,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          Container(
             decoration: BoxDecoration(
               color: const Color(0xFFF7F7F7),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: CupertinoColors.separator),
+              border: Border.all(
+                color: showError ? CupertinoColors.systemRed : CupertinoColors.separator,
+                width: showError ? 1.4 : 1,
+              ),
             ),
-            style: GoogleFonts.poppins(fontSize: 13),
+            child: CupertinoTextField(
+              controller: controller,
+              keyboardType: keyboard,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: null,
+              style: GoogleFonts.poppins(fontSize: 13),
+            ),
           ),
+          if (showError)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Required',
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  color: CupertinoColors.systemRed,
+                ),
+              ),
+            ),
         ],
       ),
     );

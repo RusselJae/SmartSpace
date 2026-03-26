@@ -16,7 +16,7 @@ import '../../services/mysql_database_service.dart';
 import '../../services/wishlist_service.dart';
 import '../../widgets/toast.dart';
 import '../../utils/model_path_helper.dart';
-import 'ar_launcher.dart';
+import 'made_to_order_request_screen.dart';
 import 'sign_in.dart';
 import '../checkout/order_summary_screen.dart';
 
@@ -45,35 +45,30 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   late final WishlistService _wishlist;
   late bool _wishlisted;
 
-  // Color constants matching catalog_home.dart
-  static const Color _kBrown = Color(0xFF8D6E63); // Primary brown
-  static const Color _kOrange = Color(0xFFFF9800); // Primary orange
-  static const Color _kLight = Color(0xFFF4E6D4); // Light color
-  
+  // Brand / walnut palette (detail screen actions & accents).
+  /// Solid walnut for primary actions (no gradient).
+  static const Color _kWalnut = Color(0xFF5D4037);
+  /// Muted label for secondary lines (category, captions).
+  static const Color _kMuted = Color(0xFF757575);
+
+  /// Insets around the bottom purchase actions (breathing room).
+  static const double _kPurchaseBarVerticalPad = 12;
+  static const double _kPurchaseBarHorizontalPad = 12;
+  static const double _kPurchaseBarButtonHeight = 48;
+  /// Button fills: 80% transparent (20% opacity).
+  static const double _kPurchaseButtonFillOpacity = 0.2;
+  /// Scroll padding below reviews (reduced 90% from prior 4px).
+  static const double _kListScrollBottomGap = 0;
+
+  static final NumberFormat _pesoPriceFormat = NumberFormat('#,##0.00', 'en_US');
+
   // Reviews state
   List<Review> _reviews = [];
   bool _reviewsLoading = true;
   bool _hasPurchased = false;
   bool _purchaseCheckLoading = true;
   String? _reviewsError; // Track errors loading reviews
-
-  void _openArView() {
-    HapticFeedback.selectionClick();
-    // Directly launch Google's ARCore Scene Viewer with real-world dimensions
-    // This ensures furniture displays at accurate size in AR
-    Navigator.of(context, rootNavigator: true).push(
-      CupertinoPageRoute(
-        builder: (_) => ArLauncherScreen(
-          modelSrc: ModelPathHelper.normalize(widget.product.modelPath),
-          altText: widget.product.name,
-          realWidthMeters: widget.product.realWidthMeters,
-          realHeightMeters: widget.product.realHeightMeters,
-          realDepthMeters: widget.product.realDepthMeters,
-          modelBaseScale: widget.product.modelBaseScale,
-        ),
-      ),
-    );
-  }
+  bool _hasReviewed = false; // Current user has already reviewed this product
 
   @override
   void initState() {
@@ -107,8 +102,29 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       developer.log('📦 Product name: ${widget.product.name}');
       
       // Get ALL published reviews for this product, regardless of which user wrote them
-      final reviews = await _db.getReviewsByProductId(productId);
-      developer.log('📊 Received ${reviews.length} reviews from database for product $productId');
+        // includePending=true so we also show reviews that are not explicitly 'published'
+        // (e.g., legacy rows or reviews pending at the time of migration).
+        final reviewsByProductId = await _db.getReviewsByProductId(
+        productId,
+        includePending: true,
+      );
+
+        developer.log('📊 Received ${reviewsByProductId.length} reviews from database for product $productId');
+
+        // Fallback: if the productId-filtered query returns nothing but the user claims
+        // they've reviewed, attempt a broader fetch and filter on the client.
+        // This makes the UI robust against any backend query/filter mismatch.
+        List<Review> reviews = reviewsByProductId;
+        if (reviews.isEmpty) {
+          developer.log(
+            '⚠️ No reviews returned for productId=$productId. Falling back to getAllReviews() filter.',
+          );
+          final allReviews = await _db.getAllReviews();
+          reviews = allReviews.where((r) => r.productId == productId).toList();
+          developer.log(
+            '✅ Fallback found ${reviews.length} reviews for productId=$productId',
+          );
+        }
       
       // Log review details for debugging
       if (reviews.isNotEmpty) {
@@ -135,7 +151,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           _reviews = reviews;
           _reviewsLoading = false;
           _reviewsError = null;
+          final user = _auth.currentUser;
+          _hasReviewed = user != null && reviews.any((r) => r.userId == user.id);
         });
+        developer.log(
+          '🧾 Reviews state: productId=$productId reviews=${_reviews.length} currentUser=${_auth.currentUser?.id} hasReviewed=$_hasReviewed',
+        );
         developer.log('✅ Displaying ${_reviews.length} reviews in UI');
         
         // Log if no reviews found
@@ -205,23 +226,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
 
-    // Check if user has already reviewed this product
-    final existingReview = _reviews.firstWhere(
-      (r) => r.userId == user.id,
-      orElse: () => Review(
-        id: '',
-        productId: '',
-        productName: '',
-        userId: '',
-        userName: '',
-        rating: 0,
-        content: '',
-        status: '',
-        createdAt: DateTime.now(),
-      ),
-    );
-    if (existingReview.id.isNotEmpty) {
-      Toast.info(context, 'You have already reviewed this product');
+    // If the user already reviewed this product, do not open the composer again.
+    // The backend enforces the same rule; this is purely UX.
+    if (_hasReviewed) {
+      Toast.info(context, 'You already submitted a review for this product');
       return;
     }
 
@@ -238,14 +246,31 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     );
 
     if (review != null && mounted) {
-      // Reload reviews to show the new one
+      // Reload reviews to show the new one.
+      // If the refresh comes back empty (e.g., backend query/filter mismatch),
+      // still inject the returned review so the UI reflects the submission.
       await _loadReviews();
       if (!mounted) return;
+
+      setState(() {
+        final alreadyExists = _reviews.any((r) => r.id == review.id);
+        if (_reviews.isEmpty || !alreadyExists) {
+          _reviews.insert(0, review);
+        }
+        _hasReviewed = true;
+      });
       Toast.success(context, 'Review submitted!');
     }
   }
 
   void _inc() {
+    final maxQty = widget.product.inStock
+        ? widget.product.inventoryQty.clamp(1, 999999)
+        : 1;
+    if (_quantity >= maxQty) {
+      HapticFeedback.selectionClick();
+      return;
+    }
     setState(() {
       _quantity += 1;
       _quantityController.text = _quantity.toString();
@@ -289,6 +314,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
     
+    final maxQty = widget.product.inventoryQty.clamp(1, 999999);
+    final q = _quantity.clamp(1, maxQty);
+    if (q != _quantity) {
+      setState(() {
+        _quantity = q;
+        _quantityController.text = _quantity.toString();
+      });
+    }
     _cart.add(widget.product, quantity: _quantity);
     HapticFeedback.mediumImpact();
     Toast.success(
@@ -317,6 +350,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
     
+    final maxQty = widget.product.inventoryQty.clamp(1, 999999);
+    final q = _quantity.clamp(1, maxQty);
+    if (q != _quantity) {
+      setState(() {
+        _quantity = q;
+        _quantityController.text = _quantity.toString();
+      });
+    }
     _cart.add(widget.product, quantity: _quantity);
     HapticFeedback.mediumImpact();
     // Use rootNavigator to hide tab bar when navigating to order summary
@@ -333,57 +374,98 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return CupertinoPageScaffold(
       backgroundColor: Colors.white,
       navigationBar: CupertinoNavigationBar(
+        previousPageTitle: 'Back',
+        leading: CupertinoNavigationBarBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          color: _kWalnut,
+        ),
         middle: Text('Product', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
       ),
       child: SafeArea(
         bottom: false,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
+        child: Column(
           children: [
-            // ----------------------------
-            // 3D Card with overlay actions
-            // ----------------------------
-            Stack(
-              children: [
-                // 3D AR-enabled model view with Google's AR button
-                Container(
-                  height: 220,
-                  decoration: BoxDecoration(
-                    color: CupertinoColors.systemGrey4,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  clipBehavior: Clip.hardEdge,
-                  child: ModelViewer(
-                    key: ValueKey('${product.id}_detail'),
-                    backgroundColor: const Color(0xFFF9F4EF),
-                    src: ModelPathHelper.normalize(product.modelPath),
-                    alt: '3D model of ${product.name}',
-                    ar: true,
-                    arModes: const ['scene-viewer'],
-                    arPlacement: ArPlacement.floor,
-                    arScale: ArScale.auto,
-                    autoRotate: false,
-                    cameraControls: true,
-                    disableZoom: false,
-                    interactionPrompt: InteractionPrompt.none,
-                  ),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  0,
+                  16,
+                  // Clears floating bar: vertical inset + button row + small tail gap.
+                  _kListScrollBottomGap +
+                      MediaQuery.paddingOf(context).bottom +
+                      _kPurchaseBarVerticalPad +
+                      _kPurchaseBarButtonHeight,
                 ),
-                // Review button at top-right of the product card
-                // Only show if user has purchased the product
-                if (_hasPurchased && !_purchaseCheckLoading)
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: _OverlayIconButton(
-                      icon: CupertinoIcons.text_bubble,
-                      onPressed: () {
-                        HapticFeedback.selectionClick();
-                        _handleWriteReview();
-                      },
-                    ),
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        height: 220,
+                        decoration: BoxDecoration(
+                          color: CupertinoColors.systemGrey4,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        clipBehavior: Clip.hardEdge,
+                        child: ModelViewer(
+                          key: ValueKey('${product.id}_detail'),
+                          backgroundColor: const Color(0xFFF9F4EF),
+                          src: ModelPathHelper.normalize(product.modelPath),
+                          alt: '3D model of ${product.name}',
+                          ar: true,
+                          environmentImage: 'neutral',
+                          exposure: 1.35,
+                          shadowIntensity: 0.18,
+                          arModes: const ['scene-viewer'],
+                          arPlacement: ArPlacement.floor,
+                          arScale: ArScale.auto,
+                          autoRotate: false,
+                          cameraControls: true,
+                          disableZoom: false,
+                          interactionPrompt: InteractionPrompt.none,
+                        ),
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: CupertinoButton(
+                          padding: const EdgeInsets.all(8),
+                          minimumSize: Size.zero,
+                          color: Colors.transparent,
+                          borderRadius: BorderRadius.zero,
+                          onPressed: () {
+                            if (!_auth.isAuthenticated) {
+                              Navigator.of(context, rootNavigator: true).push(
+                                CupertinoPageRoute(
+                                  builder: (_) => const SignInScreen(),
+                                  fullscreenDialog: true,
+                                ),
+                              );
+                              Toast.info(context, 'Please sign in to like products');
+                              return;
+                            }
+                            final wasWishlisted = _wishlisted;
+                            setState(() {
+                              _wishlist.toggle(product);
+                              _wishlisted = _wishlist.isWishlisted(product.id);
+                              HapticFeedback.selectionClick();
+                            });
+                            if (!wasWishlisted && _wishlisted) {
+                              Toast.success(context, '${product.name} added to wishlist');
+                            } else if (wasWishlisted && !_wishlisted) {
+                              Toast.info(context, '${product.name} removed from wishlist');
+                            }
+                          },
+                          child: Icon(
+                            _wishlisted ? CupertinoIcons.heart_solid : CupertinoIcons.heart,
+                            size: 22,
+                            color: _wishlisted ? CupertinoColors.systemRed : _kWalnut,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-              ],
-            ),
             const SizedBox(height: 8),
             Text(
               'Tip: Use AR inside the card. WebXR button lights up when browser-based AR is available.',
@@ -395,421 +477,606 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            // ----------------------------
-            // Title + Wishlist toggle on right
-            // ----------------------------
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    product.name,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          product.name,
+                          style: GoogleFonts.poppins(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
+                            decoration: TextDecoration.none,
+                          ),
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        _formatPesoPrice(product.price),
+                        style: GoogleFonts.poppins(
+                          color: Colors.black,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    product.category,
                     style: GoogleFonts.poppins(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                      color: _kMuted,
                       decoration: TextDecoration.none,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                const SizedBox(width: 8),
-                CupertinoButton(
-                  padding: const EdgeInsets.all(6),
-                  minimumSize: Size.zero,
-                  color: _wishlisted 
-                      ? CupertinoColors.systemRed.withValues(alpha: 0.15)
-                      : Colors.white.withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(18),
-                  onPressed: () {
-                    final wasWishlisted = _wishlisted;
-                    setState(() {
-                      _wishlist.toggle(product);
-                      _wishlisted = _wishlist.isWishlisted(product.id);
-                      HapticFeedback.selectionClick();
-                    });
-                    if (!wasWishlisted && _wishlisted) {
-                      Toast.success(context, '${product.name} added to wishlist');
-                    } else if (wasWishlisted && !_wishlisted) {
-                      Toast.info(context, '${product.name} removed from wishlist');
-                    }
-                  },
-                  child: Icon(
-                    _wishlisted ? CupertinoIcons.heart_solid : CupertinoIcons.heart,
-                    size: 18,
-                    color: _wishlisted 
-                        ? CupertinoColors.systemRed 
-                        : const Color(0xFF8D6E63),
+                  const SizedBox(height: 12),
+                  CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    onPressed: () {
+                      if (!_auth.isAuthenticated) {
+                        Navigator.of(context, rootNavigator: true).push(
+                          CupertinoPageRoute(
+                            builder: (_) => const SignInScreen(),
+                            fullscreenDialog: true,
+                          ),
+                        );
+                        Toast.info(context, 'Please sign in first');
+                        return;
+                      }
+                      Navigator.of(context, rootNavigator: true).push(
+                        CupertinoPageRoute(
+                          builder: (_) => MadeToOrderRequestScreen(
+                            prefilledProductName: product.name,
+                          ),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        border: Border.all(color: _kWalnut.withValues(alpha: 0.55), width: 1.3),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(CupertinoIcons.wand_stars, color: _kWalnut, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Customize / Made to Order',
+                            style: GoogleFonts.poppins(
+                              color: _kWalnut,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13.5,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // ----------------------------
-            // Product Image Gallery
-            // ----------------------------
-            if (product.imageUrls.isNotEmpty)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+                  const SizedBox(height: 16),
+                  _buildStockQuantityBlock(product),
+                  const SizedBox(height: 20),
                   Text(
-                    'Product Images',
+                    'Description',
                     style: GoogleFonts.poppins(
                       fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       color: Colors.black,
                       decoration: TextDecoration.none,
                     ),
                   ),
                   const SizedBox(height: 8),
-                  SizedBox(
-                    height: 100,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: product.imageUrls.length > 10 ? 10 : product.imageUrls.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final imageUrl = product.imageUrls[index];
-                        return GestureDetector(
-                          onTap: () {
-                            // Show full screen image viewer
-                            Navigator.of(context).push(
-                              CupertinoPageRoute(
-                                builder: (_) => _FullScreenImageViewer(
-                                  images: product.imageUrls,
-                                  initialIndex: index,
-                                ),
-                              ),
-                            );
-                          },
-                          child: Container(
-                            width: 100,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: CupertinoColors.separator.withValues(alpha: 0.2),
-                                width: 1,
-                              ),
-                            ),
-                            clipBehavior: Clip.hardEdge,
-                            child: Image.network(
-                              imageUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: CupertinoColors.systemGrey4,
-                                  child: const Icon(
-                                    CupertinoIcons.photo,
-                                    color: CupertinoColors.systemGrey,
-                                  ),
-                                );
-                              },
-                              loadingBuilder: (context, child, loadingProgress) {
-                                if (loadingProgress == null) return child;
-                                return Container(
-                                  color: CupertinoColors.systemGrey4,
-                                  child: const Center(
-                                    child: CupertinoActivityIndicator(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            const SizedBox(height: 6),
-            Text(
-              '₱${product.price.toStringAsFixed(2)}',
-              style: GoogleFonts.poppins(
-                color: Colors.black,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                decoration: TextDecoration.none,
-              ),
-            ),
-            const SizedBox(height: 12),
-            // Quantity controls with input field matching catalog_home.dart styling
-            Row(
-              children: [
-                Text(
-                  'Quantity',
-                  style: GoogleFonts.poppins(
-                    color: Colors.black,
-                    fontSize: 16,
-                    fontWeight: FontWeight.normal,
-                    decoration: TextDecoration.none,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Minus button matching catalog_home.dart style
-                _QtyButton(icon: CupertinoIcons.minus, onPressed: _dec),
-                const SizedBox(width: 8),
-                // Input field for quantity
-                Container(
-                  width: 80,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _kBrown.withValues(alpha: 0.3),
-                      width: 1,
-                    ),
-                  ),
-                  child: CupertinoTextField(
-                    controller: _quantityController,
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
+                  Text(
+                    product.description,
                     style: GoogleFonts.poppins(
-                      color: Colors.black,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      color: Colors.black87,
+                      fontWeight: FontWeight.normal,
+                      height: 1.45,
                       decoration: TextDecoration.none,
                     ),
-                    decoration: const BoxDecoration(),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    onChanged: (value) {
-                      // Validate and update quantity
-                      final newQuantity = int.tryParse(value);
-                      if (newQuantity != null && newQuantity >= 1) {
-                        setState(() {
-                          _quantity = newQuantity;
-                        });
-                      } else if (value.isEmpty) {
-                        // Allow empty temporarily while typing
-                      } else {
-                        // Invalid input, revert
-                        _quantityController.text = _quantity.toString();
-                        _quantityController.selection = TextSelection.fromPosition(
-                          TextPosition(offset: _quantityController.text.length),
-                        );
-                      }
-                    },
-                    onSubmitted: (value) {
-                      // Ensure valid quantity on submit
-                      final newQuantity = int.tryParse(value);
-                      if (newQuantity == null || newQuantity < 1) {
-                        _quantityController.text = _quantity.toString();
-                      } else {
-                        setState(() {
-                          _quantity = newQuantity;
-                          _quantityController.text = _quantity.toString();
-                        });
-                      }
-                      _quantityController.selection = TextSelection.fromPosition(
-                        TextPosition(offset: _quantityController.text.length),
-                      );
-                    },
                   ),
-                ),
-                const SizedBox(width: 8),
-                // Plus button matching catalog_home.dart style
-                _QtyButton(icon: CupertinoIcons.plus, onPressed: _inc),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(
-            '${product.description}\n\nSpecifications:\n- Category: ${product.category}\n- Style: ${product.style}\n- Material: ${product.material}\n- Color: ${product.color}',
-              style: GoogleFonts.poppins(
-                fontSize: 15,
-                color: Colors.black,
-                fontWeight: FontWeight.normal,
-                decoration: TextDecoration.none,
+                  const SizedBox(height: 20),
+                  _buildSpecificationsSection(product),
+                  const SizedBox(height: 16),
+                  _buildDeliveryEstimateAboveGallery(),
+                  if (product.imageUrls.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _buildProductImageGallery(product),
+                  ],
+                  const SizedBox(height: 20),
+                  _buildReviewsSection(product),
+                  const SizedBox(height: 0),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            Text(
-              '⭐ ${product.rating.toStringAsFixed(1)} (${product.reviewCount.toString()} reviews)',
-              style: GoogleFonts.poppins(
-                fontSize: 15,
-                color: Colors.black,
-                fontWeight: FontWeight.normal,
-                decoration: TextDecoration.none,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Availability with stock quantity when out of stock
-            Text(
-              product.inStock 
-                  ? 'Availability: In stock (${product.inventoryQty} available)\nDelivery estimate: 3-5 days'
-                  : 'Availability: Out of stock (${product.inventoryQty} available)\nDelivery estimate: 3-5 days',
-              style: GoogleFonts.poppins(
-                fontSize: 15,
-                color: product.inStock ? Colors.black : Colors.red.shade700,
-                fontWeight: FontWeight.normal,
-                decoration: TextDecoration.none,
-              ),
-            ),
-            const SizedBox(height: 20),
-            // ----------------------------
-            // Bottom action buttons (non-floating)
-            // ----------------------------
-            Row(
-              children: [
-                // "Add to Cart" button matching catalog_home.dart filter button style
-                Expanded(
-                  child: Container(
-                    height: 48,
-                    decoration: BoxDecoration(
-                      // Use _kLight background matching catalog_home.dart filter button
-                      color: product.inStock ? _kLight : CupertinoColors.systemGrey4,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: product.inStock 
-                            ? _kBrown.withValues(alpha: 0.3) 
-                            : Colors.grey.withValues(alpha: 0.3), 
-                        width: 1,
-                      ),
-                    ),
-                    child: CupertinoButton(
-                      padding: EdgeInsets.zero,
-                      onPressed: product.inStock ? _addToCart : null,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            CupertinoIcons.cart, 
-                            size: 20, 
-                            color: product.inStock ? _kBrown : Colors.grey,
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Add to Cart',
-                            style: GoogleFonts.poppins(
-                              color: product.inStock ? _kBrown : Colors.grey,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // "Buy Now" button with gradient matching catalog_home.dart style
-                Expanded(
-                  child: Container(
-                    height: 48,
-                    decoration: BoxDecoration(
-                      // Gradient matching catalog_home.dart button style
-                      gradient: product.inStock
-                          ? const LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [_kBrown, _kOrange],
-                            )
-                          : null,
-                      color: product.inStock ? null : CupertinoColors.systemGrey4,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: product.inStock
-                          ? [
-                              BoxShadow(
-                                color: _kOrange.withValues(alpha: 0.35),
-                                blurRadius: 12,
-                                offset: const Offset(0, 6),
-                                spreadRadius: 0,
-                              ),
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.1),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
-                              ),
-                            ]
-                          : [],
-                    ),
-                    child: CupertinoButton(
-                      padding: EdgeInsets.zero,
-                      onPressed: product.inStock ? _buyNow : null,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            CupertinoIcons.creditcard, 
-                            size: 20, 
-                            color: product.inStock ? CupertinoColors.white : Colors.grey,
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Buy Now',
-                            style: GoogleFonts.poppins(
-                              color: product.inStock ? CupertinoColors.white : Colors.grey,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            // ----------------------------
-            // Reviews Section (moved below buttons)
-            // ----------------------------
-            _buildReviewsSection(),
-            const SizedBox(height: 8),
+            _buildPurchaseBar(context, product),
           ],
         ),
       ),
     );
   }
 
-  /// Build the reviews section showing all published reviews for this product
-  Widget _buildReviewsSection() {
+  /// Specs: category removed; height / length / depth merged into this list (no dimensions card).
+  Widget _buildSpecificationsSection(Product product) {
+    final h = _formatMetersAsCm(product.realHeightMeters);
+    final len = _formatMetersAsCm(product.realDepthMeters);
+    final depth = _formatMetersAsCm(product.realWidthMeters);
+    final lines = <String>[
+      if (h != '-') '- Height: $h',
+      if (len != '-') '- Length: $len',
+      if (depth != '-') '- Depth: $depth',
+      '- Style: ${product.style}',
+      '- Material: ${product.material}',
+      '- Color: ${product.color}',
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
       children: [
-        // Header row with Reviews title and Write Review button
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // Reviews title
-            Expanded(
-              child: Text(
-                'Reviews (${_reviews.length})',
+        Text(
+          'Specifications',
+          style: GoogleFonts.poppins(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Colors.black,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          lines.join('\n'),
+          style: GoogleFonts.poppins(
+            fontSize: 15,
+            color: Colors.black,
+            fontWeight: FontWeight.normal,
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Shown directly above the product photo strip (bold label + days on the next line).
+  Widget _buildDeliveryEstimateAboveGallery() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Delivery Estimate',
+          style: GoogleFonts.poppins(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Colors.black,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '3-5 days',
+          style: GoogleFonts.poppins(
+            fontSize: 15,
+            fontWeight: FontWeight.normal,
+            color: Colors.black87,
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProductImageGallery(Product product) {
+    return SizedBox(
+      height: 100,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: product.imageUrls.length > 10 ? 10 : product.imageUrls.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final imageUrl = product.imageUrls[index];
+          return GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                CupertinoPageRoute(
+                  builder: (_) => _FullScreenImageViewer(
+                    images: product.imageUrls,
+                    initialIndex: index,
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              width: 100,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: CupertinoColors.separator.withValues(alpha: 0.2),
+                  width: 1,
+                ),
+              ),
+              clipBehavior: Clip.hardEdge,
+              child: Image.network(
+                imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    color: CupertinoColors.systemGrey4,
+                    child: const Icon(
+                      CupertinoIcons.photo,
+                      color: CupertinoColors.systemGrey,
+                    ),
+                  );
+                },
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Container(
+                    color: CupertinoColors.systemGrey4,
+                    child: const Center(
+                      child: CupertinoActivityIndicator(),
+                    ),
+                  );
+                },
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Left: bold "Available Stock" + count. Right: quantity stepper (same row).
+  Widget _buildStockQuantityBlock(Product product) {
+    final maxQty = product.inStock ? product.inventoryQty.clamp(1, 999999) : 1;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Available Stock',
                 style: GoogleFonts.poppins(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
                   color: Colors.black,
                   decoration: TextDecoration.none,
                 ),
               ),
+              const SizedBox(height: 4),
+              Text(
+                '${product.inventoryQty}',
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: product.inStock ? _kWalnut : Colors.red.shade700,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _QtyButton(
+              icon: CupertinoIcons.minus,
+              onPressed: product.inStock ? _dec : null,
+              walnutStyle: true,
             ),
-            // Write Review button - only show if user has purchased
-            if (_hasPurchased && !_purchaseCheckLoading)
-              CupertinoButton(
+            const SizedBox(width: 6),
+            Container(
+              width: 44,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.zero,
+                border: Border.all(
+                  color: _kWalnut.withValues(alpha: 0.35),
+                  width: 1,
+                ),
+              ),
+              child: CupertinoTextField(
+                controller: _quantityController,
+                enabled: product.inStock,
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.poppins(
+                  color: Colors.black,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.none,
+                ),
+                decoration: const BoxDecoration(),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                onChanged: (value) {
+                  final newQuantity = int.tryParse(value);
+                  if (newQuantity != null && newQuantity >= 1) {
+                    final capped = newQuantity > maxQty ? maxQty : newQuantity;
+                    setState(() {
+                      _quantity = capped;
+                      if (capped != newQuantity) {
+                        _quantityController.text = _quantity.toString();
+                        _quantityController.selection = TextSelection.fromPosition(
+                          TextPosition(offset: _quantityController.text.length),
+                        );
+                      }
+                    });
+                  } else if (value.isEmpty) {
+                  } else {
+                    _quantityController.text = _quantity.toString();
+                    _quantityController.selection = TextSelection.fromPosition(
+                      TextPosition(offset: _quantityController.text.length),
+                    );
+                  }
+                },
+                onSubmitted: (value) {
+                  final newQuantity = int.tryParse(value);
+                  if (newQuantity == null || newQuantity < 1) {
+                    _quantityController.text = _quantity.toString();
+                  } else {
+                    final capped = newQuantity > maxQty ? maxQty : newQuantity;
+                    setState(() {
+                      _quantity = capped;
+                      _quantityController.text = _quantity.toString();
+                    });
+                  }
+                  _quantityController.selection = TextSelection.fromPosition(
+                    TextPosition(offset: _quantityController.text.length),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 6),
+            _QtyButton(
+              icon: CupertinoIcons.plus,
+              onPressed: product.inStock ? _inc : null,
+              walnutStyle: true,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Full-width bar pinned to the bottom; square buttons, solid walnut Buy Now.
+  Widget _buildPurchaseBar(BuildContext context, Product product) {
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(color: CupertinoColors.separator.resolveFrom(context)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      padding: EdgeInsets.fromLTRB(
+        _kPurchaseBarHorizontalPad,
+        _kPurchaseBarVerticalPad,
+        _kPurchaseBarHorizontalPad,
+        bottomInset + _kPurchaseBarVerticalPad,
+      ),
+      child: SizedBox(
+        height: _kPurchaseBarButtonHeight,
+        child: Row(
+          children: [
+            Expanded(
+              child: CupertinoButton(
                 padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                onPressed: _handleWriteReview,
-                child: Text(
-                  'Write Review',
-                  style: GoogleFonts.poppins(
-                    fontSize: 14,
-                    color: const Color(0xFF8D6E63),
-                    fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.none,
+                borderRadius: BorderRadius.zero,
+                onPressed: product.inStock ? _addToCart : null,
+                color: Colors.transparent,
+                child: Container(
+                  height: _kPurchaseBarButtonHeight,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: product.inStock
+                        ? Colors.white.withValues(alpha: _kPurchaseButtonFillOpacity)
+                        : CupertinoColors.systemGrey5
+                            .withValues(alpha: _kPurchaseButtonFillOpacity),
+                    border: Border.all(
+                      color: product.inStock ? _kWalnut : Colors.grey.shade400,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        CupertinoIcons.cart,
+                        size: 20,
+                        color: product.inStock ? _kWalnut : Colors.grey,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Add to Cart',
+                        style: GoogleFonts.poppins(
+                          color: product.inStock ? _kWalnut : Colors.grey,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: CupertinoButton(
+                padding: EdgeInsets.zero,
+                borderRadius: BorderRadius.zero,
+                onPressed: product.inStock ? _buyNow : null,
+                color: Colors.transparent,
+                child: Container(
+                  height: _kPurchaseBarButtonHeight,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: product.inStock
+                        ? _kWalnut
+                        : CupertinoColors.systemGrey4,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        CupertinoIcons.creditcard,
+                        size: 20,
+                        color: product.inStock ? Colors.white : Colors.grey,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Buy Now',
+                        style: GoogleFonts.poppins(
+                          color: product.inStock ? Colors.white : Colors.grey,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 16),
+      ),
+    );
+  }
+
+  /// Pesos with thousands separators, e.g. ₱15,000.00
+  String _formatPesoPrice(double amount) => '₱${_pesoPriceFormat.format(amount)}';
+
+  /// Formats meters -> centimeters and avoids ugly trailing zeros.
+  /// Returns an empty string if `meters` is null/invalid.
+  String _formatMetersAsCm(double? meters) {
+    if (meters == null || meters <= 0) return '-';
+
+    final cm = meters * 100;
+    final rounded = cm.round();
+    final diff = (cm - rounded).abs();
+
+    // If it's effectively an integer, show as `120 cm` instead of `120.0 cm`.
+    if (diff < 0.01) {
+      return '$rounded cm';
+    }
+    return '${cm.toStringAsFixed(1)} cm';
+  }
+
+  /// Reviews list + aggregate rating in the header; composer CTA sits after the last (oldest) card.
+  Widget _buildReviewsSection(Product product) {
+    // Newest first so the last visible card is the oldest — "Write a review" follows it at the bottom.
+    final sorted = List<Review>.from(_reviews)
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    final reviewsCount = _reviews.length;
+    final averageRating = reviewsCount == 0
+        ? 0.0
+        : _reviews.fold<double>(0.0, (sum, review) => sum + review.rating) / reviewsCount;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 10,
+                runSpacing: 6,
+                children: [
+                  Text(
+                    'Reviews ($reviewsCount)',
+                    style: GoogleFonts.poppins(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        CupertinoIcons.star_fill,
+                        size: 17,
+                        color: Color(0xFFFFC107),
+                      ),
+                      Text(
+                        ' ${averageRating.toStringAsFixed(1)} ',
+                        style: GoogleFonts.poppins(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                      Text(
+                        '($reviewsCount reviews)',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: _kMuted,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_hasPurchased && !_purchaseCheckLoading && _hasReviewed) ...[
+          // Inline message in the reviews section so the user sees *why* the composer is disabled.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4E6D4).withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFF8D6E63).withValues(alpha: 0.25),
+              ),
+            ),
+            child: Text(
+              'You already submitted a review for this product. Thank you.',
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF6D4C41),
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         // Reviews content area with proper width constraints
         if (_reviewsLoading)
           const Center(
             child: Padding(
-              padding: EdgeInsets.all(24.0),
+              padding: EdgeInsets.all(16.0),
               child: CupertinoActivityIndicator(),
             ),
           )
@@ -901,8 +1168,46 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             ),
           )
         else
-          // Display all reviews with proper width constraints
-          ..._reviews.map((review) => _buildReviewCard(review)),
+          ...sorted.map((review) => _buildReviewCard(review)),
+        if (!_reviewsLoading && _reviewsError == null) ...[
+          // Add clear breathing room between the reviews content and CTA.
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Builder(
+              builder: (context) {
+                final canReview =
+                    _hasPurchased && !_purchaseCheckLoading && !_hasReviewed;
+                return CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  onPressed: canReview ? _handleWriteReview : null,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: canReview ? _kWalnut : Colors.grey.shade400,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Text(
+                      'Write a review',
+                      style: GoogleFonts.poppins(
+                        fontSize: 15,
+                        color: canReview ? _kWalnut : Colors.grey,
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          // Keep this nearly flush so there is no visible "dead gap"
+          // between the CTA and the bottom of the reviews block.
+          const SizedBox(height: 0),
+        ],
       ],
     );
   }
@@ -911,11 +1216,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Widget _buildReviewCard(Review review) {
     return Container(
       width: double.infinity, // Ensure full width
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 2),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: CupertinoColors.systemGrey6,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _kWalnut.withValues(alpha: 0.18),
+          width: 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -991,42 +1300,44 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 }
 
 class _QtyButton extends StatelessWidget {
-  const _QtyButton({required this.icon, required this.onPressed});
-  final IconData icon;
-  final VoidCallback onPressed;
+  const _QtyButton({
+    required this.icon,
+    required this.onPressed,
+    this.walnutStyle = false,
+  });
 
-  // Color constants matching catalog_home.dart
-  static const Color _kBrown = Color(0xFF8D6E63); // Primary brown
-  static const Color _kLight = Color(0xFFF4E6D4); // Light color
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool walnutStyle;
+
+  static const Color _kBrown = Color(0xFF8D6E63);
+  static const Color _kLight = Color(0xFFF4E6D4);
+  static const Color _kWalnut = Color(0xFF5D4037);
 
   @override
   Widget build(BuildContext context) {
+    if (walnutStyle) {
+      final enabled = onPressed != null;
+      return CupertinoButton(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: Size.zero,
+        color: enabled ? _kWalnut : CupertinoColors.systemGrey4,
+        borderRadius: BorderRadius.zero,
+        onPressed: onPressed,
+        child: Icon(
+          icon,
+          size: 18,
+          color: enabled ? Colors.white : Colors.grey,
+        ),
+      );
+    }
     return CupertinoButton(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       minimumSize: Size.zero,
-      // Use _kLight background matching catalog_home.dart filter button style
       color: _kLight,
       borderRadius: BorderRadius.circular(10),
       onPressed: onPressed,
       child: Icon(icon, size: 18, color: _kBrown),
-    );
-  }
-}
-
-class _OverlayIconButton extends StatelessWidget {
-  const _OverlayIconButton({required this.icon, required this.onPressed});
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoButton(
-      padding: const EdgeInsets.all(6),
-      minimumSize: Size.zero,
-      color: const Color(0xFFBCAAA4),
-      borderRadius: BorderRadius.circular(18),
-      onPressed: onPressed,
-      child: Icon(icon, size: 18, color: const Color(0xFF8D6E63)),
     );
   }
 }

@@ -4,10 +4,18 @@ import { apiRouter } from './routes';
 import { config } from './config/env';
 import { errorHandler } from './middleware/error_handler';
 import { ensureUploadsDirectories, uploadsRoot } from './utils/uploads';
+import { paymongoWebhookRouter } from './routes/paymongo_webhook_route';
 
 export const createApp = (): Application => {
   const app = express();
   ensureUploadsDirectories();
+
+  // PayMongo webhooks require raw body for HMAC verification — register before express.json()
+  app.use(
+    '/api/webhooks/paymongo',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    paymongoWebhookRouter,
+  );
   
   // Enhanced CORS configuration for Flutter Web and mobile devices
   // Allows connections from localhost, local network IPv4 addresses, and mobile apps

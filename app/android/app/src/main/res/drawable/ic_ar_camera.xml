@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple filled camera icon (white) for the AR action bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M20,5h-3.17l-1.84-2H9.01l-1.84,2H4a2,2,0,0,0-2,2v13a2,2,0,0,0,2,2h16a2,2,0,0,0,2-2V7a2,2,0,0,0-2-2zM12,18a6,6,0,1,1,6-6,6,6,0,0,1-6,6z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,12a1.9,1.9,0,1,0,1.9,1.9A1.9,1.9,0,0,0,12,12z" />
+</vector>
+

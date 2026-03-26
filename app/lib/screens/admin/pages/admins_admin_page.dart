@@ -513,6 +513,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
   final TextEditingController _password = TextEditingController();
   final TextEditingController _fullName = TextEditingController();
   bool _obscurePassword = true;
+  bool _submitting = false;
 
   @override
   void dispose() {
@@ -523,6 +524,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
   }
 
   void _submit() {
+    if (_submitting) return;
     if (_email.text.trim().isEmpty ||
         _password.text.isEmpty ||
         _fullName.text.trim().isEmpty) {
@@ -551,7 +553,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
     Widget? suffixIcon,
   }) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: controller,
         keyboardType: keyboardType,
@@ -584,50 +586,132 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Add admin'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
+    // Constrained modal matching admin container—not full screen.
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 540),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildField(_email, 'Email *', keyboardType: TextInputType.emailAddress),
-              _buildField(
-                _password,
-                'Password *',
-                obscureText: _obscurePassword,
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscurePassword ? Icons.visibility : Icons.visibility_off,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _obscurePassword = !_obscurePassword;
-                    });
-                  },
-                ),
-              ),
-              _buildField(_fullName, 'Full name *'),
-              const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
                 decoration: BoxDecoration(
-                  color: Colors.blue.withAlpha(30),
-                  borderRadius: BorderRadius.circular(8),
+                  color: const Color(0xFFF8F8F8),
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline, size: 18, color: Colors.blue),
-                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () => Navigator.of(context).pop(),
+                      tooltip: 'Close',
+                    ),
                     Expanded(
                       child: Text(
-                        'Password must be at least 6 characters. Credentials cannot be changed after creation.',
-                        style: GoogleFonts.poppins(
-                          fontSize: 12,
-                          color: Colors.blue[900],
+                        'Add admin',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildField(_email, 'Email *', keyboardType: TextInputType.emailAddress),
+                      _buildField(
+                        _password,
+                        'Password *',
+                        obscureText: _obscurePassword,
+                        suffixIcon: IconButton(
+                          icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
                         ),
                       ),
+                      _buildField(_fullName, 'Full name *'),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withAlpha(30),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline, size: 18, color: Colors.blue),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Password must be at least 6 characters. Credentials cannot be changed after creation.',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 12,
+                                  color: Colors.blue[900],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: _submitting
+                          ? null
+                          : () async {
+                              setState(() => _submitting = true);
+                              try {
+                                _submit();
+                              } finally {
+                                if (mounted) setState(() => _submitting = false);
+                              }
+                            },
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Create'),
                     ),
                   ],
                 ),
@@ -636,19 +720,6 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF8D6E63),
-          ),
-          child: const Text('Create'),
-        ),
-      ],
     );
   }
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
 
 /// Toast notification utility for showing messages
 /// 
@@ -137,7 +136,6 @@ class _ToastWidgetState extends State<_ToastWidget>
   late Animation<Offset> _slideAnimation;
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
-  final DateTime _timestamp = DateTime.now();
 
   @override
   void initState() {
@@ -197,24 +195,6 @@ class _ToastWidgetState extends State<_ToastWidget>
     super.dispose();
   }
 
-  /// Formats the timestamp as a relative time string
-  /// 
-  /// Returns "just now", "X mins ago", etc. for user-friendly display
-  String _formatTimestamp() {
-    final now = DateTime.now();
-    final difference = now.difference(_timestamp);
-
-    if (difference.inSeconds < 60) {
-      return 'just now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes} min${difference.inMinutes == 1 ? '' : 's'} ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours} hour${difference.inHours == 1 ? '' : 's'} ago';
-    } else {
-      return DateFormat('MMM d').format(_timestamp);
-    }
-  }
-
   /// Handles manual dismissal via close button
   /// 
   /// Animates out and then removes the overlay entry
@@ -268,97 +248,51 @@ class _ToastWidgetState extends State<_ToastWidget>
                     ),
                   ],
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header section with icon, title, timestamp, and close button
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          // Colored icon square (rounded corners)
-                          Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              color: widget.accentColor,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Icon(
-                              widget.icon ?? CupertinoIcons.info_circle_fill,
-                              color: Colors.white,
-                              size: 16,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          // Title text
-                          Expanded(
-                            child: Text(
-                              widget.title ?? 'Notification',
-                              style: GoogleFonts.poppins(
-                                color: const Color(0xFF1A1A1A),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                decoration: TextDecoration.none,
-                              ),
-                            ),
-                          ),
-                          // Timestamp
-                          Text(
-                            _formatTimestamp(),
-                            style: GoogleFonts.poppins(
-                              color: const Color(0xFF8E8E93),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w400,
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          // Close button
-                          GestureDetector(
-                            onTap: _dismiss,
-                            child: Container(
-                              padding: const EdgeInsets.all(3),
-                              child: Icon(
-                                CupertinoIcons.xmark,
-                                size: 14,
-                                color: const Color(0xFF8E8E93),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Divider line between header and body
-                    Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: const Color(0xFFE5E5EA),
-                      indent: 12,
-                      endIndent: 12,
-                    ),
-                    // Message body section
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Text(
-                        widget.message,
-                        style: GoogleFonts.poppins(
-                          color: const Color(0xFF1A1A1A),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w400,
-                          decoration: TextDecoration.none,
-                          height: 1.4,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: widget.accentColor,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Icon(
+                          widget.icon ?? CupertinoIcons.info_circle_fill,
+                          color: Colors.white,
+                          size: 16,
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          widget.message,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF1A1A1A),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            decoration: TextDecoration.none,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: _dismiss,
+                        child: const Padding(
+                          padding: EdgeInsets.all(2),
+                          child: Icon(
+                            CupertinoIcons.xmark,
+                            size: 14,
+                            color: Color(0xFF8E8E93),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

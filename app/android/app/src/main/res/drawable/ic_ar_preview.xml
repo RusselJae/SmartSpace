@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple filled "3D preview" icon (cube-ish) (white) for the AR action bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Cube top -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12 2l9 5-9 5-9-5 9-5z" />
+    <!-- Cube left -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3 7v10l9 5V12L3 7z" />
+    <!-- Cube right -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M21 7v10l-9 5V12l9-5z" />
+</vector>
+

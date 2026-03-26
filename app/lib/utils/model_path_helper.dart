@@ -7,32 +7,57 @@ class ModelPathHelper {
   /// 
   /// - Asset paths (assets/...) are returned as-is
   /// - `/uploads/...` paths are converted to absolute URLs using API_BASE_URL
-  /// - Empty paths default to assets/chair.glb
+  /// - Empty paths return an empty string (so callers can fall back)
   static String normalize(String modelPath) {
     if (modelPath.isEmpty) {
-      return 'assets/chair.glb'; // Default fallback
+      return '';
     }
 
+    // Normalize separators first so Windows-style paths can be recognized.
+    final raw = modelPath.trim().replaceAll('\\', '/');
+
     // If it's an asset path, return as-is
-    if (modelPath.startsWith('assets/')) {
-      return modelPath;
+    if (raw.startsWith('assets/')) {
+      return raw;
+    }
+
+    // If already absolute URL, keep as-is.
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return raw;
     }
 
     // If it's a backend uploads path (relative), prefix with API base host
-    if (modelPath.startsWith('/uploads') || modelPath.startsWith('uploads/')) {
+    if (raw.startsWith('/uploads') || raw.startsWith('uploads/')) {
       final base = ApiConfig.baseUrl.replaceAll('/api', '');
       // Ensure we have exactly one leading slash before 'uploads'
-      final normalizedPath = modelPath.startsWith('/') ? modelPath : '/$modelPath';
+      final normalizedPath = raw.startsWith('/') ? raw : '/$raw';
       return '$base$normalizedPath';
     }
 
+    // Handle local-ish backend paths such as:
+    // - backend/uploads/models/foo.glb
+    // - C:/.../backend/uploads/models/foo.glb
+    // by trimming to /uploads/... and prefixing API host.
+    if (raw.contains('/backend/uploads/')) {
+      final idx = raw.indexOf('/backend/uploads/');
+      final tail = raw.substring(idx + '/backend'.length); // /uploads/...
+      final base = ApiConfig.baseUrl.replaceAll('/api', '');
+      return '$base$tail';
+    }
+    if (raw.contains('backend/uploads/')) {
+      final idx = raw.indexOf('backend/uploads/');
+      final tail = raw.substring(idx + 'backend'.length); // /uploads/...
+      final base = ApiConfig.baseUrl.replaceAll('/api', '');
+      return '$base/${tail.replaceFirst(RegExp(r'^/+'), '')}';
+    }
+
     // If it doesn't start with assets/, assume it should
-    if (!modelPath.contains('/')) {
-      return 'assets/$modelPath';
+    if (!raw.contains('/')) {
+      return 'assets/$raw';
     }
 
     // Default: return as-is (might be a full path)
-    return modelPath;
+    return raw;
   }
 }
 

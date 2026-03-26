@@ -28,12 +28,18 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
   String _searchQuery = '';
   String? _error;
 
+  static const int _pageSize = 10;
+  int _pageIndex = 0;
+
   @override
   void initState() {
     super.initState();
     _loadProducts();
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.toLowerCase());
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+        _pageIndex = 0;
+      });
     });
   }
 
@@ -271,6 +277,14 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filteredProducts;
+
+    final totalCount = filtered.length;
+    final pageCount = (totalCount / _pageSize).ceil();
+    final safePageIndex = pageCount <= 1 ? 0 : _pageIndex.clamp(0, pageCount - 1).toInt();
+    final start = safePageIndex * _pageSize;
+    final end = (start + _pageSize) > totalCount ? totalCount : (start + _pageSize);
+    final pageItems = totalCount == 0 ? const <Product>[] : filtered.sublist(start, end);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -347,7 +361,10 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
               const ButtonSegment<String>(value: 'archived', label: Text('Archived')),
             ],
             selected: {_segment},
-            onSelectionChanged: (Set<String> values) => setState(() => _segment = values.first),
+            onSelectionChanged: (Set<String> values) => setState(() {
+              _segment = values.first;
+              _pageIndex = 0;
+            }),
           ),
         ),
         const SizedBox(height: 8),
@@ -374,10 +391,10 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                           const Divider(height: 1),
                           Expanded(
                             child: ListView.separated(
-                              itemCount: filtered.length,
+                              itemCount: pageItems.length,
                               separatorBuilder: (_, __) => const Divider(height: 1),
                               itemBuilder: (context, index) {
-                                final product = filtered[index];
+                                final product = pageItems[index];
                                 return _ProductRow(
                                   product: product,
                                   onEdit: () => _editProduct(product),
@@ -388,6 +405,37 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                               },
                             ),
                           ),
+                          if (pageCount > 1)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    'Page ${safePageIndex + 1} of $pageCount',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black54,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_left),
+                                    onPressed: safePageIndex > 0
+                                        ? () => setState(() => _pageIndex = safePageIndex - 1)
+                                        : null,
+                                    tooltip: 'Previous page',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_right),
+                                    onPressed: safePageIndex < pageCount - 1
+                                        ? () => setState(() => _pageIndex = safePageIndex + 1)
+                                        : null,
+                                    tooltip: 'Next page',
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -453,17 +501,23 @@ class _ProductRow extends StatelessWidget {
                   height: 36,
                   width: 36,
                   decoration: BoxDecoration(
-                    color: AdminPalette.clay,
                     borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: AdminPalette.clay.withValues(alpha: 0.45),
+                      width: 1,
+                    ),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: (product.modelPath.isNotEmpty && product.modelPath != 'assets/chair.glb')
+                  child: product.modelPath.isNotEmpty
                       ? ModelViewer(
                           key: ValueKey('${product.id}_admin_preview'),
-                          backgroundColor: AdminPalette.clay,
+                          backgroundColor: Colors.transparent,
                           src: ModelPathHelper.normalize(product.modelPath),
                           alt: 'Preview of ${product.name}',
                           ar: false,
+                          environmentImage: 'neutral',
+                          exposure: 1.35,
+                          shadowIntensity: 0.18,
                           autoRotate: false,
                           cameraControls: false,
                           disableZoom: true,
@@ -522,20 +576,46 @@ class _ProductRow extends StatelessWidget {
             flex: 2,
             child: Builder(
               builder: (context) {
-                // Dynamic stock status based on inventory quantity
-                final isInStock = product.inventoryQty > 0;
+                // Dynamic stock status based on inventory quantity.
+                // We now expose 3 states:
+                // - In Stock: inventory > lowStockThreshold
+                // - Low Stock: 1..lowStockThreshold
+                // - Out of Stock: 0
+                const int lowStockThreshold = 3;
+                final int qty = product.inventoryQty;
+                final bool isOutOfStock = qty <= 0;
+                final bool isLowStock = qty > 0 && qty <= lowStockThreshold;
+                final bool isInStock = qty > lowStockThreshold;
+
+                final Color tint;
+                final Color textColor;
+                final String label;
+
+                if (isOutOfStock) {
+                  tint = _tint(Colors.red, .15);
+                  textColor = Colors.red.shade700;
+                  label = 'Out of Stock';
+                } else if (isLowStock) {
+                  tint = _tint(Colors.orange, .15);
+                  textColor = Colors.orange.shade800;
+                  label = 'Low Stock';
+                } else {
+                  tint = _tint(Colors.green, .15);
+                  textColor = Colors.green.shade700;
+                  label = 'In Stock';
+                }
                 return Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isInStock ? _tint(Colors.green, .15) : _tint(Colors.red, .15),
+                    color: tint,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    isInStock ? 'In Stock' : 'Out of Stock',
+                    label,
                     textAlign: TextAlign.center,
                     style: GoogleFonts.poppins(
                       fontWeight: FontWeight.w500,
-                      color: isInStock ? Colors.green.shade700 : Colors.red.shade700,
+                      color: textColor,
                     ),
                   ),
                 );
@@ -637,11 +717,18 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   String? _uploadError;
   String? _modelUploadError;
 
+  /// Set to true after first submit attempt; used to show per-field errors
+  /// (red border + small message below) instead of toasts.
+  bool _submitted = false;
+  /// Per-field error messages; key is field name, value is message or null.
+  final Map<String, String?> _fieldErrors = {};
+
   // Extract unique values from existing products
   List<String> get _availableCategories {
     final categories = widget.allProducts.map((p) => p.category).where((c) => c.isNotEmpty).toSet().toList()..sort();
     // Add common categories if not present
-    final commonCategories = ['Living Room', 'Dining', 'Bedroom', 'Office', 'Outdoor', 'Kids'];
+    // NOTE: Per requirements we now only support Living Room, Dining, Bedroom, and Office
+    final commonCategories = ['Living Room', 'Dining', 'Bedroom', 'Office'];
     for (final cat in commonCategories) {
       if (!categories.contains(cat)) {
         categories.add(cat);
@@ -653,7 +740,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   List<String> get _availableStyles {
     final styles = widget.allProducts.map((p) => p.style).where((s) => s.isNotEmpty).toSet().toList()..sort();
     // Add common styles if not present
-    final commonStyles = ['Modern', 'Classic', 'Minimal', 'Industrial', 'Scandinavian', 'Traditional'];
+    // NOTE: Industrial and Scandinavian have been removed from the style taxonomy
+    final commonStyles = ['Modern', 'Classic', 'Minimal', 'Traditional'];
     for (final style in commonStyles) {
       if (!styles.contains(style)) {
         styles.add(style);
@@ -665,7 +753,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   List<String> get _availableMaterials {
     final materials = widget.allProducts.map((p) => p.material).where((m) => m.isNotEmpty).toSet().toList()..sort();
     // Add common materials if not present
-    final commonMaterials = ['Wood', 'Metal', 'Fabric', 'Leather', 'Plastic', 'Glass'];
+    // NOTE: Restrict materials to the four supported wood species
+    final commonMaterials = ['Mahogany', 'Acacia', 'Molave', 'Yakal'];
     for (final material in commonMaterials) {
       if (!materials.contains(material)) {
         materials.add(material);
@@ -702,7 +791,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _realHeightM = TextEditingController(text: product?.realHeightMeters?.toStringAsFixed(3) ?? '');
     _realDepthM = TextEditingController(text: product?.realDepthMeters?.toStringAsFixed(3) ?? '');
     _modelBaseScale = TextEditingController(text: product?.modelBaseScale.toStringAsFixed(2) ?? '1.00');
-    _modelPath = TextEditingController(text: product?.modelPath ?? 'assets/chair.glb');
+    _modelPath = TextEditingController(text: product?.modelPath ?? '');
     _imageUrls = List<String>.from(product?.imageUrls ?? []);
     _inventoryQty = TextEditingController(text: product?.inventoryQty.toString() ?? '0');
     _inStock = product?.inStock ?? true;
@@ -833,6 +922,49 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     });
   }
 
+  /// If [modelPath] points to a backend-managed upload (i.e. `/uploads/models/...`),
+  /// return the relative `product-handle/filename.glb` path expected by
+  /// `DELETE /api/models/:filePath`.
+  String? _extractManagedModelFilePath(String modelPath) {
+    final raw = modelPath.trim().replaceAll('\\', '/');
+    if (raw.isEmpty) return null;
+
+    const prefixA = '/uploads/models/';
+    const prefixB = 'uploads/models/';
+
+    if (raw.startsWith(prefixA)) {
+      return raw.substring(prefixA.length);
+    }
+    if (raw.startsWith(prefixB)) {
+      return raw.substring(prefixB.length);
+    }
+    return null;
+  }
+
+  /// Removes the currently configured backend-managed model file (if any),
+  /// then resets the model path to the default asset.
+  Future<void> _removeCurrentModel() async {
+    final managedFilePath = _extractManagedModelFilePath(_modelPath.text);
+    if (managedFilePath == null || managedFilePath.isEmpty) {
+      // Reset to empty so previews fall back to images/icons.
+      setState(() => _modelPath.text = '');
+      return;
+    }
+
+    setState(() => _modelUploadError = null);
+
+    try {
+      await BackendStorageService.instance.deleteModel(managedFilePath);
+      if (!mounted) return;
+      Toast.success(context, 'Model removed');
+      setState(() => _modelPath.text = '');
+    } catch (error) {
+      setState(() => _modelUploadError = 'Failed to remove model: $error');
+      if (!mounted) return;
+      Toast.error(context, 'Failed to remove model: $error');
+    }
+  }
+
   /// Uploads a 3D model file (.glb or .gltf) to the backend server
   /// Automatically updates the model path field with the uploaded file path
   Future<void> _pickAndUploadModel() async {
@@ -857,6 +989,10 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       _uploadingModel = true;
     });
 
+    // Capture current managed model (if any). We delete it AFTER the upload succeeds
+    // to avoid leaving the product without a model on upload failure.
+    final oldManagedFilePath = _extractManagedModelFilePath(_modelPath.text);
+
     try {
       // Derive product handle for folder organization
       final handle = _deriveProductHandle();
@@ -878,6 +1014,17 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
       if (!mounted) return;
       Toast.success(context, '3D model uploaded successfully');
+
+      // Auto-delete previous model file (if it was backend-managed) after success.
+      if (oldManagedFilePath != null &&
+          oldManagedFilePath.isNotEmpty &&
+          oldManagedFilePath != uploadResult.filePath) {
+        try {
+          await BackendStorageService.instance.deleteModel(oldManagedFilePath);
+        } catch (_) {
+          // Non-fatal: model upload already succeeded; deletion failure should not block.
+        }
+      }
     } catch (error) {
       setState(() {
         _modelUploadError = 'Model upload failed: $error';
@@ -922,50 +1069,42 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   }
 
   void _submit() {
-    // Parse price (handles comma formatting)
+    _submitted = true;
+    _fieldErrors.clear();
+
     final parsedPrice = _parsePrice(_price.text);
-    if (parsedPrice == null || parsedPrice <= 0) {
-      Toast.warning(context, 'Enter a valid price');
-      return;
-    }
-    
-    // Validate required dropdowns
-    if (_selectedCategory == null || _selectedCategory!.isEmpty) {
-      Toast.warning(context, 'Please select a category');
-      return;
-    }
-    if (_selectedStyle == null || _selectedStyle!.isEmpty) {
-      Toast.warning(context, 'Please select a style');
-      return;
-    }
-    if (_selectedMaterial == null || _selectedMaterial!.isEmpty) {
-      Toast.warning(context, 'Please select a material');
-      return;
-    }
-    if (_selectedColor == null || _selectedColor!.isEmpty) {
-      Toast.warning(context, 'Please select a color');
-      return;
-    }
-    
     final parsedInventoryQty = int.tryParse(_inventoryQty.text.trim());
     final double? widthM = double.tryParse(_realWidthM.text.trim().replaceAll(',', '.'));
     final double? heightM = double.tryParse(_realHeightM.text.trim().replaceAll(',', '.'));
     final double? depthM = double.tryParse(_realDepthM.text.trim().replaceAll(',', '.'));
     final double baseScale =
         double.tryParse(_modelBaseScale.text.trim().replaceAll(',', '.')) ?? 1.0;
-    if (parsedInventoryQty == null || parsedInventoryQty < 0) {
-      Toast.warning(context, 'Enter a valid inventory quantity (0 or greater)');
-      return;
-    }
-    if (_name.text.trim().isEmpty || _modelPath.text.trim().isEmpty) {
-      Toast.warning(context, 'Name and model path are required');
+
+    if (_name.text.trim().isEmpty) _fieldErrors['name'] = 'Required';
+    if (_description.text.trim().isEmpty) _fieldErrors['description'] = 'Required';
+    if (parsedPrice == null || parsedPrice <= 0) _fieldErrors['price'] = 'Enter a valid price';
+    if (_selectedCategory == null || _selectedCategory!.isEmpty) _fieldErrors['category'] = 'Required';
+    if (_selectedStyle == null || _selectedStyle!.isEmpty) _fieldErrors['style'] = 'Required';
+    if (_selectedMaterial == null || _selectedMaterial!.isEmpty) _fieldErrors['material'] = 'Required';
+    if (_selectedColor == null || _selectedColor!.isEmpty) _fieldErrors['color'] = 'Required';
+    if (widthM == null || widthM <= 0) _fieldErrors['width'] = 'Required, must be > 0';
+    if (heightM == null || heightM <= 0) _fieldErrors['height'] = 'Required, must be > 0';
+    if (depthM == null || depthM <= 0) _fieldErrors['depth'] = 'Required, must be > 0';
+    if (baseScale <= 0) _fieldErrors['modelBaseScale'] = 'Required, must be > 0';
+    if (_modelPath.text.trim().isEmpty) _fieldErrors['modelPath'] = 'Required';
+    if (parsedInventoryQty == null || parsedInventoryQty < 0) _fieldErrors['inventory'] = 'Required (0 or greater)';
+    if (_imageUrls.isEmpty) _fieldErrors['images'] = 'At least one image required';
+
+    if (_fieldErrors.isNotEmpty) {
+      setState(() {});
       return;
     }
 
+    // At this point validation passed, so parsedPrice and parsedInventoryQty are non-null.
     final data = _ProductFormData(
       name: _name.text.trim(),
       description: _description.text.trim(),
-      price: parsedPrice,
+      price: parsedPrice!,
       category: _selectedCategory!,
       style: _selectedStyle!,
       material: _selectedMaterial!,
@@ -976,7 +1115,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       modelBaseScale: baseScale,
       modelPath: _modelPath.text.trim(),
       imageUrls: _imageUrls,
-      inventoryQty: parsedInventoryQty,
+      inventoryQty: parsedInventoryQty!,
       inStock: _inStock,
     );
     Navigator.of(context).pop(data);
@@ -984,52 +1123,132 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.product == null ? 'Add product' : 'Edit product'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
+    // Constrained modal matching admin container size—not full screen.
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 920, maxHeight: 700),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildField(_name, 'Name'),
-              _buildField(_description, 'Description', maxLines: 3),
-              _buildPriceField(),
-              _buildDropdownField(
-                label: 'Category',
-                value: _selectedCategory,
-                items: _availableCategories,
-                onChanged: (value) => setState(() => _selectedCategory = value),
+              // Header with back/close
+              Container(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F8F8),
+                  border: Border(
+                    bottom: BorderSide(color: Colors.grey.shade200),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () => Navigator.of(context).pop(),
+                      tooltip: 'Close',
+                    ),
+                    Expanded(
+                      child: Text(
+                        widget.product == null ? 'Add product' : 'Edit product',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              _buildDropdownField(
-                label: 'Style',
-                value: _selectedStyle,
-                items: _availableStyles,
-                onChanged: (value) => setState(() => _selectedStyle = value),
-              ),
-              _buildDropdownField(
-                label: 'Material',
-                value: _selectedMaterial,
-                items: _availableMaterials,
-                onChanged: (value) => setState(() => _selectedMaterial = value),
-              ),
-              _buildDropdownField(
-                label: 'Color',
-                value: _selectedColor,
-                items: _availableColors,
-                onChanged: (value) => setState(() => _selectedColor = value),
-              ),
-          Row(
-            children: [
-              Expanded(child: _buildField(_realWidthM, 'Width (m)', keyboardType: TextInputType.number)),
-              const SizedBox(width: 8),
-              Expanded(child: _buildField(_realHeightM, 'Height (m)', keyboardType: TextInputType.number)),
-              const SizedBox(width: 8),
-              Expanded(child: _buildField(_realDepthM, 'Depth (m)', keyboardType: TextInputType.number)),
-            ],
-          ),
-          _buildField(_modelBaseScale, 'Model base scale', keyboardType: TextInputType.number),
-              const SizedBox(height: 8),
+              // Scrollable form body
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 900),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                      _buildField(_name, 'Name', errorText: _fieldErrors['name']),
+                      _buildField(_description, 'Description', maxLines: 3, errorText: _fieldErrors['description']),
+                      _buildPriceField(errorText: _fieldErrors['price']),
+                      _buildDropdownField(
+                        label: 'Category',
+                        value: _selectedCategory,
+                        items: _availableCategories,
+                        onChanged: (value) => setState(() => _selectedCategory = value),
+                        errorText: _fieldErrors['category'],
+                      ),
+                      _buildDropdownField(
+                        label: 'Style',
+                        value: _selectedStyle,
+                        items: _availableStyles,
+                        onChanged: (value) => setState(() => _selectedStyle = value),
+                        errorText: _fieldErrors['style'],
+                      ),
+                      _buildDropdownField(
+                        label: 'Material',
+                        value: _selectedMaterial,
+                        items: _availableMaterials,
+                        onChanged: (value) => setState(() => _selectedMaterial = value),
+                        errorText: _fieldErrors['material'],
+                      ),
+                      _buildDropdownField(
+                        label: 'Color',
+                        value: _selectedColor,
+                        items: _availableColors,
+                        onChanged: (value) => setState(() => _selectedColor = value),
+                        errorText: _fieldErrors['color'],
+                      ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildField(
+                              _realWidthM,
+                              'Width (m)',
+                              keyboardType: TextInputType.number,
+                              errorText: _fieldErrors['width'],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildField(
+                              _realHeightM,
+                              'Height (m)',
+                              keyboardType: TextInputType.number,
+                              errorText: _fieldErrors['height'],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildField(
+                              _realDepthM,
+                              'Depth (m)',
+                              keyboardType: TextInputType.number,
+                              errorText: _fieldErrors['depth'],
+                            ),
+                          ),
+                        ],
+                      ),
+                      _buildField(
+                        _modelBaseScale,
+                        'Model base scale',
+                        keyboardType: TextInputType.number,
+                        errorText: _fieldErrors['modelBaseScale'],
+                      ),
+                      const SizedBox(height: 8),
               // 3D Model Upload Section
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1043,28 +1262,48 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      FilledButton.icon(
-                        onPressed: _uploadingModel ? null : _pickAndUploadModel,
-                        icon: _uploadingModel
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.upload_file, size: 18),
-                        label: const Text('Upload Model'),
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
+                      Row(
+                        children: [
+                          if (_extractManagedModelFilePath(_modelPath.text) != null)
+                            OutlinedButton.icon(
+                              onPressed: _uploadingModel ? null : _removeCurrentModel,
+                              icon: const Icon(Icons.delete_outline, size: 18),
+                              label: const Text('Remove'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              ),
+                            ),
+                          if (_extractManagedModelFilePath(_modelPath.text) != null)
+                            const SizedBox(width: 8),
+                          FilledButton.icon(
+                            onPressed: _uploadingModel ? null : _pickAndUploadModel,
+                            icon: _uploadingModel
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.upload_file, size: 18),
+                            label: const Text('Upload Model'),
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   // Display current model path (editable text field)
-                  _buildField(_modelPath, 'Model path (.glb or .gltf file)', keyboardType: TextInputType.text),
+                  _buildField(
+                    _modelPath,
+                    'Model path (.glb or .gltf file)',
+                    keyboardType: TextInputType.text,
+                    errorText: _fieldErrors['modelPath'],
+                  ),
                   const SizedBox(height: 4),
                   Text(
-                    'Upload a .glb or .gltf file, or enter a path manually (e.g., assets/chair.glb or /uploads/models/...)',
+                    'Upload a .glb or .gltf file, or enter a path manually (e.g., assets/your_model.glb or /uploads/models/...)',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontStyle: FontStyle.italic,
                       color: Colors.grey[600],
@@ -1115,21 +1354,41 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  if (_imageUrls.isEmpty)
+                  if (_imageUrls.isEmpty) ...[
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade300),
+                        border: Border.all(
+                          color: _fieldErrors['images'] != null
+                              ? CupertinoColors.systemRed
+                              : Colors.grey.shade300,
+                          width: _fieldErrors['images'] != null ? 1.5 : 1,
+                        ),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Center(
                         child: Text(
                           'No images added. Click "Add Images" to upload.',
-                          style: TextStyle(color: Colors.grey.shade600),
+                          style: TextStyle(
+                            color: _fieldErrors['images'] != null
+                                ? CupertinoColors.systemRed
+                                : Colors.grey.shade600,
+                          ),
                         ),
                       ),
-                    )
-                  else
+                    ),
+                    if (_fieldErrors['images'] != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          _fieldErrors['images']!,
+                          style: const TextStyle(
+                            color: CupertinoColors.systemRed,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                  ] else
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -1183,7 +1442,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     ),
                 ],
               ),
-              _buildField(_inventoryQty, 'Inventory Quantity', keyboardType: TextInputType.number),
+              _buildField(
+                _inventoryQty,
+                'Inventory Quantity',
+                keyboardType: TextInputType.number,
+                errorText: _fieldErrors['inventory'],
+              ),
               SwitchListTile(
                 value: _inStock,
                 title: const Text('In stock'),
@@ -1202,113 +1466,199 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                   ),
                 ),
               ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+              // Footer with Cancel/Save
+              Container(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: _submit,
+                      child: const Text('Save'),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: _submit, child: const Text('Save')),
+    );
+  }
+
+  /// Label for a required field: shows "Label " plus a red asterisk.
+  static Widget _requiredLabel(String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$label ',
+          style: const TextStyle(color: Color(0xFF6D4C41), fontSize: 16),
+        ),
+        const Text(
+          '*',
+          style: TextStyle(color: CupertinoColors.systemRed, fontSize: 16),
+        ),
       ],
     );
   }
 
-  Widget _buildField(TextEditingController controller, String label, {int maxLines = 1, TextInputType keyboardType = TextInputType.text}) {
+  Widget _buildField(
+    TextEditingController controller,
+    String label, {
+    int maxLines = 1,
+    TextInputType keyboardType = TextInputType.text,
+    String? errorText,
+  }) {
+    final hasError = errorText != null && errorText.isNotEmpty;
+    final borderColor = hasError ? CupertinoColors.systemRed : CupertinoColors.separator.withValues(alpha: 0.1);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: TextField(
-        controller: controller,
-        keyboardType: keyboardType,
-        maxLines: maxLines,
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: const TextStyle(color: Color(0xFF6D4C41)),
-          filled: true,
-          fillColor: const Color(0xFFF8F8F8),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _requiredLabel(label),
+          const SizedBox(height: 6),
+          TextField(
+            controller: controller,
+            keyboardType: keyboardType,
+            maxLines: maxLines,
+            decoration: InputDecoration(
+              errorText: errorText,
+              errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
+              filled: true,
+              fillColor: const Color(0xFFF8F8F8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor, width: hasError ? 1.5 : 1),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: hasError ? CupertinoColors.systemRed : const Color(0xFF8D6E63),
+                  width: 2,
+                ),
+              ),
+            ),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
-          ),
-        ),
+        ],
       ),
     );
   }
 
-  /// Build price field with comma formatting
-  Widget _buildPriceField() {
+  /// Build price field with comma formatting and optional inline error.
+  Widget _buildPriceField({String? errorText}) {
+    final hasError = errorText != null && errorText.isNotEmpty;
+    final borderColor = hasError ? CupertinoColors.systemRed : CupertinoColors.separator.withValues(alpha: 0.1);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: TextField(
-        controller: _price,
-        keyboardType: TextInputType.number,
-        decoration: InputDecoration(
-          labelText: 'Price',
-          labelStyle: const TextStyle(color: Color(0xFF6D4C41)),
-          filled: true,
-          fillColor: const Color(0xFFF8F8F8),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _requiredLabel('Price'),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _price,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              errorText: errorText,
+              errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
+              filled: true,
+              fillColor: const Color(0xFFF8F8F8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor, width: hasError ? 1.5 : 1),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: hasError ? CupertinoColors.systemRed : const Color(0xFF8D6E63),
+                  width: 2,
+                ),
+              ),
+              prefixText: '₱',
+            ),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
-          ),
-          prefixText: '₱',
-        ),
+        ],
       ),
     );
   }
 
-  /// Build dropdown field for category, style, material, and color
+  /// Build dropdown field for category, style, material, and color.
+  /// Shows required label with red * and inline error (red border + message below).
   Widget _buildDropdownField({
     required String label,
     required String? value,
     required List<String> items,
     required ValueChanged<String?> onChanged,
+    String? errorText,
   }) {
+    final hasError = errorText != null && errorText.isNotEmpty;
+    final borderColor = hasError ? CupertinoColors.systemRed : CupertinoColors.separator.withValues(alpha: 0.1);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: DropdownButtonFormField<String>(
-        value: value,
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: const TextStyle(color: Color(0xFF6D4C41)),
-          filled: true,
-          fillColor: const Color(0xFFF8F8F8),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _requiredLabel(label),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String>(
+            value: value,
+            decoration: InputDecoration(
+              errorText: errorText,
+              errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
+              filled: true,
+              fillColor: const Color(0xFFF8F8F8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor, width: hasError ? 1.5 : 1),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: hasError ? CupertinoColors.systemRed : const Color(0xFF8D6E63),
+                  width: 2,
+                ),
+              ),
+            ),
+            items: items.map((item) {
+              return DropdownMenuItem<String>(
+                value: item,
+                child: Text(item),
+              );
+            }).toList(),
+            onChanged: onChanged,
+            hint: Text('Select $label', style: TextStyle(color: Colors.grey[600])),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
-          ),
-        ),
-        items: items.map((item) {
-          return DropdownMenuItem<String>(
-            value: item,
-            child: Text(item),
-          );
-        }).toList(),
-        onChanged: onChanged,
-        hint: Text('Select $label', style: TextStyle(color: Colors.grey[600])),
+        ],
       ),
     );
   }

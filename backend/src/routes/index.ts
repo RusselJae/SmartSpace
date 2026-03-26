@@ -8,9 +8,13 @@ import { cartRouter } from './cart_route';
 import { addressRouter } from './address_route';
 import { adminRouter } from './admin_route';
 import { adminAuthRouter } from './admin_auth_route';
+import { supportChatRouter } from './support_chat_route';
 import { modelRouter } from './model_route';
 import { imageRouter } from './image_route';
 import { paymentProofRouter } from './payment_proof_route';
+import { faqRouter } from './faq_route';
+import { legalContentRouter } from './legal_content_route';
+import { paymongoReturnRouter } from './paymongo_return_route';
 
 export const apiRouter = Router();
 
@@ -26,5 +30,9 @@ apiRouter.use('/admin-auth', adminAuthRouter);
 apiRouter.use('/models', modelRouter);
 apiRouter.use('/images', imageRouter);
 apiRouter.use('/payment-proofs', paymentProofRouter);
+apiRouter.use('/support', supportChatRouter);
+apiRouter.use('/faqs', faqRouter);
+apiRouter.use('/content', legalContentRouter);
+apiRouter.use('/paymongo-return', paymongoReturnRouter);
 
 

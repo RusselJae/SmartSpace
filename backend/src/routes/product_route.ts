@@ -27,6 +27,8 @@ const productSchema = z.object({
   isPopular: z.boolean().default(false),
   isNewArrival: z.boolean().default(false),
   inStock: z.boolean().default(true),
+  // Admin-only flag. Archived products remain in the database but are hidden from the main catalog.
+  isArchived: z.boolean().default(false),
 });
 
 const parseProductInput = (payload: unknown): ProductInput => {

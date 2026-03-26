@@ -28,15 +28,26 @@ class CartService extends ChangeNotifier {
   double get totalPrice => _itemsById.values.fold(0.0, (sum, item) => sum + item.subtotal);
   bool get isHydrated => _hydrated;
 
+  static const String _guestStorageKey = 'cart_items_guest';
+
   Future<void> syncWithUser(String? userId) async {
     _prefs ??= await SharedPreferences.getInstance();
     final sameUser = _userId == userId && _hydrated;
     if (sameUser) return;
 
+    final previousUserId = _userId;
+
+    // Before clearing: when switching to guest (logout), persist current cart to guest storage.
+    if (userId == null && previousUserId != null && _itemsById.isNotEmpty) {
+      final payload = _itemsById.values.map((item) => item.toJson()).toList();
+      await _prefs!.setString(_guestStorageKey, jsonEncode(payload));
+    }
+
     _userId = userId;
     _itemsById.clear();
 
     if (userId == null) {
+      await _restoreGuestCart();
       _hydrated = true;
       notifyListeners();
       return;
@@ -63,26 +74,35 @@ class CartService extends ChangeNotifier {
   }
 
   void add(Product product, {int quantity = 1}) {
-    final delta = quantity < 1 ? 1 : quantity;
+    final maxQty = product.inventoryQty.clamp(1, 999999);
+    final delta = (quantity < 1 ? 1 : quantity).clamp(1, maxQty);
     final existing = _itemsById[product.id];
     if (existing == null) {
       _itemsById[product.id] = CartItem(product: product, quantity: delta);
+      _saveSnapshot();
+      notifyListeners();
+      _syncRemoteAdd(product.id, delta);
     } else {
-      _itemsById[product.id] = existing.copyWith(quantity: existing.quantity + delta);
+      final newQty = (existing.quantity + delta).clamp(1, maxQty);
+      final actualDelta = newQty - existing.quantity;
+      if (actualDelta > 0) {
+        _itemsById[product.id] = existing.copyWith(quantity: newQty);
+        _saveSnapshot();
+        notifyListeners();
+        _syncRemoteAdd(product.id, actualDelta);
+      }
     }
-    _saveSnapshot();
-    notifyListeners();
-    _syncRemoteAdd(product.id, delta);
   }
 
   void increment(String productId) {
     final existing = _itemsById[productId];
-    if (existing != null) {
-      _itemsById[productId] = existing.copyWith(quantity: existing.quantity + 1);
-      _saveSnapshot();
-      notifyListeners();
-      _syncRemoteAdd(productId, 1);
-    }
+    if (existing == null) return;
+    final maxQty = existing.product.inventoryQty.clamp(1, 999999);
+    if (existing.quantity >= maxQty) return;
+    _itemsById[productId] = existing.copyWith(quantity: existing.quantity + 1);
+    _saveSnapshot();
+    notifyListeners();
+    _syncRemoteAdd(productId, 1);
   }
 
   void decrement(String productId) {
@@ -143,16 +163,36 @@ class CartService extends ChangeNotifier {
   }
 
   Future<void> _persistLocal() async {
-    final userId = _userId;
-    if (userId == null) return;
     _prefs ??= await SharedPreferences.getInstance();
-    final key = '$_storagePrefix$userId';
+    final key = _userId != null ? '$_storagePrefix$_userId' : _guestStorageKey;
     if (_itemsById.isEmpty) {
       await _prefs!.remove(key);
       return;
     }
     final payload = _itemsById.values.map((item) => item.toJson()).toList();
     await _prefs!.setString(key, jsonEncode(payload));
+  }
+
+  Future<void> _restoreGuestCart() async {
+    try {
+      final raw = _prefs!.getString(_guestStorageKey);
+      if (raw == null) return;
+      final List<dynamic> decoded = jsonDecode(raw) as List<dynamic>;
+      for (final entry in decoded) {
+        final map = Map<String, dynamic>.from(entry as Map);
+        final productMap = Map<String, dynamic>.from(map['product'] as Map);
+        final product = Product.fromJson(productMap);
+        _itemsById[product.id] = CartItem(
+          id: map['id'] as String?,
+          product: product,
+          quantity: (map['quantity'] as num?)?.toInt() ?? 1,
+          unitPrice: (map['unitPrice'] as num?)?.toDouble() ?? product.price,
+          notes: map['notes'] as String?,
+        );
+      }
+    } catch (_) {
+      // ignore malformed cache
+    }
   }
 
   void _saveSnapshot() {

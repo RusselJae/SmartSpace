@@ -25,12 +25,18 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
   String _searchQuery = '';
   String? _error;
 
+  static const int _pageSize = 10;
+  int _pageIndex = 0;
+
   @override
   void initState() {
     super.initState();
     _loadReviews();
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.toLowerCase());
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+        _pageIndex = 0;
+      });
     });
   }
 
@@ -104,6 +110,14 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
+
+    final totalCount = filtered.length;
+    final pageCount = (totalCount / _pageSize).ceil();
+    final safePageIndex = pageCount <= 1 ? 0 : _pageIndex.clamp(0, pageCount - 1).toInt();
+    final start = safePageIndex * _pageSize;
+    final end = (start + _pageSize) > totalCount ? totalCount : (start + _pageSize);
+    final pageItems = totalCount == 0 ? const <Review>[] : filtered.sublist(start, end);
+
     // NOTE:
     // Admin reviews are now *read‑only*. We keep filters/search so admins can
     // quickly inspect feedback, but there are no approval/reject actions.
@@ -111,14 +125,9 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AdminToolbar(
+        const AdminToolbar(
           title: 'Customer Reviews',
-          actions: const [],
-          trailing: IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadReviews,
-            tooltip: 'Refresh reviews',
-          ),
+          actions: [],
         ),
         if (_error != null)
           Padding(
@@ -150,32 +159,44 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
           ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          child: TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: 'Search by product, customer, or content...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchQuery.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () => _searchController.clear(),
-                    )
-                  : null,
-              filled: true,
-              fillColor: const Color(0xFFF8F8F8),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search by product, customer, or content...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () => _searchController.clear(),
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: const Color(0xFFF8F8F8),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                    ),
+                  ),
+                ),
               ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: CupertinoColors.separator.withValues(alpha: 0.1)),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: _loadReviews,
+                tooltip: 'Refresh reviews',
               ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
-              ),
-            ),
+            ],
           ),
         ),
         Padding(
@@ -191,7 +212,10 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
             ],
             selected: {_filter},
             onSelectionChanged: (Set<String> values) {
-              setState(() => _filter = values.first);
+              setState(() {
+                _filter = values.first;
+                _pageIndex = 0;
+              });
             },
           ),
         ),
@@ -240,10 +264,10 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
                           const Divider(height: 1),
                           Expanded(
                             child: ListView.separated(
-                              itemCount: filtered.length,
+                              itemCount: pageItems.length,
                               separatorBuilder: (_, __) => const Divider(height: 1),
                               itemBuilder: (context, index) {
-                                final review = filtered[index];
+                                final review = pageItems[index];
                                 return _ReviewsTableRow(
                                   review: review,
                                   onTap: () => _showReviewDetails(review),
@@ -251,6 +275,37 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
                               },
                             ),
                           ),
+                          if (pageCount > 1)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    'Page ${safePageIndex + 1} of $pageCount',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black54,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_left),
+                                    onPressed: safePageIndex > 0
+                                        ? () => setState(() => _pageIndex = safePageIndex - 1)
+                                        : null,
+                                    tooltip: 'Previous page',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_right),
+                                    onPressed: safePageIndex < pageCount - 1
+                                        ? () => setState(() => _pageIndex = safePageIndex + 1)
+                                        : null,
+                                    tooltip: 'Next page',
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     ),

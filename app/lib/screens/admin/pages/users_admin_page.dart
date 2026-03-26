@@ -25,12 +25,18 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   String _searchQuery = '';
   String? _error;
 
+  static const int _pageSize = 10;
+  int _pageIndex = 0;
+
   @override
   void initState() {
     super.initState();
     _loadUsers();
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.toLowerCase());
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+        _pageIndex = 0;
+      });
     });
   }
 
@@ -119,6 +125,14 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
+
+    final totalCount = filtered.length;
+    final pageCount = (totalCount / _pageSize).ceil();
+    final safePageIndex = pageCount <= 1 ? 0 : _pageIndex.clamp(0, pageCount - 1).toInt();
+    final start = safePageIndex * _pageSize;
+    final end = (start + _pageSize) > totalCount ? totalCount : (start + _pageSize);
+    final pageItems = totalCount == 0 ? const <User>[] : filtered.sublist(start, end);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -255,10 +269,10 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                           const Divider(height: 1),
                           Expanded(
                             child: ListView.separated(
-                              itemCount: filtered.length,
+                              itemCount: pageItems.length,
                               separatorBuilder: (_, __) => const Divider(height: 1),
                               itemBuilder: (context, index) {
-                                final user = filtered[index];
+                                final user = pageItems[index];
                                 return _UsersTableRow(
                                   user: user,
                                   onTap: () => _showUserDetails(user),
@@ -266,6 +280,37 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                               },
                             ),
                           ),
+                          if (pageCount > 1)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    'Page ${safePageIndex + 1} of $pageCount',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black54,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_left),
+                                    onPressed: safePageIndex > 0
+                                        ? () => setState(() => _pageIndex = safePageIndex - 1)
+                                        : null,
+                                    tooltip: 'Previous page',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_right),
+                                    onPressed: safePageIndex < pageCount - 1
+                                        ? () => setState(() => _pageIndex = safePageIndex + 1)
+                                        : null,
+                                    tooltip: 'Next page',
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -497,7 +542,7 @@ class _UserDetailsDialog extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Wishlist',
+                      'Likes',
                       style: GoogleFonts.poppins(
                         color: Colors.black,
                         fontSize: 18,
@@ -604,6 +649,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   final TextEditingController _preferredStyle = TextEditingController();
   final TextEditingController _minBudget = TextEditingController();
   final TextEditingController _maxBudget = TextEditingController();
+  bool _submitting = false;
 
   @override
   void dispose() {
@@ -618,6 +664,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   }
 
   void _submit() {
+    if (_submitting) return;
     if (_email.text.trim().isEmpty || _fullName.text.trim().isEmpty) {
       Toast.warning(context, 'Email and full name are required');
       return;
@@ -639,7 +686,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
   Widget _buildField(TextEditingController controller, String label, {TextInputType keyboardType = TextInputType.text}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: controller,
         keyboardType: keyboardType,
@@ -667,29 +714,114 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Add user'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
+    // Constrained modal matching admin container—not full screen.
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 560, maxHeight: 520),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildField(_email, 'Email *', keyboardType: TextInputType.emailAddress),
-              _buildField(_fullName, 'Full name *'),
-              _buildField(_phoneNumber, 'Phone number', keyboardType: TextInputType.phone),
-              _buildField(_addresses, 'Addresses (comma separated)'),
-              _buildField(_preferredStyle, 'Preferred style'),
-              _buildField(_minBudget, 'Min budget', keyboardType: TextInputType.number),
-              _buildField(_maxBudget, 'Max budget', keyboardType: TextInputType.number),
+              Container(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F8F8),
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () => Navigator.of(context).pop(),
+                      tooltip: 'Close',
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Add user',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildField(_email, 'Email *', keyboardType: TextInputType.emailAddress),
+                      _buildField(_fullName, 'Full name *'),
+                      _buildField(_phoneNumber, 'Phone number', keyboardType: TextInputType.phone),
+                      _buildField(_addresses, 'Addresses (comma separated)'),
+                      _buildField(_preferredStyle, 'Preferred style'),
+                      Row(
+                        children: [
+                          Expanded(child: _buildField(_minBudget, 'Min budget', keyboardType: TextInputType.number)),
+                          const SizedBox(width: 10),
+                          Expanded(child: _buildField(_maxBudget, 'Max budget', keyboardType: TextInputType.number)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: _submitting
+                          ? null
+                          : () async {
+                              setState(() => _submitting = true);
+                              try {
+                                _submit();
+                              } finally {
+                                if (mounted) setState(() => _submitting = false);
+                              }
+                            },
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Create'),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: _submit, child: const Text('Create')),
-      ],
     );
   }
 }

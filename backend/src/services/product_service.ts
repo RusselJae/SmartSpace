@@ -20,6 +20,7 @@ export type ProductInput = {
   readonly modelBaseScale?: number;
   readonly inventoryQty?: number;
   readonly inStock: boolean;
+  readonly isArchived?: boolean;
   // Note: isPopular and isNewArrival are now calculated automatically:
   // - isNewArrival: true if created_at is within the last 7 days
   // - isPopular: true if the product has orders (based on order_items count)
@@ -46,6 +47,7 @@ type ProductRow = RowDataPacket & {
   readonly is_popular: number | boolean | null;
   readonly is_new_arrival: number | boolean | null;
   readonly in_stock: number | boolean | null;
+  readonly is_archived?: number | boolean | null;
   readonly created_at: Date;
 };
 
@@ -102,11 +104,52 @@ const mapProduct = (row: ProductRowWithOrderCount): Product => {
     isPopular: orderCount > 0, // Product is popular if it has any orders
     isNewArrival: isNewArrival(createdAt), // New arrival if created within last 7 days
     inStock: parseBooleanFlag(row.in_stock),
+    isArchived: parseBooleanFlag(row.is_archived),
     createdAt,
   };
 };
 
+type ColumnCheckRow = RowDataPacket & { readonly count: number };
+
+const columnExists = async (tableName: string, columnName: string): Promise<boolean> => {
+  const pool = getPool();
+  const [rows] = await pool.query<ColumnCheckRow[]>(
+    `
+    SELECT COUNT(*) as count
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = ?
+      AND column_name = ?
+    `,
+    [tableName, columnName],
+  );
+  return (rows[0]?.count ?? 0) > 0;
+};
+
+let _productSchemaEnsured = false;
+
+/**
+ * Ensures the database has the columns the current app depends on.
+ *
+ * We keep this lightweight schema guard in the backend so local/dev/prod
+ * don't silently drift when migrations weren't run.
+ */
+const ensureProductSchema = async (): Promise<void> => {
+  if (_productSchemaEnsured) return;
+
+  const pool = getPool();
+
+  // The original schema predates "archive" support. Add the column lazily.
+  if (!(await columnExists('products', 'is_archived'))) {
+    await pool.query(`ALTER TABLE products ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`CREATE INDEX idx_products_is_archived ON products (is_archived)`);
+  }
+
+  _productSchemaEnsured = true;
+};
+
 export const listProducts = async (): Promise<Product[]> => {
+  await ensureProductSchema();
   const pool = getPool();
   // Use LEFT JOIN to get order counts for each product in a single query
   const [rows] = await pool.query<ProductRowWithOrderCount[]>(
@@ -120,6 +163,7 @@ export const listProducts = async (): Promise<Product[]> => {
 };
 
 export const findProductById = async (id: string): Promise<Product | null> => {
+  await ensureProductSchema();
   const pool = getPool();
   // Use LEFT JOIN to get order count for the product
   const [rows] = await pool.query<ProductRowWithOrderCount[]>(
@@ -135,6 +179,7 @@ export const findProductById = async (id: string): Promise<Product | null> => {
 };
 
 export const createProduct = async (input: ProductInput): Promise<Product> => {
+  await ensureProductSchema();
   const pool = getPool();
   const inventoryQty = input.inventoryQty ?? 0;
   const realWidthM = input.realWidthM ?? null;
@@ -142,6 +187,7 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
   const realDepthM = input.realDepthM ?? null;
   const modelBaseScale = input.modelBaseScale ?? 1;
   const productId = generateId('p');
+  const isArchived = input.isArchived ?? false;
   
   // Note: isPopular and isNewArrival are calculated dynamically, but we still
   // need to insert default values (0) into the database for backward compatibility
@@ -151,9 +197,9 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
     `
     INSERT INTO products (
       id, name, description, price, category, style, material, color,
-      model_path, real_width_m, real_height_m, real_depth_m, model_base_scale,
-      image_urls, rating, review_count, inventory_qty, is_popular, is_new_arrival, in_stock
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      size, model_path, real_width_m, real_height_m, real_depth_m, model_base_scale,
+      image_urls, rating, review_count, inventory_qty, is_popular, is_new_arrival, in_stock, is_archived
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       productId,
@@ -164,6 +210,9 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
       input.style,
       input.material,
       input.color,
+      // DB currently requires `size` (NOT NULL) but the admin payload doesn't send it yet.
+      // Use a safe placeholder to keep product creation working until the client sends a real value.
+      '',
       input.modelPath,
       realWidthM,
       realHeightM,
@@ -176,6 +225,7 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
       0, // is_popular (calculated dynamically)
       0, // is_new_arrival (calculated dynamically)
       input.inStock ? 1 : 0,
+      isArchived ? 1 : 0,
     ],
   );
 
@@ -184,6 +234,7 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
 };
 
 export const updateProduct = async (id: string, input: ProductInput): Promise<Product> => {
+  await ensureProductSchema();
   const pool = getPool();
   const existing = await findProductById(id);
   if (existing == null) {
@@ -191,6 +242,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
   }
 
   const inventoryQty = input.inventoryQty ?? existing.inventoryQty;
+  const isArchived = input.isArchived ?? existing.isArchived;
 
   // Note: isPopular and isNewArrival are calculated dynamically, so we don't update them
   // They will be recalculated when the product is fetched
@@ -200,7 +252,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
     UPDATE products SET
       name = ?, description = ?, price = ?, category = ?, style = ?, material = ?,
       color = ?, model_path = ?, real_width_m = ?, real_height_m = ?, real_depth_m = ?, model_base_scale = ?,
-      image_urls = ?, inventory_qty = ?, in_stock = ?
+      image_urls = ?, inventory_qty = ?, in_stock = ?, is_archived = ?
     WHERE id = ?
   `,
     [
@@ -219,6 +271,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
       JSON.stringify(input.imageUrls),
       inventoryQty,
       input.inStock ? 1 : 0,
+      isArchived ? 1 : 0,
       id,
     ],
   );
@@ -227,6 +280,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
 };
 
 export const deleteProduct = async (id: string): Promise<void> => {
+  await ensureProductSchema();
   const pool = getPool();
   await pool.query('DELETE FROM products WHERE id = ?', [id]);
 };

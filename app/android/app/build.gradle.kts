@@ -44,10 +44,12 @@ flutter {
 }
 
 dependencies {
+    // Product thumbnails in the AR variant carousel (HTTP URLs from Flutter).
+    implementation("io.coil-kt:coil:2.5.0")
     // Pull in the official ARCore runtime so our availability checks compile.
     implementation("com.google.ar:core:1.44.0")
     // SceneView core (3D engine).
-    implementation("io.github.sceneview:sceneview:2.3.3")
+    implementation("io.github.sceneview:sceneview:2.2.1")
     // ARSceneView module, which exposes io.github.sceneview.ar.ARSceneView.
-    implementation("io.github.sceneview:arsceneview:2.3.3")
+    implementation("io.github.sceneview:arsceneview:2.2.1")
 }

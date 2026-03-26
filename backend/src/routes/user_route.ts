@@ -11,7 +11,9 @@ import {
   verifyUserEmail,
   verifyUserEmailByCode,
   resendVerificationToken,
-  CreateUserInput 
+  CreateUserInput,
+  verifyUserCredentials,
+  changeUserPassword,
 } from '../services/user_service';
 import { EmailService } from '../services/email_service';
 import { avatarsDir, ensureUploadsDirectories } from '../utils/uploads';
@@ -74,12 +76,13 @@ userRouter.post(
     const input: CreateUserInput = {
       email: req.body.email,
       fullName: req.body.fullName,
+      password: req.body.password,
       username: req.body.username,
       phoneNumber: req.body.phoneNumber,
       gender: req.body.gender,
     };
-    if (!input.email || !input.fullName) {
-      return res.status(400).json({ success: false, message: 'Email and full name are required' });
+    if (!input.email || !input.fullName || !input.password) {
+      return res.status(400).json({ success: false, message: 'Email, full name, and password are required' });
     }
     
     try {
@@ -117,6 +120,49 @@ userRouter.post(
       
       // Re-throw other errors to be handled by asyncHandler
       throw error;
+    }
+  }),
+);
+
+/**
+ * User login endpoint (email/username + password).
+ * Request body: { identifier: string, password: string }
+ */
+userRouter.post(
+  '/auth/login',
+  asyncHandler(async (req, res) => {
+    const identifier = (req.body.identifier as string | undefined) ?? '';
+    const password = (req.body.password as string | undefined) ?? '';
+
+    try {
+      const user = await verifyUserCredentials(identifier, password);
+      res.json({ success: true, data: user });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid username or password';
+      // Use 401 for auth failures, 403 for verification-related blocks.
+      const status = message.toLowerCase().includes('verify your email') ? 403 : 401;
+      res.status(status).json({ success: false, message });
+    }
+  }),
+);
+
+/**
+ * Change password endpoint.
+ * Request body: { currentPassword: string, newPassword: string }
+ */
+userRouter.post(
+  '/:id/change-password',
+  asyncHandler(async (req, res) => {
+    const userId = req.params.id;
+    const currentPassword = req.body.currentPassword as string | undefined;
+    const newPassword = req.body.newPassword as string | undefined;
+
+    try {
+      await changeUserPassword(userId, currentPassword ?? '', newPassword ?? '');
+      res.json({ success: true, message: 'Password updated successfully' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update password';
+      res.status(400).json({ success: false, message });
     }
   }),
 );

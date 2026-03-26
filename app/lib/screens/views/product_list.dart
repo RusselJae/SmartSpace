@@ -6,6 +6,7 @@ import 'package:model_viewer_plus/model_viewer_plus.dart';
 import '../../widgets/filters_sheet.dart';
 import '../../models/product.dart';
 import '../../utils/model_path_helper.dart';
+import '../../widgets/underline_filter_bar.dart';
 import 'product_detail.dart';
 import '../../services/wishlist_service.dart';
 import '../../services/cart_service.dart';
@@ -33,7 +34,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
   String _searchQuery = '';
   FilterData? _activeFilters;
 
+  // Category underline filter state (matches Likes screen UX).
+  String _selectedCategory = 'All';
+
   // Color constants matching catalog_home.dart
+  static const Color _kWalnut = Color(0xFF5C4033);
   static const Color _kTextPrimary = Color(0xFF6D4C41); // Medium brown for text
   static const Color _kBrown = Color(0xFF8D6E63); // Primary brown
   static const Color _kOrange = Color(0xFFFF9800); // Primary orange
@@ -125,6 +130,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
                product.material.toLowerCase().contains(_searchQuery);
       }).toList();
     }
+
+    // Apply category filter (underline bar).
+    if (_selectedCategory != 'All') {
+      items = items.where((product) => product.category == _selectedCategory).toList();
+    }
     
     // Apply filters if active
     if (_activeFilters != null && _activeFilters!.hasActiveFilters) {
@@ -161,6 +171,16 @@ class _ProductListScreenState extends State<ProductListScreen> {
     return items;
   }
 
+  List<String> _categoriesFor(List<Product> items) {
+    final cats = items
+        .map((p) => p.category.trim())
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return ['All', ...cats];
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = _filteredProducts;
@@ -169,6 +189,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
       // Enhanced background matching catalog_home.dart
       backgroundColor: Colors.white,
       navigationBar: CupertinoNavigationBar(
+        previousPageTitle: 'Back',
+        leading: CupertinoNavigationBarBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          color: _kWalnut,
+        ),
         // Modern navigation bar with improved styling matching catalog_home.dart
         backgroundColor: Colors.white.withValues(alpha: 0.95),
         border: Border(
@@ -201,56 +226,47 @@ class _ProductListScreenState extends State<ProductListScreen> {
                     // Search bar with catalog_home.dart styling
                     // -------------------------------------------------------
                     //
-                    // Matches the exact styling from catalog_home.dart with
-                    // gradient background and enhanced visual design following
-                    // Apple HIG principles.
+                    // Search bar styling (copied from Likes screen):
+                    // white field, walnut border, subtle shadow, clean icons.
                     // -------------------------------------------------------
                     Container(
                       decoration: BoxDecoration(
-                        // Subtle gradient background for depth matching catalog_home
-                        gradient: LinearGradient(
-                          colors: [
-                            const Color(0xFFFFFBF7),
-                            const Color(0xFFF4E6D4).withValues(alpha: 0.3),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: const Color(0xFFBCAAA4).withValues(alpha: 0.2),
+                          color: _kWalnut.withValues(alpha: 0.2),
                           width: 1,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFF8D6E63).withValues(alpha: 0.05),
+                            color: Colors.black.withValues(alpha: 0.03),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
                         ],
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       child: Row(
                         children: [
                           Icon(
                             CupertinoIcons.search,
-                            color: _kTextPrimary.withValues(alpha: 0.5),
-                            size: 20,
+                            color: _kWalnut.withValues(alpha: 0.75),
+                            size: 18,
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: CupertinoTextField(
                               controller: _searchController,
                               placeholder: 'Search furniture or keywords',
                               placeholderStyle: GoogleFonts.poppins(
-                                fontSize: 15,
-                                color: _kTextPrimary.withValues(alpha: 0.5),
+                                fontSize: 14,
+                                color: _kWalnut.withValues(alpha: 0.45),
                               ),
                               decoration: null,
                               padding: const EdgeInsets.symmetric(vertical: 4),
                               style: GoogleFonts.poppins(
-                                fontSize: 15,
-                                color: _kTextPrimary,
+                                fontSize: 14,
+                                color: const Color(0xFF5F5B56),
                                 decoration: TextDecoration.none,
                               ),
                               suffix: _searchQuery.isNotEmpty
@@ -263,7 +279,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                       child: Icon(
                                         CupertinoIcons.clear_circled_solid,
                                         size: 18,
-                                        color: _kTextPrimary.withValues(alpha: 0.5),
+                                        color: _kWalnut.withValues(alpha: 0.75),
                                       ),
                                     )
                                   : null,
@@ -378,6 +394,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                             src: ModelPathHelper.normalize(product.modelPath),
                                             alt: 'Preview of ${product.name}',
                                             ar: false,
+                                            environmentImage: 'neutral',
+                                            exposure: 1.35,
+                                            shadowIntensity: 0.18,
                                             autoRotate: false,
                                             cameraControls: false,
                                             disableZoom: true,
@@ -420,6 +439,20 @@ class _ProductListScreenState extends State<ProductListScreen> {
                               ),
                             ),
                     ),
+                    const SizedBox(height: 12),
+                    if ((widget.products ?? const <Product>[]).isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: UnderlineFilterBar(
+                          entries: _categoriesFor(widget.products ?? const <Product>[]).map(
+                            (c) => UnderlineFilterEntry(key: c, label: c),
+                          ).toList(),
+                          selectedKey: _selectedCategory,
+                          onSelect: (key) => setState(() => _selectedCategory = key),
+                          walnut: _kWalnut,
+                        ),
+                      ),
+                    const SizedBox(height: 12),
                   ],
                 ),
               ),
@@ -510,6 +543,16 @@ class _ProductGridCardState extends State<_ProductGridCard> {
   }
 
   void _handleWishlistTap() {
+    if (!_auth.isAuthenticated) {
+      Navigator.of(context, rootNavigator: true).push(
+        CupertinoPageRoute(
+          builder: (_) => const SignInScreen(),
+          fullscreenDialog: true,
+        ),
+      );
+      Toast.info(context, 'Please sign in to like products');
+      return;
+    }
     widget.wishlist.toggle(widget.product);
     HapticFeedback.selectionClick();
     final isWishlisted = widget.wishlist.isWishlisted(widget.product.id);
@@ -594,6 +637,9 @@ class _ProductGridCardState extends State<_ProductGridCard> {
                         src: ModelPathHelper.normalize(widget.product.modelPath),
                         alt: 'Preview of ${widget.product.name}',
                         ar: false,
+                        environmentImage: 'neutral',
+                        exposure: 1.35,
+                        shadowIntensity: 0.18,
                         autoRotate: false,
                         cameraControls: false,
                         disableZoom: true,

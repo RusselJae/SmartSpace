@@ -5,6 +5,7 @@ import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../views/product_detail.dart';
 import '../views/product_list.dart';
+import '../views/made_to_order_request_screen.dart';
 import '../views/sign_in.dart';
 import '../../widgets/filters_sheet.dart';
 import '../../services/mysql_database_service.dart';
@@ -33,6 +34,7 @@ class CatalogHome extends StatefulWidget {
 
 class _CatalogHomeState extends State<CatalogHome> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
+  final AuthService _auth = AuthService();
   List<Product> _allProducts = [];
   List<Product> _newArrivals = [];
   List<Product> _topRatedProducts = [];
@@ -62,31 +64,18 @@ class _CatalogHomeState extends State<CatalogHome> {
     // If there is no query, we do not show any suggestion UI at all.
     if (_searchQuery.isEmpty) return const [];
 
-    final query = _searchQuery;
+    // Base results share logic with the dedicated search results list so
+    // behavior stays consistent across the app.
+    final base = _searchResults;
 
-    // Simple scoring: we reuse the same fields as `_applyFilters`,
-    // so search behavior stays consistent with the main list.
-    final matches = _allProducts.where((product) {
-      final name = product.name.toLowerCase();
-      final description = product.description.toLowerCase();
-      final category = product.category.toLowerCase();
-      final style = product.style.toLowerCase();
-      final material = product.material.toLowerCase();
-
-      return name.contains(query) ||
-          description.contains(query) ||
-          category.contains(query) ||
-          style.contains(query) ||
-          material.contains(query);
-    }).toList();
-
-    // To keep the UI lightweight and very "Apple-style", we only
-    // surface a small handful of top matches here.
-    const maxSuggestions = 6;
-    if (matches.length <= maxSuggestions) {
-      return matches;
+    // Only surface a very small preview here – up to 3 products – so the
+    // home layout stays focused while typing. The full list lives on the
+    // dedicated search results screen.
+    const maxSuggestions = 3;
+    if (base.length <= maxSuggestions) {
+      return base;
     }
-    return matches.sublist(0, maxSuggestions);
+    return base.sublist(0, maxSuggestions);
   }
 
   // Updated color palette: removed dark brown, using medium brown and orange
@@ -128,10 +117,12 @@ class _CatalogHomeState extends State<CatalogHome> {
       ]);
       if (!mounted) return;
       setState(() {
-        _allProducts = results[0];
-        _newArrivals = results[1];
-        _topRatedProducts = results[2];
-        _bestSellerProducts = results[3];
+        // Customers should never see archived products in the storefront.
+        // (Admin still has an "Archived" segment inside the admin console.)
+        _allProducts = (results[0] as List<Product>).where((p) => !p.isArchived).toList();
+        _newArrivals = (results[1] as List<Product>).where((p) => !p.isArchived).toList();
+        _topRatedProducts = (results[2] as List<Product>).where((p) => !p.isArchived).toList();
+        _bestSellerProducts = (results[3] as List<Product>).where((p) => !p.isArchived).toList();
         developer.log('✅ Loaded ${_allProducts.length} products from database');
       });
     } catch (e) {
@@ -262,33 +253,163 @@ class _CatalogHomeState extends State<CatalogHome> {
     );
   }
 
+  void _openMadeToOrderRequest() {
+    if (!_auth.isAuthenticated) {
+      Navigator.of(context, rootNavigator: true).push(
+        CupertinoPageRoute(
+          builder: (_) => const SignInScreen(),
+          fullscreenDialog: true,
+        ),
+      );
+      Toast.info(context, 'Please sign in first');
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push(
+      CupertinoPageRoute(
+        builder: (_) => const MadeToOrderRequestScreen(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Remove 'Kids' category as requested
+    const walnut = Color(0xFF5C4033);
+    // Category labels used for the inline category links just under
+    // the navigation bar.
     const categories = [
-      'Living Room', 'Dining', 'Bedroom', 'Office', 'Outdoor'
+      'Living Room',
+      'Dining',
+      'Bedroom',
+      'Office',
+      'Kitchen',
+      'All',
     ];
 
     return CupertinoPageScaffold(
-      // Enhanced background with subtle gradient following Apple HIG
       backgroundColor: Colors.white,
       navigationBar: CupertinoNavigationBar(
-        // Solid walnut navigation bar with white title
-        backgroundColor: const Color(0xFF5C4033), // Walnut
-        border: Border(
+        // Navigation bar with logo (left), search (center), filter (right).
+        // Now using a pure white background; walnut is kept for text/icons.
+        backgroundColor: Colors.white,
+        padding: const EdgeInsetsDirectional.only(
+          start: 12,
+          end: 12,
+          top: 4,
+          bottom: 6,
+        ),
+        border: const Border(
           bottom: BorderSide(
-            color: const Color(0xFF4A3329).withValues(alpha: 0.3),
+            color: CupertinoColors.separator,
             width: 0.5,
           ),
         ),
-        middle: Text(
-          'Wood Home Furniture Trading',
-          style: GoogleFonts.poppins(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-            letterSpacing: -0.3,
+        leading: ClipOval(
+          child: Image.asset(
+            'assets/images/logo.jpg',
+            width: 34,
+            height: 34,
+            fit: BoxFit.cover,
           ),
+        ),
+        middle: Container(
+          // Pure white rectangular search field with walnut accents.
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.10),
+                blurRadius: 12,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            children: [
+              Icon(
+                CupertinoIcons.search,
+                color: walnut.withValues(alpha: 0.7),
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: CupertinoTextField(
+                  controller: _searchController,
+                  placeholder: 'Search furniture or keywords',
+                  placeholderStyle: GoogleFonts.poppins(
+                    fontSize: 14,
+                    color: walnut.withValues(alpha: 0.45),
+                  ),
+                  decoration: null,
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    color: walnut,
+                    decoration: TextDecoration.none,
+                  ),
+                  suffix: _searchQuery.isNotEmpty
+                      ? CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          onPressed: () {
+                            _searchController.clear();
+                          },
+                          child: Icon(
+                            CupertinoIcons.clear_circled_solid,
+                            size: 16,
+                            color: walnut.withValues(alpha: 0.55),
+                          ),
+                        )
+                      : null,
+                  onSubmitted: (_) {
+                    final query = _searchQuery.trim();
+                    if (query.isEmpty) return;
+                    final results = _searchResults;
+                    if (results.isEmpty) return;
+                    Navigator.of(context, rootNavigator: true).push(
+                      CupertinoPageRoute(
+                        builder: (_) => ProductListScreen(
+                          title: 'Results for "$query"',
+                          products: results,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        trailing: Stack(
+          alignment: Alignment.center,
+          children: [
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              minimumSize: Size.zero,
+              borderRadius: BorderRadius.circular(6),
+              color: Colors.white,
+              onPressed: () => _openFilters(context),
+              child: Icon(
+                CupertinoIcons.slider_horizontal_3,
+                color: walnut,
+                size: 20,
+              ),
+            ),
+            if (_activeFilters?.hasActiveFilters == true)
+              Positioned(
+                right: 4,
+                top: 4,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: CupertinoColors.systemRed,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
       child: SafeArea(
@@ -350,338 +471,111 @@ class _CatalogHomeState extends State<CatalogHome> {
                       ),
                     ),
                   )
-                : CustomScrollView(
+                : Stack(
+                    children: [
+                      Positioned.fill(
+                        child: CustomScrollView(
           slivers: [
+            // Sticky keyword bar that sits directly under the navigation bar,
+            // and directly above the floating search results panel.
+            SliverPersistentHeader(
+              pinned: true,
+              floating: false,
+              delegate: _CatalogKeywordHeaderDelegate(
+                categories: categories,
+                onTapCategory: _navigateToCategory,
+              ),
+            ),
+            // Sticky, floating search-results block that sits directly
+            // under the navigation bar. When there are no suggestions,
+            // it collapses to zero height so the catalog content moves up.
+            SliverPersistentHeader(
+              pinned: true,
+              floating: true,
+              delegate: _CatalogSearchResultsHeaderDelegate(
+                suggestions: _searchSuggestions,
+                totalResults: _searchResults.length,
+                onTapProduct: (product) => _openProduct(context, product),
+                onTapViewAll: () {
+                  final query = _searchQuery.trim();
+                  if (query.isEmpty) return;
+                  final results = _searchResults;
+                  if (results.isEmpty) return;
+                  Navigator.of(context, rootNavigator: true).push(
+                    CupertinoPageRoute(
+                      builder: (_) => ProductListScreen(
+                        title: 'Results for "$query"',
+                        products: results,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            // Full-width image strip that sits immediately above "New Arrival".
+            // No horizontal padding; only vertical breathing space.
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // -------------------------------------------------------
-                    // Search bar + live suggestions
-                    // -------------------------------------------------------
-                    //
-                    // We keep the existing search bar behavior exactly the
-                    // same, and simply *layer* a lightweight suggestion
-                    // preview underneath it. This follows Apple HIG by:
-                    // - Keeping the field visually anchored at the top
-                    // - Using a soft card with subtle depth for suggestions
-                    // - Making the suggestions fully tappable rows
-                    // -------------------------------------------------------
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Primary search input
-                        Container(
-                          decoration: BoxDecoration(
-                            // Subtle gradient background for depth
-                            gradient: LinearGradient(
-                              colors: [
-                                const Color(0xFFFFFBF7),
-                                const Color(0xFFF4E6D4).withValues(alpha: 0.3),
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: const Color(0xFFBCAAA4).withValues(alpha: 0.2),
-                              width: 1,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF8D6E63).withValues(alpha: 0.05),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                          child: Row(
-                            children: [
-                              Icon(
-                                CupertinoIcons.search,
-                                color: _kTextPrimary.withValues(alpha: 0.5),
-                                size: 20,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: CupertinoTextField(
-                                  controller: _searchController,
-                                  placeholder: 'Search furniture or keywords',
-                                  placeholderStyle: GoogleFonts.poppins(
-                                    fontSize: 15,
-                                    color: _kTextPrimary.withValues(alpha: 0.5),
-                                  ),
-                                  decoration: null,
-                                  padding: const EdgeInsets.symmetric(vertical: 4),
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 15,
-                                    color: _kTextPrimary,
-                                    decoration: TextDecoration.none,
-                                  ),
-                                  suffix: _searchQuery.isNotEmpty
-                                      ? CupertinoButton(
-                                          padding: EdgeInsets.zero,
-                                          minimumSize: Size.zero,
-                                          onPressed: () {
-                                            _searchController.clear();
-                                          },
-                                          child: Icon(
-                                            CupertinoIcons.clear_circled_solid,
-                                            size: 18,
-                                            color: _kTextPrimary.withValues(alpha: 0.5),
-                                          ),
-                                        )
-                                      : null,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              // Filter button with indicator if filters are active
-                              Stack(
-                                children: [
-                                  CupertinoButton(
-                                    padding: const EdgeInsets.all(8),
-                                    minimumSize: Size.zero,
-                                    borderRadius: BorderRadius.circular(10),
-                                    color: _activeFilters?.hasActiveFilters == true
-                                        ? _kOrange
-                                        : _kLight,
-                                    onPressed: () => _openFilters(context),
-                                    child: Icon(
-                                      CupertinoIcons.slider_horizontal_3,
-                                      color: _activeFilters?.hasActiveFilters == true
-                                          ? Colors.white
-                                          : _kBrown,
-                                      size: 18,
-                                    ),
-                                  ),
-                                  // Badge indicator when filters are active
-                                  if (_activeFilters?.hasActiveFilters == true)
-                                    Positioned(
-                                      right: 0,
-                                      top: 0,
-                                      child: Container(
-                                        width: 8,
-                                        height: 8,
-                                        decoration: const BoxDecoration(
-                                          color: CupertinoColors.systemRed,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        // Animated suggestion preview panel.
-                        // This collapses completely when there is no query or
-                        // when there are no matches, so the rest of the layout
-                        // (categories, sections, etc.) stays untouched.
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          switchInCurve: Curves.easeOutCubic,
-                          switchOutCurve: Curves.easeInCubic,
-                          child: _searchSuggestions.isEmpty
-                              ? const SizedBox.shrink()
-                              : Container(
-                                  key: const ValueKey('catalog_search_suggestions'),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: const Color(0xFFBCAAA4).withValues(alpha: 0.2),
-                                      width: 1,
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(alpha: 0.04),
-                                        blurRadius: 12,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  padding: const EdgeInsets.symmetric(vertical: 6),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: _searchSuggestions.map((product) {
-                                      return CupertinoButton(
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                        borderRadius: BorderRadius.zero,
-                                        onPressed: () {
-                                          // Keep the text field in sync with the tapped suggestion
-                                          // and open the existing product detail screen.
-                                          _searchController.text = product.name;
-                                          _openProduct(context, product);
-                                        },
-                                        child: Row(
-                                          children: [
-                                            // Small circular thumb-style preview using the same model
-                                            Container(
-                                              width: 32,
-                                              height: 32,
-                                              decoration: BoxDecoration(
-                                                color: const Color(0xFFF9F4EF),
-                                                borderRadius: BorderRadius.circular(999),
-                                              ),
-                                              clipBehavior: Clip.hardEdge,
-                                              child: ModelViewer(
-                                                key: ValueKey('${product.id}_suggestion'),
-                                                backgroundColor: const Color(0xFFF9F4EF),
-                                                src: ModelPathHelper.normalize(product.modelPath),
-                                                alt: 'Preview of ${product.name}',
-                                                ar: false,
-                                                autoRotate: false,
-                                                cameraControls: false,
-                                                disableZoom: true,
-                                                interactionPrompt: InteractionPrompt.none,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Text(
-                                                    product.name,
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                    style: GoogleFonts.poppins(
-                                                      fontSize: 14,
-                                                      fontWeight: FontWeight.w600,
-                                                      color: _kTextPrimary,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 2),
-                                                  Text(
-                                                    '${product.category} • ₱${_CatalogHomeState.formatPrice(product.price)}',
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                    style: GoogleFonts.poppins(
-                                                      fontSize: 11,
-                                                      color: _kTextPrimary.withValues(alpha: 0.6),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    }).toList(),
-                                  ),
-                                ),
-                        ),
-                      ],
-                    ),
-                    // Categories section (only shown when not searching)
-                    if (_searchQuery.isEmpty) ...[
-                      const SizedBox(height: 24),
-                      Text(
-                        'Categories',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.black,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ],
-                  ],
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: SizedBox(
+                  height: 140,
+                  width: double.infinity,
+                  child: Image.asset(
+                    'assets/images/home_banner.png',
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
             ),
-            // Categories horizontal list (only shown when not searching)
-            if (_searchQuery.isEmpty)
-              SliverToBoxAdapter(
-                child: SizedBox(
-                  height: 120,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: categories.length,
-                    itemBuilder: (context, i) {
-                      return SizedBox(
-                        width: 100,
-                        child: _CategoryTile(
-                          label: categories[i],
-                          onTap: () => _navigateToCategory(categories[i]),
-                        ),
-                      );
-                    },
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                  ),
-                ),
-              ),
-            // Search Results section (shown when searching)
-            if (_searchQuery.isNotEmpty) ...[
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Search Results',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: _kTextPrimary,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                      Text(
-                        '${_searchResults.length} ${_searchResults.length == 1 ? 'result' : 'results'}',
-                        style: GoogleFonts.poppins(
-                          fontSize: 14,
-                          fontWeight: FontWeight.normal,
-                          color: _kTextPrimary.withValues(alpha: 0.6),
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: SizedBox(
-                  height: 220,
-                  child: _searchResults.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24.0),
-                            child: Text(
-                              'No products found',
-                              style: GoogleFonts.poppins(
-                                fontSize: 16,
-                                color: _kTextPrimary.withValues(alpha: 0.6),
-                                decoration: TextDecoration.none,
-                              ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                child: CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  onPressed: _openMadeToOrderRequest,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: walnut.withValues(alpha: 0.25), width: 1),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(CupertinoIcons.sparkles, color: walnut, size: 18),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Made to Order',
+                            style: GoogleFonts.poppins(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: walnut,
+                              decoration: TextDecoration.none,
                             ),
                           ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          scrollDirection: Axis.horizontal,
-                          itemBuilder: (context, index) {
-                            final product = _searchResults[index];
-                            return _HorizontalProductCard(
-                              product: product,
-                              onTap: () => _openProduct(context, product),
-                            );
-                          },
-                          separatorBuilder: (_, __) => const SizedBox(width: 12),
-                          itemCount: _searchResults.length,
                         ),
+                        Text(
+                          'Request now',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: walnut.withValues(alpha: 0.85),
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(CupertinoIcons.chevron_forward, color: walnut, size: 16),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ],
-            // New Arrival section (always shows all products, not filtered by search)
-            if (_searchQuery.isEmpty) ...[
+            ),
+            // New Arrival section (search does not hide or filter this section)
+            ...[
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
               SliverToBoxAdapter(
                 child: Padding(
@@ -770,8 +664,8 @@ class _CatalogHomeState extends State<CatalogHome> {
                 ),
               ),
             ],
-            // Top Rated section (only shown when not searching)
-            if (_searchQuery.isEmpty) ...[
+            // Top Rated section (always visible; filters only)
+            ...[
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
               SliverToBoxAdapter(
                 child: Padding(
@@ -860,8 +754,8 @@ class _CatalogHomeState extends State<CatalogHome> {
                 ),
               ),
             ],
-            // Best Seller section (only shown when not searching)
-            if (_searchQuery.isEmpty) ...[
+            // Best Seller section (always visible; filters only)
+            ...[
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
               SliverToBoxAdapter(
                 child: Padding(
@@ -950,15 +844,18 @@ class _CatalogHomeState extends State<CatalogHome> {
                 ),
               ),
             ],
-            // Add bottom padding to prevent content from being blocked by tab bar
-            // Tab bar height is 70px, so we add extra padding for comfortable spacing
-            const SliverToBoxAdapter(child: SizedBox(height: 90)),
+            // Bottom padding for tab bar clearance (reduced 90% from 90px).
+            const SliverToBoxAdapter(child: SizedBox(height: 9)),
           ],
         ),
+                      ),
+                    ],
+                  ),
       ),
     );
   }
 }
+
 
 class _CategoryTile extends StatelessWidget {
   const _CategoryTile({required this.label, required this.onTap});
@@ -1103,6 +1000,16 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
   }
 
   void _handleWishlistTap() {
+    if (!_auth.isAuthenticated) {
+      Navigator.of(context, rootNavigator: true).push(
+        CupertinoPageRoute(
+          builder: (_) => const SignInScreen(),
+          fullscreenDialog: true,
+        ),
+      );
+      Toast.info(context, 'Please sign in to like products');
+      return;
+    }
     _wishlist.toggle(widget.product);
     HapticFeedback.selectionClick();
     final isWishlisted = _wishlist.isWishlisted(widget.product.id);
@@ -1189,6 +1096,12 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
                         src: ModelPathHelper.normalize(widget.product.modelPath),
                         alt: 'Preview of ${widget.product.name}',
                         ar: false,
+                        // Brighter, more even studio lighting.
+                        // `neutral` applies a balanced environment map, and
+                        // exposure boosts overall brightness without washing out.
+                        environmentImage: 'neutral',
+                        exposure: 1.35,
+                        shadowIntensity: 0.18,
                         autoRotate: false,
                         cameraControls: false,
                         disableZoom: true,
@@ -1303,5 +1216,228 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
         ),
       ),
     );
+  }
+}
+
+/// Sliver header that renders the floating search-results panel for
+/// `CatalogHome`. When there are no suggestions, it collapses to zero
+/// height so normal content fills the space.
+class _CatalogSearchResultsHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _CatalogSearchResultsHeaderDelegate({
+    required this.suggestions,
+    required this.totalResults,
+    required this.onTapProduct,
+    required this.onTapViewAll,
+  });
+
+  final List<Product> suggestions;
+  final int totalResults;
+  final void Function(Product) onTapProduct;
+  final VoidCallback onTapViewAll;
+
+  double _baseHeight() {
+    if (suggestions.isEmpty) return 0;
+    const row = 50.0;
+    const footer = 40.0;
+    final rowsHeight = row * suggestions.length;
+    final extraFooter = totalResults > suggestions.length ? footer : 0;
+    return rowsHeight + extraFooter + 4;
+  }
+
+  @override
+  double get minExtent => _baseHeight();
+
+  @override
+  double get maxExtent => _baseHeight();
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    if (suggestions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      // No vertical gap between navigation bar and the floating panel.
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: const Color(0xFFBCAAA4).withValues(alpha: 0.25),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 22,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final product in suggestions)
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                borderRadius: BorderRadius.zero,
+                onPressed: () => onTapProduct(product),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9F4EF),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      clipBehavior: Clip.hardEdge,
+                      child: ModelViewer(
+                        key: ValueKey('${product.id}_suggestion_header'),
+                        backgroundColor: const Color(0xFFF9F4EF),
+                        src: ModelPathHelper.normalize(product.modelPath),
+                        alt: 'Preview of ${product.name}',
+                        ar: false,
+                        environmentImage: 'neutral',
+                        exposure: 1.35,
+                        shadowIntensity: 0.18,
+                        autoRotate: false,
+                        cameraControls: false,
+                        disableZoom: true,
+                        interactionPrompt: InteractionPrompt.none,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            product.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: _CatalogHomeState._kTextPrimary,
+                            ),
+                          ),
+                          Text(
+                            '${product.category} • ₱${_CatalogHomeState.formatPrice(product.price)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              fontSize: 11,
+                              color:
+                                  _CatalogHomeState._kTextPrimary.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (totalResults > suggestions.length)
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                borderRadius: BorderRadius.zero,
+                onPressed: onTapViewAll,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'More search results ($totalResults)',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _CatalogHomeState._kBrown,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 12,
+                      color: _CatalogHomeState._kBrown,
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _CatalogSearchResultsHeaderDelegate oldDelegate) {
+    return oldDelegate.suggestions != suggestions ||
+        oldDelegate.totalResults != totalResults;
+  }
+}
+
+/// Sticky category-links bar shown between the navigation bar and the
+/// floating search results panel.
+class _CatalogKeywordHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _CatalogKeywordHeaderDelegate({
+    required this.categories,
+    required this.onTapCategory,
+  });
+
+  final List<String> categories;
+  final void Function(String) onTapCategory;
+
+  @override
+  double get minExtent => categories.isEmpty ? 0 : 30;
+
+  @override
+  double get maxExtent => categories.isEmpty ? 0 : 30;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    if (categories.isEmpty) return const SizedBox.shrink();
+
+    const walnut = Color(0xFF5C4033);
+
+    return Container(
+      width: double.infinity,
+      color: Colors.white,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final category in categories) ...[
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
+                minSize: 0,
+                onPressed: () => onTapCategory(category),
+                child: Text(
+                  category,
+                  style: GoogleFonts.poppins(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: walnut,
+                    decoration: TextDecoration.none,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _CatalogKeywordHeaderDelegate oldDelegate) {
+    return oldDelegate.categories != categories;
   }
 }

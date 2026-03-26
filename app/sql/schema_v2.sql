@@ -126,13 +126,15 @@ CREATE TABLE products (
     is_popular      BOOLEAN DEFAULT FALSE,
     is_new_arrival  BOOLEAN DEFAULT FALSE,
     in_stock        BOOLEAN DEFAULT TRUE,
+    is_archived     BOOLEAN DEFAULT FALSE,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_products_category (category),
     INDEX idx_products_style (style),
     INDEX idx_products_is_popular (is_popular),
     INDEX idx_products_is_new_arrival (is_new_arrival),
-    INDEX idx_products_in_stock (in_stock)
+    INDEX idx_products_in_stock (in_stock),
+    INDEX idx_products_is_archived (is_archived)
 );
 
 CREATE TABLE product_media (

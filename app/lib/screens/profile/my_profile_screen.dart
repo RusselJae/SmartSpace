@@ -331,6 +331,34 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     );
   }
 
+  Widget _buildRequiredLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: _inkTitle,
+              ),
+            ),
+          ),
+          Text(
+            '* Required',
+            style: GoogleFonts.poppins(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: CupertinoColors.systemRed,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildField(TextEditingController controller, {TextInputType? keyboardType}) {
     return CupertinoTextField(
       controller: controller,
@@ -398,13 +426,13 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     final formFields = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildLabel('Username'),
+        _buildRequiredLabel('Username'),
         _buildField(_usernameController),
         const SizedBox(height: 12),
-        _buildLabel('Name'),
+        _buildRequiredLabel('Name'),
         _buildField(_nameController),
         const SizedBox(height: 12),
-        _buildLabel('Email'),
+        _buildRequiredLabel('Email'),
         _buildField(_emailController, keyboardType: TextInputType.emailAddress),
         const SizedBox(height: 12),
         _buildLabel('Phone Number'),

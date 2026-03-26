@@ -61,6 +61,8 @@ class AuthService {
     required String fullName,
     required String password,
     String? phoneNumber,
+    String? username,
+    DateTime? dateOfBirth,
   }) async {
     developer.log('📝 Signing up user: $email');
     
@@ -69,7 +71,10 @@ class AuthService {
       final payload = {
         'email': email,
         'fullName': fullName,
+        'password': password,
         if (phoneNumber != null) 'phoneNumber': phoneNumber,
+        if (username != null && username.trim().isNotEmpty) 'username': username.trim(),
+        if (dateOfBirth != null) 'dateOfBirth': dateOfBirth.toIso8601String(),
       };
 
       final response = await _client
@@ -142,31 +147,27 @@ class AuthService {
     required String email,
     required String password,
   }) async {
-    developer.log('🔐 Signing in user: $email');
+    final identifier = email.trim();
+    developer.log('🔐 Signing in user: $identifier');
     
     try {
-      // Get all users and find by email
-      final uri = Uri.parse('${ApiConfig.baseUrl}/users');
-      final response = await _client.get(uri).timeout(ApiConfig.timeout);
+      // Secure login endpoint (email/username + password)
+      final uri = Uri.parse('${ApiConfig.baseUrl}/users/auth/login');
+      final response = await _client
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'identifier': identifier,
+              'password': password,
+            }),
+          )
+          .timeout(ApiConfig.timeout);
 
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
         if (decoded['success'] == true && decoded['data'] != null) {
-          final usersList = decoded['data'] as List;
-          final users = usersList.map((u) => User.fromJson(u as Map<String, dynamic>)).toList();
-          
-          // Find user by email (simple check - in production, use proper auth)
-          final user = users.firstWhere(
-            (u) => u.email.toLowerCase() == email.toLowerCase(),
-            orElse: () => throw Exception('Invalid username or password'),
-          );
-
-          // Check if email is verified - users cannot login until they verify their email
-          if (!user.emailVerified) {
-            developer.log('⚠️ Login blocked: Email not verified for ${user.email}');
-            throw Exception('Please verify your email address before signing in. Check your inbox for the verification email.');
-          }
-
+          final user = User.fromJson(decoded['data'] as Map<String, dynamic>);
           _currentUser = user;
           await _persistUser(user);
           await CartService().syncWithUser(_currentUser?.id);
@@ -174,12 +175,63 @@ class AuthService {
           return _currentUser!;
         }
       }
+
+      // Try to extract backend error message (e.g., "Please verify your email...")
+      try {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final message = decoded['message'] as String?;
+        if (message != null && message.trim().isNotEmpty) {
+          throw Exception(message);
+        }
+      } catch (_) {
+        // ignore JSON parsing errors
+      }
+
       throw Exception('Invalid username or password');
     } catch (e) {
       developer.log('❌ Sign in failed: $e');
       // Re-throw the exception with the original message (especially for email verification errors)
       rethrow;
     }
+  }
+
+  /// Change password for the currently signed-in user.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final userId = _currentUser?.id;
+    if (userId == null) {
+      throw Exception('You must be signed in to change your password.');
+    }
+
+    final uri = Uri.parse('${ApiConfig.baseUrl}/users/$userId/change-password');
+    final response = await _client
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'currentPassword': currentPassword,
+            'newPassword': newPassword,
+          }),
+        )
+        .timeout(ApiConfig.timeout);
+
+    if (response.statusCode == 200) {
+      return;
+    }
+
+    try {
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final message = decoded['message'] as String?;
+      if (message != null && message.trim().isNotEmpty) {
+        throw Exception(message);
+      }
+    } catch (_) {
+      // ignore
+    }
+
+    throw Exception('Failed to update password.');
   }
 
   /// Sign out current user

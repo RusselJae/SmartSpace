@@ -27,6 +27,16 @@ type EnvironmentConfig = {
   readonly frontend: {
     readonly url: string;
   };
+  readonly paymongo: {
+    /** sk_test_... or sk_live_... — never commit real keys */
+    readonly secretKey: string;
+    /** Webhook signing secret from PayMongo dashboard */
+    readonly webhookSecret: string;
+    /** Where PayMongo redirects after successful payment (must be reachable in browser) */
+    readonly successUrl: string;
+    /** Where PayMongo redirects if user cancels */
+    readonly cancelUrl: string;
+  };
 };
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -65,6 +75,17 @@ export const config: EnvironmentConfig = {
   },
   frontend: {
     url: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+  },
+  paymongo: {
+    secretKey: process.env.PAYMONGO_SECRET_KEY ?? '',
+    webhookSecret: process.env.PAYMONGO_WEBHOOK_SECRET ?? '',
+    // Default return URLs hit this API so test checkout works without configuring Flutter port
+    successUrl:
+      process.env.PAYMONGO_SUCCESS_URL ??
+      `${process.env.PUBLIC_API_BASE_URL ?? 'http://localhost:4000'}/api/paymongo-return/success`,
+    cancelUrl:
+      process.env.PAYMONGO_CANCEL_URL ??
+      `${process.env.PUBLIC_API_BASE_URL ?? 'http://localhost:4000'}/api/paymongo-return/cancel`,
   },
 };
 

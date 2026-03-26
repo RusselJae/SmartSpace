@@ -30,6 +30,7 @@ class AdminAuthService {
   String? _email;
   String? _adminId;
   String? _fullName;
+  DateTime? _signedInAt;
 
   /// Returns true when an admin session is active on this device.
   bool get isAuthenticated => _email != null;
@@ -42,6 +43,9 @@ class AdminAuthService {
 
   /// ID of the currently signed-in admin, if any.
   String? get currentAdminId => _adminId;
+
+  /// When the current admin session was created on this device.
+  DateTime? get signedInAt => _signedInAt;
 
   Future<void> _ensurePrefs() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -58,6 +62,8 @@ class AdminAuthService {
         _email = decoded['email'] as String?;
         _adminId = decoded['adminId'] as String?;
         _fullName = decoded['fullName'] as String?;
+        final signedInAtRaw = decoded['signedInAt'] as String?;
+        _signedInAt = signedInAtRaw != null ? DateTime.tryParse(signedInAtRaw) : null;
         if (_email != null) {
           developer.log('🔁 Restored admin session for $_email');
         }
@@ -98,12 +104,13 @@ class AdminAuthService {
           _email = data['email'] as String?;
           _adminId = data['id'] as String?;
           _fullName = data['fullName'] as String?;
+          _signedInAt = DateTime.now();
 
           final sessionPayload = <String, dynamic>{
             'email': _email,
             'adminId': _adminId,
             'fullName': _fullName,
-            'signedInAt': DateTime.now().toIso8601String(),
+            'signedInAt': _signedInAt!.toIso8601String(),
           };
           await _prefs?.setString(_sessionKey, jsonEncode(sessionPayload));
           developer.log('✅ Admin logged in as $_email');
@@ -128,9 +135,10 @@ class AdminAuthService {
       if (email.trim().toLowerCase() == fallbackEmail.toLowerCase() &&
           password == fallbackPassword) {
         _email = email.trim();
+        _signedInAt = DateTime.now();
         final sessionPayload = <String, dynamic>{
           'email': _email,
-          'signedInAt': DateTime.now().toIso8601String(),
+          'signedInAt': _signedInAt!.toIso8601String(),
         };
         await _prefs?.setString(_sessionKey, jsonEncode(sessionPayload));
         developer.log('✅ Admin logged in (fallback mode) as $_email');
@@ -140,6 +148,24 @@ class AdminAuthService {
     }
   }
 
+  /// Update locally-stored profile fields for the current session.
+  ///
+  /// This is used after the backend successfully updates the admin record, so
+  /// the UI immediately reflects the new values without forcing re-login.
+  Future<void> updateLocalProfile({String? fullName}) async {
+    await initialize();
+    if (fullName != null) {
+      _fullName = fullName.trim().isEmpty ? _fullName : fullName.trim();
+    }
+    final sessionPayload = <String, dynamic>{
+      'email': _email,
+      'adminId': _adminId,
+      'fullName': _fullName,
+      if (_signedInAt != null) 'signedInAt': _signedInAt!.toIso8601String(),
+    };
+    await _prefs?.setString(_sessionKey, jsonEncode(sessionPayload));
+  }
+
   /// Clear the current admin session.
   Future<void> signOut() async {
     await initialize();
@@ -147,6 +173,7 @@ class AdminAuthService {
     _email = null;
     _adminId = null;
     _fullName = null;
+    _signedInAt = null;
     await _prefs?.remove(_sessionKey);
     developer.log('👋 Admin signed out (previous: $previous)');
   }

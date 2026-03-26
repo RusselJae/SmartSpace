@@ -16,9 +16,11 @@ import '../shell/tab_shell.dart';
 import 'models.dart';
 import 'success_screen.dart';
 
-/// Payment confirmation screen with QR code and payment proof upload
-/// 
-/// Users must complete payment within 15 minutes or order will be cancelled
+/// Payment confirmation screen with QR code and payment proof upload.
+///
+/// NOTE: Expiration auto-cancel is intentionally disabled.
+/// Users can still pay later from Orders; unpaid orders are cancelled explicitly
+/// via the PayMongo cancel return route.
 class PaymentConfirmationScreen extends StatefulWidget {
   const PaymentConfirmationScreen({
     super.key,
@@ -49,13 +51,12 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
   
   int _remainingSeconds = 0;
   Timer? _countdownTimer;
-  Timer? _autoCancelTimer;
   late DateTime _deadline;
   
   File? _paymentProofImage;
   bool _uploading = false;
   bool _paymentConfirmed = false;
-  bool _orderExpired = false;
+  bool _orderCancelled = false;
   AppSettings? _settings;
 
   @override
@@ -73,7 +74,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
           _settings = settings;
           final timerMinutes = settings.paymentConfirmationTimeMinutes;
           _remainingSeconds = timerMinutes * 60;
-          // If resetTimer is true (repaying expired order), use current time instead of orderCreatedAt
+          // If resetTimer is true (restarting payment attempt), use current time instead of orderCreatedAt
           final startTime = widget.resetTimer ? DateTime.now() : widget.orderCreatedAt;
           _deadline = startTime.add(Duration(minutes: timerMinutes));
         });
@@ -86,7 +87,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
         setState(() {
           _settings = const AppSettings();
           _remainingSeconds = 15 * 60;
-          // If resetTimer is true (repaying expired order), use current time instead of orderCreatedAt
+          // If resetTimer is true (restarting payment attempt), use current time instead of orderCreatedAt
           final startTime = widget.resetTimer ? DateTime.now() : widget.orderCreatedAt;
           _deadline = startTime.add(const Duration(minutes: 15));
         });
@@ -104,7 +105,6 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
 
   void _stopTimers() {
     _countdownTimer?.cancel();
-    _autoCancelTimer?.cancel();
   }
 
   int _calculateRemainingSeconds() {
@@ -115,10 +115,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
   /// Start countdown timer and auto-cancel timer
   void _startTimers() {
     _remainingSeconds = _calculateRemainingSeconds();
-    if (_remainingSeconds <= 0) {
-      _cancelOrderAutomatically();
-      return;
-    }
+    // UI countdown only (no status changes).
 
     // Countdown timer for UI display
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -129,24 +126,13 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
       final secondsLeft = _calculateRemainingSeconds();
       if (secondsLeft <= 0) {
         timer.cancel();
-        _cancelOrderAutomatically();
+        setState(() => _remainingSeconds = 0);
       } else {
         setState(() {
           _remainingSeconds = secondsLeft;
         });
       }
     });
-
-    // Auto-cancel timer (aligned with actual deadline)
-    final durationUntilDeadline = _deadline.difference(DateTime.now());
-    if (durationUntilDeadline.isNegative) {
-      _cancelOrderAutomatically();
-    } else {
-      _autoCancelTimer = Timer(durationUntilDeadline, () {
-        if (!mounted) return;
-        _cancelOrderAutomatically();
-      });
-    }
   }
 
   /// Check if payment has already been confirmed
@@ -158,7 +144,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
         orElse: () => throw Exception('Order not found'),
       );
       
-      // Check if payment is already confirmed or order is expired
+      // Check if payment is already confirmed or order is cancelled
       final paymentStatus = order.shippingAddress['paymentStatus'] as String?;
       if (paymentStatus == 'confirmed' || paymentStatus == 'downpayment_paid') {
         if (mounted) {
@@ -167,12 +153,10 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
           });
           _stopTimers();
         }
-      } else if ((order.status == 'expired' || order.status == 'cancelled') && !widget.resetTimer) {
-        // Only show expired screen if this is not a repayment (resetTimer = false)
-        // If resetTimer is true, we're repaying so show the payment screen instead
+      } else if (order.status == 'cancelled') {
         if (mounted) {
           setState(() {
-            _orderExpired = true;
+            _orderCancelled = true;
           });
           _stopTimers();
         }
@@ -182,24 +166,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
     }
   }
 
-  /// Expire order automatically after configured time (instead of cancelling)
-  Future<void> _cancelOrderAutomatically() async {
-    if (_paymentConfirmed || _orderExpired) return;
-    _stopTimers();
-    
-    try {
-      await _db.updateOrderStatus(widget.orderId, 'expired');
-      if (mounted) {
-        final settings = _settings ?? const AppSettings();
-        setState(() {
-          _orderExpired = true;
-        });
-        Toast.error(context, 'Order expired: Payment not received within ${settings.paymentConfirmationTimeMinutes} minutes. You can repay this order.');
-      }
-    } catch (e) {
-      developer.log('Error expiring order: $e', name: 'PaymentConfirmation');
-    }
-  }
+  // Expiration auto-cancel removed.
 
   /// Pick payment proof image from gallery or camera
   /// Supports both Android and iOS image selection
@@ -353,7 +320,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_orderExpired) {
+    if (_orderCancelled) {
       return CupertinoPageScaffold(
         navigationBar: CupertinoNavigationBar(
           leading: CupertinoNavigationBarBackButton(
@@ -361,7 +328,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
             color: const Color(0xFF8D6E63),
           ),
           middle: Text(
-            'Order Expired',
+            'Order Cancelled',
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
           ),
         ),
@@ -379,7 +346,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'Order Expired',
+                    'Order Cancelled',
                     style: GoogleFonts.poppins(
                       fontSize: 24,
                       fontWeight: FontWeight.w700,
@@ -390,7 +357,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'Your order expired because payment was not received within ${_settings?.paymentConfirmationTimeMinutes ?? 15} minutes.',
+                    'This payment attempt was cancelled. Start a new PayMongo checkout from Orders.',
                     style: GoogleFonts.poppins(
                       fontSize: 16,
                       fontWeight: FontWeight.normal,
@@ -399,59 +366,19 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'You can repay this order to continue.',
-                    style: GoogleFonts.poppins(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: const Color(0xFFFF9800),
-                      decoration: TextDecoration.none,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
                   const SizedBox(height: 32),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CupertinoButton(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        color: CupertinoColors.systemGrey5,
-                        borderRadius: BorderRadius.circular(10),
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: Text(
-                          'Close',
-                          style: GoogleFonts.poppins(
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF8D6E63),
-                          ),
-                        ),
+                  CupertinoButton(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    color: CupertinoColors.systemGrey5,
+                    borderRadius: BorderRadius.circular(10),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(
+                      'Close',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF8D6E63),
                       ),
-                      const SizedBox(width: 12),
-                      CupertinoButton.filled(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        color: const Color(0xFFFF9800),
-                        borderRadius: BorderRadius.circular(10),
-                        onPressed: () async {
-                          // Reset order status to pending
-                          try {
-                            await _db.updateOrderStatus(widget.orderId, 'pending');
-                            if (!mounted) return;
-                            final navigator = Navigator.of(context);
-                            navigator.pop();
-                            // Reload will happen when we return to orders screen
-                          } catch (e) {
-                            if (!mounted) return;
-                            final ctx = context;
-                            Toast.error(ctx, 'Failed to reset order: $e');
-                          }
-                        },
-                        child: Text(
-                          'Repay Order',
-                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -660,7 +587,9 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                   ] else ...[
                     const SizedBox(height: 8),
                     Text(
-                      'Full Payment (GCash)',
+                      widget.paymentMethod == PaymentMethod.paymongo
+                          ? 'Full Payment (PayMongo)'
+                          : 'Full Payment (GCash)',
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         color: CupertinoColors.systemGrey,

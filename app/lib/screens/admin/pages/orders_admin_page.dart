@@ -1,14 +1,17 @@
 import 'dart:developer' as developer;
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../models/made_to_order_request.dart';
 import '../../../models/order_record.dart';
 import '../../../services/mysql_database_service.dart';
 import '../../../config/api_config.dart';
 import '../widgets/admin_toolbar.dart';
 import '../../../widgets/toast.dart';
+import '../../../utils/order_payment_balance.dart';
 
 /// Orders management page with search, filtering, and status updates.
 /// Follows Apple HIG principles with clean layouts and smooth animations.
@@ -22,21 +25,29 @@ class OrdersAdminPage extends StatefulWidget {
 class _OrdersAdminPageState extends State<OrdersAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
-  final List<String> _statuses = const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'expired'];
+  final List<String> _statuses = const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
   
   List<OrderRecord> _orders = [];
   Map<String, String> _productNames = {}; // Cache product names by ID
+  /// First product image URL per id (absolute), for admin order detail thumbnails.
+  Map<String, String> _productThumbUrls = {};
   bool _loading = true;
   String _filter = 'all';
   String _searchQuery = '';
   String? _error;
+
+  static const int _pageSize = 10;
+  int _pageIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _loadOrders();
     _searchController.addListener(() {
-      setState(() => _searchQuery = _searchController.text.toLowerCase());
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+        _pageIndex = 0;
+      });
     });
   }
 
@@ -57,13 +68,19 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       // Fetch all products to get names
       final products = await _db.getAllProducts();
       final productNamesMap = <String, String>{};
+      final thumbMap = <String, String>{};
       for (final product in products) {
         productNamesMap[product.id] = product.name;
+        if (product.imageUrls.isNotEmpty) {
+          final u = _absoluteMediaUrl(product.imageUrls.first);
+          if (u.isNotEmpty) thumbMap[product.id] = u;
+        }
       }
       if (!mounted) return;
       setState(() {
         _orders = orders;
         _productNames = productNamesMap;
+        _productThumbUrls = thumbMap;
       });
     } catch (e) {
       setState(() {
@@ -396,6 +413,659 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     );
   }
 
+  /// Admin: set quote line items (total must equal DP + balance).
+  Future<bool> _showQuoteMtoDialog(MadeToOrderRequest req) async {
+    final totalCtrl = TextEditingController(
+      text: req.quotedTotal != null ? req.quotedTotal!.toStringAsFixed(2) : '',
+    );
+    final dpCtrl = TextEditingController(
+      text: req.quotedDownpayment != null ? req.quotedDownpayment!.toStringAsFixed(2) : '',
+    );
+    final remCtrl = TextEditingController(
+      text: req.quotedRemaining != null ? req.quotedRemaining!.toStringAsFixed(2) : '',
+    );
+    final msgCtrl = TextEditingController(text: req.adminMessage ?? '');
+
+    final borderColor = CupertinoColors.separator.withValues(alpha: 0.1);
+    const fillColor = Color(0xFFF8F8F8);
+    const focusColor = Color(0xFF8D6E63);
+
+    void recalcRemaining() {
+      final total = double.tryParse(totalCtrl.text.trim().replaceAll(',', ''));
+      final dp = double.tryParse(dpCtrl.text.trim().replaceAll(',', ''));
+      if (total == null || dp == null) {
+        remCtrl.text = '';
+        return;
+      }
+      final remaining = (total - dp).toStringAsFixed(2);
+      remCtrl.value = TextEditingValue(
+        text: remaining,
+        selection: TextSelection.collapsed(offset: remaining.length),
+      );
+    }
+
+    // Keep “Remaining balance” automatically in sync with (Total - Down payment).
+    totalCtrl.addListener(recalcRemaining);
+    dpCtrl.addListener(recalcRemaining);
+    recalcRemaining();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        InputDecoration amountDecoration({
+          required String label,
+          required String prefix,
+          required bool readOnly,
+        }) {
+          return InputDecoration(
+            labelText: label,
+            prefixText: prefix,
+            filled: true,
+            fillColor: fillColor,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: borderColor),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: borderColor, width: readOnly ? 1 : 1),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: focusColor, width: 2),
+            ),
+          );
+        }
+
+        Widget fieldLabel(String text, {bool required = false}) {
+          return Row(
+            children: [
+              Text(
+                text,
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF6D4C41),
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              if (required)
+                const Text(
+                  ' *',
+                  style: TextStyle(color: CupertinoColors.systemRed, fontSize: 16),
+                ),
+            ],
+          );
+        }
+
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 920, maxHeight: 700),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F8F8),
+                      border: Border(
+                        bottom: BorderSide(color: Colors.grey.shade200),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          tooltip: 'Close',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Quote request',
+                            style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 18,
+                              color: Colors.black,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 900),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '${req.itemName} · ${req.userName}',
+                              style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
+                            ),
+                            const SizedBox(height: 12),
+
+                            // TOTAL
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  fieldLabel('Total (incl. shipping)', required: true),
+                                  const SizedBox(height: 6),
+                                  TextField(
+                                    controller: totalCtrl,
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    decoration: amountDecoration(
+                                      label: 'Total',
+                                      prefix: '₱',
+                                      readOnly: false,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // DOWN PAYMENT
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  fieldLabel('Down payment', required: true),
+                                  const SizedBox(height: 6),
+                                  TextField(
+                                    controller: dpCtrl,
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    decoration: amountDecoration(
+                                      label: 'Down payment',
+                                      prefix: '₱',
+                                      readOnly: false,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // REMAINING (read-only)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  fieldLabel('Remaining balance', required: true),
+                                  const SizedBox(height: 6),
+                                  TextField(
+                                    controller: remCtrl,
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    readOnly: true,
+                                    decoration: amountDecoration(
+                                      label: 'Remaining balance',
+                                      prefix: '₱',
+                                      readOnly: true,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // NOTE
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  fieldLabel('Note to customer', required: false),
+                                  const SizedBox(height: 6),
+                                  TextField(
+                                    controller: msgCtrl,
+                                    maxLines: 2,
+                                    decoration: InputDecoration(
+                                      labelText: 'Optional note',
+                                      filled: true,
+                                      fillColor: fillColor,
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(color: borderColor),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(color: borderColor, width: 1),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: const BorderSide(color: focusColor, width: 2),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        top: BorderSide(color: Colors.grey.shade200),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton(
+                          onPressed: () => Navigator.of(ctx).pop(true),
+                          child: Text(
+                            'Save quote',
+                            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    // Cleanup controllers/listeners.
+    totalCtrl.removeListener(recalcRemaining);
+    dpCtrl.removeListener(recalcRemaining);
+
+    if (result != true) {
+      totalCtrl.dispose();
+      dpCtrl.dispose();
+      remCtrl.dispose();
+      msgCtrl.dispose();
+      return false;
+    }
+
+    final totalParsed = double.tryParse(totalCtrl.text.trim().replaceAll(',', ''));
+    final dpParsed = double.tryParse(dpCtrl.text.trim().replaceAll(',', ''));
+
+    totalCtrl.dispose();
+    dpCtrl.dispose();
+    remCtrl.dispose();
+
+    final msg = msgCtrl.text.trim();
+    msgCtrl.dispose();
+
+    if (totalParsed == null || dpParsed == null) {
+      if (mounted) Toast.error(context, 'Enter valid numbers for total and down payment');
+      return false;
+    }
+
+    final totalRounded = double.parse(totalParsed.toStringAsFixed(2));
+    final dpRounded = double.parse(dpParsed.toStringAsFixed(2));
+    final remainingRounded = double.parse((totalRounded - dpRounded).toStringAsFixed(2));
+
+    try {
+      await _db.quoteMadeToOrderRequest(
+        requestId: req.id,
+        quotedTotal: totalRounded,
+        quotedDownpayment: dpRounded,
+        quotedRemaining: remainingRounded,
+        adminMessage: msg.isEmpty ? null : msg,
+      );
+      if (mounted) Toast.success(context, 'Quote saved');
+      return true;
+    } catch (e) {
+      if (mounted) Toast.error(context, 'Quote failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _showDeclineMtoDialog(MadeToOrderRequest req) async {
+    final msgCtrl = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 920, maxHeight: 700),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F8F8),
+                    border: Border(
+                      bottom: BorderSide(color: Colors.grey.shade200),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        tooltip: 'Close',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                      Expanded(
+                        child: Text(
+                          'Decline request',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 18,
+                            color: Colors.black,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 900),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Decline “${req.itemName}” for ${req.userName}?',
+                            style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: msgCtrl,
+                            maxLines: 3,
+                            decoration: const InputDecoration(
+                              labelText: 'Reason (optional)',
+                              hintText: 'e.g. materials not available for this design',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(color: Colors.grey.shade200),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 12),
+                      FilledButton(
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: CupertinoColors.systemRed,
+                        ),
+                        child: Text(
+                          'Decline',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (result != true) {
+      msgCtrl.dispose();
+      return false;
+    }
+    final msg = msgCtrl.text.trim();
+    msgCtrl.dispose();
+    try {
+      await _db.declineMadeToOrderRequest(
+        requestId: req.id,
+        adminMessage: msg.isEmpty ? null : msg,
+      );
+      if (mounted) Toast.success(context, 'Request declined');
+      return true;
+    } catch (e) {
+      if (mounted) Toast.error(context, 'Decline failed: $e');
+      return false;
+    }
+  }
+
+  Future<void> _showMadeToOrderRequests() async {
+    try {
+      final requests = await _db.getMadeToOrderRequests();
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            width: MediaQuery.of(context).size.width * 0.82,
+            height: MediaQuery.of(context).size.height * 0.78,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Made-to-Order Requests',
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.black,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: requests.isEmpty
+                      ? Center(
+                          child: Text(
+                            'No made-to-order requests yet',
+                            style: GoogleFonts.poppins(
+                              fontSize: 14,
+                              color: Colors.black54,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: requests.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final req = requests[index];
+                            final validIdUrl = (req.validIdUrl == null || req.validIdUrl!.isEmpty)
+                                ? null
+                                : _absoluteMediaUrl(req.validIdUrl!);
+                            return Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: CupertinoColors.separator.withValues(alpha: 0.25)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${req.userName} • ${req.itemName}',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.black,
+                                      decoration: TextDecoration.none,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    req.quotedTotal != null &&
+                                            req.quotedDownpayment != null &&
+                                            req.quotedRemaining != null
+                                        ? 'Status: ${req.status} · Total ₱${req.quotedTotal!.toStringAsFixed(2)} '
+                                            '(DP ₱${req.quotedDownpayment!.toStringAsFixed(2)} / '
+                                            'Bal ₱${req.quotedRemaining!.toStringAsFixed(2)})'
+                                        : 'Status: ${req.status}',
+                                    style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
+                                  ),
+                                  if ((req.preferredSize ?? '').isNotEmpty)
+                                    Text('Size: ${req.preferredSize}', style: GoogleFonts.poppins(fontSize: 13)),
+                                  if ((req.materials ?? '').isNotEmpty)
+                                    Text('Materials: ${req.materials}', style: GoogleFonts.poppins(fontSize: 13)),
+                                  if ((req.notes ?? '').isNotEmpty)
+                                    Text('Notes: ${req.notes}', style: GoogleFonts.poppins(fontSize: 13)),
+                                  if (validIdUrl != null) ...[
+                                    const SizedBox(height: 8),
+                                    Text('Valid ID:', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600)),
+                                    const SizedBox(height: 4),
+                                    GestureDetector(
+                                      onTap: () => _showImageDialog(validIdUrl),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Image.network(validIdUrl, height: 90, fit: BoxFit.cover),
+                                      ),
+                                    ),
+                                  ],
+                                  if (req.status != 'declined' && req.status != 'order_created') ...[
+                                    const SizedBox(height: 10),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      children: [
+                                        OutlinedButton(
+                                          onPressed: () async {
+                                            final nav = Navigator.of(context);
+                                            final ok = await _showQuoteMtoDialog(req);
+                                            if (ok && mounted) {
+                                              nav.pop();
+                                              await _showMadeToOrderRequests();
+                                            }
+                                          },
+                                          child: Text('Quote', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                                        ),
+                                        OutlinedButton(
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: CupertinoColors.systemRed,
+                                          ),
+                                          onPressed: () async {
+                                            final nav = Navigator.of(context);
+                                            final ok = await _showDeclineMtoDialog(req);
+                                            if (ok && mounted) {
+                                              nav.pop();
+                                              await _showMadeToOrderRequests();
+                                            }
+                                          },
+                                          child: Text('Decline', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Toast.error(context, 'Failed to load made-to-order requests: $e');
+    }
+  }
+
+  void _showImageDialog(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(20),
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.network(imageUrl, fit: BoxFit.contain),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                style: IconButton.styleFrom(backgroundColor: Colors.black54),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Updates order status with a smooth animation and user feedback.
   Future<void> _updateStatus(OrderRecord order, String status) async {
     // Show confirmation dialog for order confirmation
@@ -461,6 +1131,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       builder: (context) => _OrderDetailsDialog(
         order: order,
         productNames: _productNames,
+        productThumbUrls: _productThumbUrls,
       ),
     );
   }
@@ -468,6 +1139,14 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
+
+    final totalCount = filtered.length;
+    final pageCount = (totalCount / _pageSize).ceil();
+    final safePageIndex = pageCount <= 1 ? 0 : _pageIndex.clamp(0, pageCount - 1).toInt();
+    final start = safePageIndex * _pageSize;
+    final end = (start + _pageSize) > totalCount ? totalCount : (start + _pageSize);
+    final pageItems = totalCount == 0 ? const <OrderRecord>[] : filtered.sublist(start, end);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -515,6 +1194,16 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                 label: const Text('History'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF8D6E63),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _showMadeToOrderRequests,
+                icon: const Icon(Icons.design_services_outlined, size: 18),
+                label: const Text('Made-to-Order'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF5C4033),
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
               ),
@@ -575,7 +1264,10 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
             ],
             selected: {_filter},
             onSelectionChanged: (Set<String> values) {
-              setState(() => _filter = values.first);
+              setState(() {
+                _filter = values.first;
+                _pageIndex = 0;
+              });
             },
           ),
         ),
@@ -636,7 +1328,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                           ),
                           Expanded(
                             child: ListView.separated(
-                              itemCount: filtered.length,
+                              itemCount: pageItems.length,
                               separatorBuilder: (_, __) => Divider(
                                 height: 1,
                                 thickness: 1,
@@ -645,7 +1337,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                                 color: CupertinoColors.separator.withValues(alpha: 0.1),
                               ),
                               itemBuilder: (context, index) {
-                                final order = filtered[index];
+                                final order = pageItems[index];
                                 return _OrdersTableRow(
                                   order: order,
                                   productNames: _productNames,
@@ -655,6 +1347,37 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                               },
                             ),
                           ),
+                          if (pageCount > 1)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    'Page ${safePageIndex + 1} of $pageCount',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black54,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_left),
+                                    onPressed: safePageIndex > 0
+                                        ? () => setState(() => _pageIndex = safePageIndex - 1)
+                                        : null,
+                                    tooltip: 'Previous page',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.chevron_right),
+                                    onPressed: safePageIndex < pageCount - 1
+                                        ? () => setState(() => _pageIndex = safePageIndex + 1)
+                                        : null,
+                                    tooltip: 'Next page',
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -731,6 +1454,18 @@ class _OrdersHeaderRow extends StatelessWidget {
             flex: 2,
             child: Text(
               'Total',
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: CupertinoColors.secondaryLabel,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              'Balance',
               style: GoogleFonts.poppins(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -851,6 +1586,20 @@ class _OrdersTableRow extends StatelessWidget {
                 ),
               ),
             ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                adminOrdersBalanceColumnText(order),
+                style: GoogleFonts.poppins(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: adminOrdersBalanceColumnHighlighted(order)
+                      ? const Color(0xFFE65100)
+                      : CupertinoColors.secondaryLabel,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             const SizedBox(width: 8),
             Expanded(
               flex: 2,
@@ -913,8 +1662,6 @@ class _StatusPill extends StatelessWidget {
         return CupertinoColors.systemGreen;
       case 'cancelled':
         return CupertinoColors.systemRed;
-      case 'expired':
-        return CupertinoColors.systemGrey;
       default:
         return CupertinoColors.systemGrey;
     }
@@ -933,8 +1680,6 @@ class _StatusPill extends StatelessWidget {
         return Icons.task_alt_outlined;
       case 'cancelled':
         return Icons.cancel_outlined;
-      case 'expired':
-        return Icons.schedule_send_outlined;
       default:
         return Icons.help_outline;
     }
@@ -999,7 +1744,7 @@ class _StatusPill extends StatelessWidget {
       padding: EdgeInsets.zero,
       onSelected: onChanged,
       itemBuilder: (context) => [
-        for (final s in const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'expired'])
+        for (final s in const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'])
           PopupMenuItem(
             value: s,
             child: Row(
@@ -1060,26 +1805,145 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
+/// Same rules as payment-proof URLs: relative paths become absolute against the API host.
+String _absoluteMediaUrl(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return trimmed;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
+  if (trimmed.startsWith('/')) return '$baseUrl$trimmed';
+  return '$baseUrl/$trimmed';
+}
+
+/// Pretty-print API ISO date for admin detail rows.
+String _formatAdminDeliveryDate(String iso) {
+  try {
+    return DateTime.parse(iso).toLocal().toString().substring(0, 16);
+  } catch (_) {
+    return iso;
+  }
+}
+
 /// Centered dialog showing detailed order information in Apple's modal style.
 class _OrderDetailsDialog extends StatelessWidget {
   const _OrderDetailsDialog({
     required this.order,
     required this.productNames,
+    required this.productThumbUrls,
   });
 
   final OrderRecord order;
   final Map<String, String> productNames;
+  final Map<String, String> productThumbUrls;
+
+  String _paymentMethodLabel(String? raw) {
+    final pm = raw?.toString().trim().toLowerCase() ?? '';
+    if (pm.isEmpty) return '—';
+    switch (pm) {
+      case 'paymongo':
+      case 'gcash':
+        return 'GCash';
+      case 'cod':
+        return 'Cash on Delivery (COD)';
+      default:
+        return raw!.toString();
+    }
+  }
+
+  /// Core metadata rows; split into two columns on wide modals to reduce vertical scroll.
+  List<Widget> _orderInfoRows() {
+    return [
+      _DetailRow(label: 'Order ID', value: order.id),
+      _DetailRow(label: 'Customer', value: order.userName.isNotEmpty ? order.userName : 'Guest'),
+      _DetailRow(label: 'Status', value: order.status[0].toUpperCase() + order.status.substring(1)),
+      _DetailRow(
+        label: 'Total Amount',
+        value: '₱${order.totalAmount.toStringAsFixed(2)}',
+      ),
+      _DetailRow(
+        label: 'Payment method',
+        value: _paymentMethodLabel(order.shippingAddress['paymentMethod']?.toString()),
+      ),
+      _DetailRow(
+        label: 'Payment plan',
+        value: order.shippingAddress['paymentPlan']?.toString() ?? '—',
+      ),
+      _DetailRow(
+        label: 'Order option',
+        value: order.shippingAddress['orderOption']?.toString() ?? '—',
+      ),
+      _DetailRow(
+        label: 'Payment status',
+        value: order.shippingAddress['paymentStatus']?.toString() ?? '—',
+      ),
+      if (order.shippingAddress['estimatedDeliveryAt'] != null &&
+          order.shippingAddress['estimatedDeliveryAt'].toString().isNotEmpty)
+        _DetailRow(
+          label: 'Est. delivery (from confirm +10–12d)',
+          value: _formatAdminDeliveryDate(
+            order.shippingAddress['estimatedDeliveryAt'].toString(),
+          ),
+        ),
+      if (parseShippingDouble(order.shippingAddress, 'downpayment') != null)
+        _DetailRow(
+          label: 'Down payment (line)',
+          value: '₱${parseShippingDouble(order.shippingAddress, 'downpayment')!.toStringAsFixed(2)}',
+        ),
+      if (parseShippingDouble(order.shippingAddress, 'remainingBalance') != null)
+        _DetailRow(
+          label: 'Remaining balance',
+          value: '₱${parseShippingDouble(order.shippingAddress, 'remainingBalance')!.toStringAsFixed(2)}',
+        ),
+      if (parseFirstInstallmentPaidAt(order) != null)
+        _DetailRow(
+          label: 'First GCash (window start)',
+          value: parseFirstInstallmentPaidAt(order)!.toLocal().toString().substring(0, 19),
+        ),
+      if (shouldShowInstallmentBalanceUi(order)) ...[
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            installmentInterestCountdownLine(order, DateTime.now()),
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              height: 1.4,
+              color: Colors.grey[800],
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
+      ],
+      if (order.shippingAddress['phone'] != null)
+        _DetailRow(
+          label: 'Contact Phone',
+          value: order.shippingAddress['phone'].toString(),
+        ),
+      _DetailRow(
+        label: 'Created',
+        value: order.createdAt.toLocal().toString().substring(0, 19),
+      ),
+      _DetailRow(
+        label: 'Last Updated',
+        value: order.updatedAt.toLocal().toString().substring(0, 19),
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
+    final screenW = MediaQuery.sizeOf(context).width;
+    final maxDialogW = math.min(960.0, screenW - 24);
+
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 28),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
       ),
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: 600,
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxWidth: maxDialogW,
+          maxHeight: MediaQuery.of(context).size.height * 0.92,
         ),
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -1115,26 +1979,38 @@ class _OrderDetailsDialog extends StatelessWidget {
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _DetailRow(label: 'Order ID', value: order.id),
-                    _DetailRow(label: 'Customer', value: order.userName.isNotEmpty ? order.userName : 'Guest'),
-                    _DetailRow(label: 'Status', value: order.status[0].toUpperCase() + order.status.substring(1)),
-                    _DetailRow(
-                      label: 'Total Amount',
-                      value: '₱${order.totalAmount.toStringAsFixed(2)}',
-                    ),
-                    if (order.shippingAddress['phone'] != null)
-                      _DetailRow(
-                        label: 'Contact Phone',
-                        value: order.shippingAddress['phone'].toString(),
-                      ),
-                    _DetailRow(
-                      label: 'Created',
-                      value: order.createdAt.toLocal().toString().substring(0, 19),
-                    ),
-                    _DetailRow(
-                      label: 'Last Updated',
-                      value: order.updatedAt.toLocal().toString().substring(0, 19),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final rows = _orderInfoRows();
+                        final wide = constraints.maxWidth >= 640;
+                        if (!wide) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: rows,
+                          );
+                        }
+                        final mid = (rows.length + 1) ~/ 2;
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: rows.sublist(0, mid),
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: rows.sublist(mid),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 12),
                     Text(
@@ -1162,34 +2038,70 @@ class _OrderDetailsDialog extends StatelessWidget {
                     else
                       ...order.productIds.map((id) {
                         final productName = productNames[id] ?? id;
+                        final thumb = productThumbUrls[id];
                         return Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.only(bottom: 8),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: Colors.grey[50],
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: Colors.grey[200]!),
                             ),
                             child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                Expanded(
-                                  child: Text(
-                                    productName.trim(),
-                                    style: GoogleFonts.poppins(
-                                      color: Colors.black,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      decoration: TextDecoration.none,
-                                    ),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: SizedBox(
+                                    width: 56,
+                                    height: 56,
+                                    child: thumb != null && thumb.isNotEmpty
+                                        ? Image.network(
+                                            thumb,
+                                            fit: BoxFit.cover,
+                                            headers: const {'Accept': 'image/*'},
+                                            errorBuilder: (_, __, ___) => const _ProductThumbPlaceholder(),
+                                            loadingBuilder: (context, child, progress) {
+                                              if (progress == null) return child;
+                                              return Container(
+                                                color: Colors.grey[200],
+                                                alignment: Alignment.center,
+                                                child: const SizedBox(
+                                                  width: 22,
+                                                  height: 22,
+                                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                                ),
+                                              );
+                                            },
+                                          )
+                                        : const _ProductThumbPlaceholder(),
                                   ),
                                 ),
-                                Text(
-                                  'ID: ${id.length >= 8 ? id.substring(0, 8) : id}',
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.grey[600],
-                                    fontSize: 12,
-                                    decoration: TextDecoration.none,
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        productName.trim(),
+                                        style: GoogleFonts.poppins(
+                                          color: Colors.black,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                      'ID: $id',
+                                        style: GoogleFonts.poppins(
+                                          color: Colors.grey[600],
+                                          fontSize: 12,
+                                          decoration: TextDecoration.none,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -1298,6 +2210,136 @@ class _OrderDetailsDialog extends StatelessWidget {
                         ],
                       ),
                     ),
+                    // Valid ID Section (made-to-order / installment KYC)
+                    Builder(
+                      builder: (context) {
+                        final rawValidIdUrl =
+                            order.shippingAddress['validIdUrl']?.toString().trim() ?? '';
+                        if (rawValidIdUrl.isEmpty) return const SizedBox.shrink();
+
+                        final validIdUrl = _absoluteMediaUrl(rawValidIdUrl);
+                        if (validIdUrl.isEmpty) return const SizedBox.shrink();
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const SizedBox(height: 12),
+                            Text(
+                              'Valid ID',
+                              style: GoogleFonts.poppins(
+                                color: Colors.black,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[50],
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.grey[200]!),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Government ID proof:',
+                                    style: GoogleFonts.poppins(
+                                      color: Colors.black,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      decoration: TextDecoration.none,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  GestureDetector(
+                                    onTap: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (dialogContext) => Dialog(
+                                          backgroundColor: Colors.transparent,
+                                          insetPadding: const EdgeInsets.all(20),
+                                          child: Stack(
+                                            children: [
+                                              Center(
+                                                child: InteractiveViewer(
+                                                  minScale: 0.5,
+                                                  maxScale: 4.0,
+                                                  child: Image.network(
+                                                    validIdUrl,
+                                                    fit: BoxFit.contain,
+                                                    errorBuilder: (context, error, stackTrace) {
+                                                      return Container(
+                                                        padding: const EdgeInsets.all(40),
+                                                        color: Colors.black54,
+                                                        child: const Column(
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          children: [
+                                                            Icon(
+                                                              Icons.error_outline,
+                                                              color: Colors.white,
+                                                              size: 48,
+                                                            ),
+                                                            SizedBox(height: 12),
+                                                            Text(
+                                                              'Failed to load image',
+                                                              style: TextStyle(color: Colors.white),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      );
+                                                    },
+                                                  ),
+                                                ),
+                                              ),
+                                              Positioned(
+                                                top: 8,
+                                                right: 8,
+                                                child: IconButton(
+                                                  icon: const Icon(Icons.close, color: Colors.white),
+                                                  onPressed: () => Navigator.of(dialogContext).pop(),
+                                                  style: IconButton.styleFrom(
+                                                    backgroundColor: Colors.black54,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        validIdUrl,
+                                        width: double.infinity,
+                                        height: 200,
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (context, error, stackTrace) {
+                                          return Container(
+                                            height: 200,
+                                            alignment: Alignment.center,
+                                            color: Colors.grey[200],
+                                            child: const Icon(
+                                              Icons.verified_outlined,
+                                              size: 44,
+                                              color: Colors.grey,
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+
                     // Payment Proof Section
                     // Check for payment proof URL in order field first, then fall back to shippingAddress
                     if (order.paymentProofUrl != null ||
@@ -1588,6 +2630,21 @@ class _OrderDetailsDialog extends StatelessWidget {
   }
 }
 
+/// Shown when a product has no image or the network request fails (HIG: clear empty state).
+class _ProductThumbPlaceholder extends StatelessWidget {
+  const _ProductThumbPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0xFFE8EAED),
+      child: Center(
+        child: Icon(Icons.chair_outlined, size: 26, color: Colors.grey[500]),
+      ),
+    );
+  }
+}
+
 class _DetailRow extends StatelessWidget {
   const _DetailRow({required this.label, required this.value});
 
@@ -1603,7 +2660,7 @@ class _DetailRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 120,
+            width: 140,
             child: Text(
               label,
               style: GoogleFonts.poppins(

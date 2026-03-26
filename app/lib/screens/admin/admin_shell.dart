@@ -3,13 +3,17 @@ import 'package:flutter/material.dart';
 import 'admin_theme.dart';
 import 'pages/admin_dashboard_page.dart';
 import 'pages/admins_admin_page.dart';
+import 'pages/admin_profile_page.dart';
 import 'pages/orders_admin_page.dart';
 import 'pages/products_admin_page.dart';
 import 'pages/reviews_admin_page.dart';
+import 'pages/faqs_admin_page.dart';
+import 'pages/legal_content_admin_page.dart';
 import 'pages/settings_admin_page.dart';
+import 'pages/support_inbox_admin_page.dart';
 import 'pages/users_admin_page.dart';
 import '../../services/admin_auth_service.dart';
-import '../../widgets/toast.dart';
+import '../../services/admin_notifications_service.dart';
 import '../../widgets/loading_screen.dart';
 
 class AdminShell extends StatefulWidget {
@@ -34,6 +38,132 @@ class _AdminDestination {
 class _AdminShellState extends State<AdminShell> {
   int _index = 0;
   bool _authChecked = false;
+  final AdminNotificationsService _notifications = AdminNotificationsService.instance;
+  final GlobalKey _notificationsAnchorKey = GlobalKey();
+
+  void _showNotificationsFloatingPanel(BuildContext context) {
+    final box = _notificationsAnchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final screenSize = MediaQuery.sizeOf(context);
+    const double panelWidth = 360;
+    const double panelHeight = 420;
+    const double padding = 12;
+
+    double left = screenSize.width - panelWidth - padding;
+    double top = 72;
+
+    if (box != null && box.hasSize) {
+      final pos = box.localToGlobal(Offset.zero);
+      final size = box.size;
+      left = pos.dx + size.width / 2 - panelWidth / 2;
+      if (left < padding) left = padding;
+      if (left + panelWidth > screenSize.width - padding) {
+        left = screenSize.width - panelWidth - padding;
+      }
+      top = pos.dy + size.height + 8;
+    }
+    if (top + panelHeight > screenSize.height - padding) {
+      top = screenSize.height - panelHeight - padding;
+    }
+    if (top < 16) top = 16;
+
+    showGeneralDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.14),
+      transitionDuration: const Duration(milliseconds: 180),
+      transitionBuilder: (ctx, animation, _, child) {
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+        return FadeTransition(opacity: curved, child: child);
+      },
+      pageBuilder: (ctx, _, __) => SizedBox.expand(
+        child: Stack(
+          children: [
+            Positioned(
+              left: left,
+              top: top,
+              child: Material(
+                elevation: 28,
+                shadowColor: Colors.black.withValues(alpha: 0.32),
+                borderRadius: BorderRadius.circular(18),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: SizedBox(
+                    width: panelWidth,
+                    height: panelHeight,
+                    child: _InlineNotificationsPanel(service: _notifications),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Shows profile as a centered modal matching the admin content container size.
+  void _showProfileModal(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black54,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 60),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 520),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Modal header with back/close
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        tooltip: 'Close',
+                      ),
+                      Expanded(
+                        child: Text(
+                          AdminProfilePage.title,
+                          style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: const AdminProfilePage(embedded: true),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   late final List<_AdminDestination> _destinations = [
     _AdminDestination(
@@ -70,6 +200,21 @@ class _AdminShellState extends State<AdminShell> {
       builder: (_, __) => const AdminsAdminPage(),
     ),
     _AdminDestination(
+      label: 'Support',
+      icon: Icons.support_agent_outlined,
+      builder: (_, __) => const SupportInboxAdminPage(),
+    ),
+    _AdminDestination(
+      label: 'FAQs',
+      icon: Icons.help_outline,
+      builder: (_, __) => const FaqsAdminPage(),
+    ),
+    _AdminDestination(
+      label: 'Legal',
+      icon: Icons.description_outlined,
+      builder: (_, __) => const LegalContentAdminPage(),
+    ),
+    _AdminDestination(
       label: 'Settings',
       icon: Icons.settings_outlined,
       builder: (_, __) => const SettingsAdminPage(),
@@ -96,6 +241,7 @@ class _AdminShellState extends State<AdminShell> {
       setState(() {
         _authChecked = true;
       });
+      _notifications.startPolling();
     }
   }
 
@@ -148,7 +294,15 @@ class _AdminShellState extends State<AdminShell> {
                 ),
                 child: Column(
                   children: [
-                    _AdminHeader(title: _destinations[_index].label),
+                    _AdminHeader(
+                      title: _destinations[_index].label,
+                      notifications: _notifications,
+                      onOpenSupport: () => _selectTab(6),
+                      onOpenSettings: () => _selectTab(9),
+                      onOpenProfile: () => _showProfileModal(context),
+                      onOpenNotifications: () => _showNotificationsFloatingPanel(context),
+                      notificationsAnchorKey: _notificationsAnchorKey,
+                    ),
                     Expanded(
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 300),
@@ -173,7 +327,15 @@ class _AdminShellState extends State<AdminShell> {
       body: SafeArea(
         child: Column(
           children: [
-            _AdminHeader(title: _destinations[_index].label),
+            _AdminHeader(
+              title: _destinations[_index].label,
+              notifications: _notifications,
+              onOpenSupport: () => _selectTab(6),
+              onOpenSettings: () => _selectTab(9),
+              onOpenProfile: () => _showProfileModal(context),
+              onOpenNotifications: () => _showNotificationsFloatingPanel(context),
+              notificationsAnchorKey: _notificationsAnchorKey,
+            ),
             Expanded(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
@@ -203,6 +365,13 @@ class _AdminShellState extends State<AdminShell> {
   }
 }
 
+class _SideRailEntry {
+  _SideRailEntry(this.destination, this.index);
+
+  final _AdminDestination destination;
+  final int index;
+}
+
 class _SideRail extends StatelessWidget {
   const _SideRail({
     required this.destinations,
@@ -216,6 +385,13 @@ class _SideRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The Support destination is accessed via the header message icon, not the left rail.
+    final entries = <_SideRailEntry>[
+      for (var i = 0; i < destinations.length; i++)
+        if (destinations[i].label != 'Support')
+          _SideRailEntry(destinations[i], i),
+    ];
+
     return Container(
       width: 260,
       margin: const EdgeInsets.fromLTRB(16, 12, 20, 12),
@@ -289,9 +465,10 @@ class _SideRail extends StatelessWidget {
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: destinations.length,
+              itemCount: entries.length,
               itemBuilder: (context, index) {
-                final bool active = selectedIndex == index;
+                final entry = entries[index];
+                final bool active = selectedIndex == entry.index;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: AnimatedContainer(
@@ -303,18 +480,18 @@ class _SideRail extends StatelessWidget {
                     ),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(20),
-                      onTap: () => onSelect(index),
+                      onTap: () => onSelect(entry.index),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         child: Row(
                           children: [
                             Icon(
-                              destinations[index].icon,
+                              entry.destination.icon,
                               color: active ? Colors.white : Colors.grey[800],
                             ),
                             const SizedBox(width: 12),
                             Text(
-                              destinations[index].label,
+                              entry.destination.label,
                               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                                     color: active ? Colors.white : Colors.grey[800],
                                     fontWeight: active ? FontWeight.w600 : FontWeight.w500,
@@ -384,15 +561,56 @@ class _SideRail extends StatelessWidget {
 }
 
 class _AdminHeader extends StatefulWidget {
-  const _AdminHeader({required this.title});
+  const _AdminHeader({
+    required this.title,
+    required this.notifications,
+    required this.onOpenSupport,
+    required this.onOpenNotifications,
+    required this.onOpenProfile,
+    required this.onOpenSettings,
+    required this.notificationsAnchorKey,
+  });
 
   final String title;
+  final AdminNotificationsService notifications;
+  final VoidCallback onOpenSupport;
+  final VoidCallback onOpenNotifications;
+  final VoidCallback onOpenProfile;
+  final VoidCallback onOpenSettings;
+  final GlobalKey notificationsAnchorKey;
 
   @override
   State<_AdminHeader> createState() => _AdminHeaderState();
 }
 
 class _AdminHeaderState extends State<_AdminHeader> {
+  final AdminAuthService _auth = AdminAuthService();
+  String _initials = 'A';
+
+  @override
+  void initState() {
+    super.initState();
+    _primeAvatar();
+  }
+
+  Future<void> _primeAvatar() async {
+    await _auth.initialize();
+    if (!mounted) return;
+    final name = (_auth.currentFullName ?? _auth.currentEmail ?? '').trim();
+    setState(() => _initials = _deriveInitials(name));
+  }
+
+  static String _deriveInitials(String name) {
+    final parts = name
+        .split(RegExp(r'\s+'))
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return 'A';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts.first.substring(0, 1) + parts.last.substring(0, 1)).toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -413,30 +631,83 @@ class _AdminHeaderState extends State<_AdminHeader> {
                 ],
               ),
               const Spacer(),
-              // Notifications button
-              IconButton(
-                icon: Stack(
-                  children: [
-                    const Icon(Icons.notifications_outlined, size: 24),
-                    Positioned(
-                      right: 0,
-                      top: 0,
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
+              // Support inbox (message icon) — unread support count; sits left of the bell.
+              ValueListenableBuilder<AdminNotificationSnapshot>(
+                valueListenable: widget.notifications.snapshot,
+                builder: (context, snap, _) {
+                  final supportUnread = snap.unreadSupportConversations;
+                  return IconButton(
+                    onPressed: widget.onOpenSupport,
+                    tooltip: 'Support inbox',
+                    icon: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const Icon(Icons.chat_bubble_rounded, size: 24),
+                        if (supportUnread > 0)
+                          Positioned(
+                            right: -4,
+                            top: -4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.all(Radius.circular(999)),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                supportUnread > 99 ? '99+' : '$supportUnread',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
-                  ],
-                ),
-                onPressed: () {
-                  // TODO: Implement notifications
-                  Toast.info(context, 'Notifications coming soon');
+                  );
                 },
-                tooltip: 'Notifications',
+              ),
+              const SizedBox(width: 4),
+              // Inventory / system notifications (bell); support is excluded from this badge.
+              ValueListenableBuilder<AdminNotificationSnapshot>(
+                valueListenable: widget.notifications.snapshot,
+                builder: (context, AdminNotificationSnapshot snap, _) {
+                  final count = snap.bellBadgeCount;
+                  return IconButton(
+                    key: widget.notificationsAnchorKey,
+                    icon: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const Icon(Icons.notifications_outlined, size: 24),
+                        if (count > 0)
+                          Positioned(
+                            right: -2,
+                            top: -2,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.all(Radius.circular(999)),
+                              ),
+                              child: Text(
+                                count > 99 ? '99+' : '$count',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    onPressed: widget.onOpenNotifications,
+                    tooltip: 'Notifications',
+                  );
+                },
               ),
               const SizedBox(width: 8),
               // Account dropdown
@@ -445,7 +716,7 @@ class _AdminHeaderState extends State<_AdminHeader> {
                 child: CircleAvatar(
                   backgroundColor: AdminPalette.brown,
                   radius: 18,
-                  child: const Text('SA', style: TextStyle(color: Colors.white, fontSize: 12)),
+                  child: Text(_initials, style: const TextStyle(color: Colors.white, fontSize: 12)),
                 ),
                 itemBuilder: (BuildContext context) => [
                   PopupMenuItem<String>(
@@ -471,9 +742,9 @@ class _AdminHeaderState extends State<_AdminHeader> {
                 ],
                 onSelected: (String value) {
                   if (value == 'profile') {
-                    Toast.info(context, 'Profile Information coming soon');
+                    widget.onOpenProfile();
                   } else if (value == 'settings') {
-                    Toast.info(context, 'Settings coming soon');
+                    widget.onOpenSettings();
                   }
                 },
               ),
@@ -485,6 +756,114 @@ class _AdminHeaderState extends State<_AdminHeader> {
   }
 }
 
+
+class _InlineNotificationsPanel extends StatelessWidget {
+  const _InlineNotificationsPanel({required this.service});
+
+  final AdminNotificationsService service;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AdminNotificationSnapshot>(
+      valueListenable: service.snapshot,
+      builder: (context, snap, _) {
+        return DecoratedBox(
+          decoration: const BoxDecoration(color: Colors.white),
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade200, width: 1)),
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      'Notifications',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black87,
+                          ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.refresh, size: 20),
+                      onPressed: service.refresh,
+                      tooltip: 'Refresh',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: snap.items.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Center(
+                          child: Text(
+                            'All quiet.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: Colors.grey[600],
+                                ),
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: snap.items.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 4),
+                        itemBuilder: (context, index) {
+                          final item = snap.items[index];
+                          const color = Color(0xFFF97316);
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: color.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(Icons.inventory_2_outlined, color: color, size: 20),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        item.subtitle,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
 
 class _AdminContentWrapper extends StatelessWidget {
   const _AdminContentWrapper({super.key, required this.child});

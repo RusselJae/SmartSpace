@@ -10,6 +10,7 @@ import '../../models/product.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../views/sign_in.dart';
+import '../../widgets/order_installment_balance_callout.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -33,7 +34,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void initState() {
     super.initState();
-    _loadOrders();
+    _primeAndLoad();
+  }
+
+  Future<void> _primeAndLoad() async {
+    // This screen can be opened from multiple places. Restore session first so
+    // we don't incorrectly render an empty order history.
+    await _auth.initializeSession();
+    if (!mounted) return;
+    await _loadOrders();
   }
 
   Future<void> _loadOrders({bool showLoader = true}) async {
@@ -432,6 +441,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
               ),
             ),
           ],
+          const SizedBox(height: 12),
+          OrderInstallmentBalanceCallout(order: order),
           const SizedBox(height: 16),
           _buildTimeline(order.status),
           const SizedBox(height: 16),

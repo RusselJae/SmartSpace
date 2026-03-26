@@ -107,6 +107,10 @@ class MainActivity : FlutterActivity() {
             (args["modelBaseScale"] as? Number)?.toDouble()?.let {
                 intent.putExtra("modelBaseScale", it)
             }
+
+            // Option A: variant list for in-place model swapping.
+            (args["variantProductsJson"] as? String)?.let { intent.putExtra("variantProductsJson", it) }
+            (args["initialProductId"] as? String)?.let { intent.putExtra("initialProductId", it) }
         }
 
         startActivity(intent)

@@ -326,8 +326,11 @@ export class EmailService {
       // The email will contain both, with mobile scheme as primary
       const mobileUrl = `smartspace://verify-email?token=${verificationToken}`;
       const webUrl = `${frontendBaseUrl}/verify-email?token=${verificationToken}`;
-      
-      // Use mobile URL as primary (works for both mobile and web via fallback)
+      // Universal link / hosted fallback (once deployed, FRONTEND_URL should be your real domain)
+      // This lets iOS/Android open the installed app if configured, otherwise it opens the web.
+      const universalUrl = webUrl;
+
+      // Use the app link as the primary CTA.
       const verificationUrl = mobileUrl;
 
       // Email content with modern, clean design following Apple HIG principles
@@ -357,8 +360,24 @@ export class EmailService {
             <div style="text-align: center; margin: 30px 0;">
               <a href="${verificationUrl}" 
                  style="display: inline-block; background: linear-gradient(135deg, #8D6E63 0%, #5D4037 100%); color: white; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(141, 110, 99, 0.3);">
-                Or Click Here to Verify
+                Open the app to verify
               </a>
+            </div>
+
+            <div style="margin: 18px 0 0 0; text-align: center;">
+              <p style="font-size: 13px; color: #666; margin: 0 0 10px 0;">
+                If the button doesn’t open the app:
+              </p>
+              <a href="${universalUrl}"
+                 style="display: inline-block; color: #8D6E63; text-decoration: underline; font-weight: 600; font-size: 13px; margin: 0 10px 6px 10px;">
+                Verify in browser
+              </a>
+            </div>
+            
+            <div style="margin: 14px 0 0 0; text-align: center;">
+              <p style="font-size: 12px; color: #999; margin: 0;">
+                Deployed app links will use <strong>${frontendBaseUrl}</strong> as the fallback domain.
+              </p>
             </div>
             
             <p style="font-size: 14px; color: #666; margin: 20px 0 0 0;">This verification code and link will expire in 24 hours.</p>

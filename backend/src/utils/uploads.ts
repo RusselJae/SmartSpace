@@ -8,6 +8,8 @@ const avatarsDir = path.join(uploadsRoot, 'avatars');
 const modelsDir = path.join(uploadsRoot, 'models');
 const imagesDir = path.join(uploadsRoot, 'images');
 const paymentProofsDir = path.join(uploadsRoot, 'payment-proofs');
+const validIdsDir = path.join(uploadsRoot, 'valid-ids');
+const madeToOrderDir = path.join(uploadsRoot, 'made-to-order');
 
 const ensureUploadsDirectories = (): void => {
   if (!fs.existsSync(uploadsRoot)) {
@@ -25,7 +27,13 @@ const ensureUploadsDirectories = (): void => {
   if (!fs.existsSync(paymentProofsDir)) {
     fs.mkdirSync(paymentProofsDir, { recursive: true });
   }
+  if (!fs.existsSync(validIdsDir)) {
+    fs.mkdirSync(validIdsDir, { recursive: true });
+  }
+  if (!fs.existsSync(madeToOrderDir)) {
+    fs.mkdirSync(madeToOrderDir, { recursive: true });
+  }
 };
 
-export { uploadsRoot, avatarsDir, modelsDir, imagesDir, paymentProofsDir, ensureUploadsDirectories };
+export { uploadsRoot, avatarsDir, modelsDir, imagesDir, paymentProofsDir, validIdsDir, madeToOrderDir, ensureUploadsDirectories };
 

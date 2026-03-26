@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -8,6 +9,8 @@ import '../../widgets/toast.dart';
 import '../../widgets/loading_screen.dart';
 import '../shell/tab_shell.dart';
 import 'sign_up.dart';
+import '../profile/terms_and_conditions_screen.dart';
+import '../profile/privacy_policy_screen.dart';
 
 /// =============================================================
 /// SignInScreen (Cupertino)
@@ -53,6 +56,7 @@ class _SignInScreenState extends State<SignInScreen> {
 
     try {
       await _auth.signIn(
+        // AuthService now accepts username OR email in this field.
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
@@ -73,58 +77,6 @@ class _SignInScreenState extends State<SignInScreen> {
         _loading = false;
       });
       Toast.error(context, 'Invalid username or password');
-    }
-  }
-
-  Future<void> _handleGoogleSignIn() async {
-    setState(() {
-      _loading = true;
-    });
-    try {
-      await _auth.signInWithGoogle();
-      if (!mounted) return;
-      // Show loading screen before navigating to main app
-      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        CupertinoPageRoute(
-          builder: (_) => LoadingScreen(
-            message: 'Welcome back!',
-            nextBuilder: (_) => const TabShell(),
-          ),
-        ),
-        (route) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-      });
-      Toast.info(context, 'Google Sign In is not yet available');
-    }
-  }
-
-  Future<void> _handleFacebookSignIn() async {
-    setState(() {
-      _loading = true;
-    });
-    try {
-      await _auth.signInWithFacebook();
-      if (!mounted) return;
-      // Show loading screen before navigating to main app
-      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        CupertinoPageRoute(
-          builder: (_) => LoadingScreen(
-            message: 'Welcome back!',
-            nextBuilder: (_) => const TabShell(),
-          ),
-        ),
-        (route) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-      });
-      Toast.info(context, 'Facebook Sign In is not yet available');
     }
   }
 
@@ -214,11 +166,11 @@ class _SignInScreenState extends State<SignInScreen> {
                   // ------------------------------
                   StyledTextField(
                     controller: _emailController,
-                    label: 'Email',
+                    label: 'Email or Username',
                     icon: Icons.email_outlined,
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
-                    placeholder: 'you@example.com',
+                    placeholder: 'you@example.com or username',
                   ),
                   SizedBox(height: isSmallScreen ? 16 : 20),
 
@@ -241,17 +193,13 @@ class _SignInScreenState extends State<SignInScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: Container(
-                      // Enhanced button with gradient and improved shadow
+                      // Primary button – solid fill (no gradient), clean and consistent.
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF8D6E63), Color(0xFFFF9800)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        color: const Color(0xFF8D6E63),
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFFF9800).withValues(alpha: 0.3),
+                            color: const Color(0xFF8D6E63).withValues(alpha: 0.25),
                             blurRadius: 12,
                             offset: const Offset(0, 6),
                           ),
@@ -278,97 +226,62 @@ class _SignInScreenState extends State<SignInScreen> {
                   ),
 
                   SizedBox(height: isSmallScreen ? 20 : 24),
-
-                  // Divider
-                  Row(
-                    children: [
-                      Expanded(child: Divider(color: CupertinoColors.separator.withValues(alpha: 0.3))),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          'or continue with',
-                          style: GoogleFonts.poppins(
-                            fontSize: 14,
-                            color: CupertinoColors.secondaryLabel,
-                            decoration: TextDecoration.none,
-                          ),
-                        ),
-                      ),
-                      Expanded(child: Divider(color: CupertinoColors.separator.withValues(alpha: 0.3))),
-                    ],
-                  ),
-
                   SizedBox(height: isSmallScreen ? 20 : 24),
 
                   // ------------------------------
-                  // Social login buttons
+                  // Legal text: Terms & Privacy
                   // ------------------------------
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Google button
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: _loading ? null : _handleGoogleSignIn,
-                        child: Container(
-                          width: isSmallScreen ? 50 : 56,
-                          height: isSmallScreen ? 50 : 56,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: const Color(0xFFE0E0E0), width: 1.5),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.05),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            'G',
-                            style: GoogleFonts.poppins(
-                              color: const Color(0xFF4285F4),
-                              fontWeight: FontWeight.w700,
-                              fontSize: isSmallScreen ? 20 : 24,
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: isSmallScreen ? 4 : 8),
+                    child: RichText(
+                      textAlign: TextAlign.center,
+                      text: TextSpan(
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: CupertinoColors.secondaryLabel,
+                          height: 1.5,
                         ),
-                      ),
-                      SizedBox(width: isSmallScreen ? 16 : 20),
-                      // Facebook button
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: _loading ? null : _handleFacebookSignIn,
-                        child: Container(
-                          width: isSmallScreen ? 50 : 56,
-                          height: isSmallScreen ? 50 : 56,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1877F2),
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.1),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            'f',
+                        children: [
+                          const TextSpan(text: 'By signing in, you agree to Wood Home\'s '),
+                          TextSpan(
+                            text: 'terms and conditions',
                             style: GoogleFonts.poppins(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: isSmallScreen ? 22 : 26,
-                              decoration: TextDecoration.none,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: kBrown,
+                              decoration: TextDecoration.underline,
                             ),
+                            recognizer: TapGestureRecognizer()
+                              ..onTap = () {
+                                Navigator.of(context, rootNavigator: true).push(
+                                  CupertinoPageRoute(
+                                    builder: (_) => const TermsAndConditionsScreen(),
+                                  ),
+                                );
+                              },
                           ),
-                        ),
+                          const TextSpan(text: ' and '),
+                          TextSpan(
+                            text: 'privacy policy',
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: kBrown,
+                              decoration: TextDecoration.underline,
+                            ),
+                            recognizer: TapGestureRecognizer()
+                              ..onTap = () {
+                                Navigator.of(context, rootNavigator: true).push(
+                                  CupertinoPageRoute(
+                                    builder: (_) => const PrivacyPolicyScreen(),
+                                  ),
+                                );
+                              },
+                          ),
+                          const TextSpan(text: '.'),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
 
                   SizedBox(height: isSmallScreen ? 24 : 32),

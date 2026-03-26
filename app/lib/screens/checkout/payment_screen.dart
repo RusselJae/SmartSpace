@@ -50,6 +50,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ),
             const SizedBox(height: 8),
             _PaymentPill(
+              label: 'PayMongo (Test)',
+              selected: _method == PaymentMethod.paymongo,
+              onTap: () => setState(() => _method = PaymentMethod.paymongo),
+            ),
+            const SizedBox(height: 8),
+            _PaymentPill(
               label: 'Cash on Delivery (COD)',
               selected: _method == PaymentMethod.cod,
               onTap: () => setState(() => _method = PaymentMethod.cod),

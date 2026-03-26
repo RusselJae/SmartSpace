@@ -1,4 +1,4 @@
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { getPool } from '../config/database';
 import { generateId } from '../utils/id_generator';
 
@@ -162,7 +162,10 @@ export const updateAddress = async (addressId: string, userId: string, input: Up
 
 export const deleteAddress = async (addressId: string, userId: string): Promise<void> => {
   const pool = getPool();
-  const [result] = await pool.query<{ affectedRows: number }>('DELETE FROM user_addresses WHERE id = ? AND user_id = ?', [addressId, userId]);
+  const [result] = await pool.query<ResultSetHeader>(
+    'DELETE FROM user_addresses WHERE id = ? AND user_id = ?',
+    [addressId, userId],
+  );
   if (result.affectedRows === 0) {
     throw new Error('Address not found');
   }

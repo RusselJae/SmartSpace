@@ -50,6 +50,15 @@ const checkEmailConfiguration = (): void => {
 
 const initialize = async (): Promise<void> => {
   try {
+    // Log the resolved DB target so Render misconfigurations are obvious.
+    // (Never log the password.)
+    console.log('🗄️  Database config:');
+    console.log(`   Host: ${config.database.host}`);
+    console.log(`   Port: ${config.database.port}`);
+    console.log(`   Name: ${config.database.name}`);
+    console.log(`   User: ${config.database.username}`);
+    console.log(`   SSL enabled (DB_SSL): ${process.env.DB_SSL === 'true'}`);
+
     const pool = getPool();
     await pool.query('SELECT 1');
     

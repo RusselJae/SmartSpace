@@ -15,6 +15,7 @@ import { paymentProofRouter } from './payment_proof_route';
 import { faqRouter } from './faq_route';
 import { legalContentRouter } from './legal_content_route';
 import { paymongoReturnRouter } from './paymongo_return_route';
+import { settingsRouter } from './settings_route';
 
 export const apiRouter = Router();
 
@@ -34,5 +35,6 @@ apiRouter.use('/support', supportChatRouter);
 apiRouter.use('/faqs', faqRouter);
 apiRouter.use('/content', legalContentRouter);
 apiRouter.use('/paymongo-return', paymongoReturnRouter);
+apiRouter.use('/settings', settingsRouter);
 
 

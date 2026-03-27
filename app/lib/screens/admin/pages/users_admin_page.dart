@@ -283,7 +283,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                           if (pageCount > 1)
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                              child: Row(
+                              child: Column(
                                 children: [
                                   Text(
                                     'Page ${safePageIndex + 1} of $pageCount',
@@ -293,20 +293,25 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                                       color: Colors.black54,
                                     ),
                                   ),
-                                  const Spacer(),
-                                  IconButton(
-                                    icon: const Icon(Icons.chevron_left),
-                                    onPressed: safePageIndex > 0
-                                        ? () => setState(() => _pageIndex = safePageIndex - 1)
-                                        : null,
-                                    tooltip: 'Previous page',
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.chevron_right),
-                                    onPressed: safePageIndex < pageCount - 1
-                                        ? () => setState(() => _pageIndex = safePageIndex + 1)
-                                        : null,
-                                    tooltip: 'Next page',
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.chevron_left),
+                                        onPressed: safePageIndex > 0
+                                            ? () => setState(() => _pageIndex = safePageIndex - 1)
+                                            : null,
+                                        tooltip: 'Previous page',
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.chevron_right),
+                                        onPressed: safePageIndex < pageCount - 1
+                                            ? () => setState(() => _pageIndex = safePageIndex + 1)
+                                            : null,
+                                        tooltip: 'Next page',
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),

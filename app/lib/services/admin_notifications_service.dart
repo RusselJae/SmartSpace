@@ -27,23 +27,26 @@ class AdminNotificationItem {
 class AdminNotificationSnapshot {
   const AdminNotificationSnapshot({
     required this.unreadSupportConversations,
+    required this.unreadLowStockProducts,
     required this.lowStockProducts,
     required this.items,
     required this.lastUpdatedAt,
   });
 
   final int unreadSupportConversations;
+  final int unreadLowStockProducts;
   final int lowStockProducts;
   final List<AdminNotificationItem> items;
   final DateTime lastUpdatedAt;
 
   /// Bell icon: inventory / system only (support uses the message icon in the header).
-  int get bellBadgeCount => lowStockProducts;
+  int get bellBadgeCount => unreadLowStockProducts;
 
-  int get totalBadgeCount => unreadSupportConversations + lowStockProducts;
+  int get totalBadgeCount => unreadSupportConversations + unreadLowStockProducts;
 
   static AdminNotificationSnapshot empty() => AdminNotificationSnapshot(
         unreadSupportConversations: 0,
+        unreadLowStockProducts: 0,
         lowStockProducts: 0,
         items: const [],
         lastUpdatedAt: DateTime.fromMillisecondsSinceEpoch(0),
@@ -118,6 +121,9 @@ class AdminNotificationsService {
           .where((p) => p.inventoryQty > 0 && p.inventoryQty <= lowStockThreshold && !p.isArchived)
           .toList()
         ..sort((a, b) => a.inventoryQty.compareTo(b.inventoryQty));
+      final seenLowStockIds = _getSeenLowStockIds(prefs, adminId: adminId);
+      final unreadLowStockCount =
+          lowStock.where((p) => !seenLowStockIds.contains(p.id)).length;
 
       // Support threads are surfaced only via the header message icon + Support tab — not here.
       final items = <AdminNotificationItem>[
@@ -134,6 +140,7 @@ class AdminNotificationsService {
 
       snapshot.value = AdminNotificationSnapshot(
         unreadSupportConversations: unreadConvs.length,
+        unreadLowStockProducts: unreadLowStockCount,
         lowStockProducts: lowStock.length,
         items: items,
         lastUpdatedAt: DateTime.now(),
@@ -171,6 +178,24 @@ class AdminNotificationsService {
     await refresh();
   }
 
+  /// Marks all current inventory notifications as seen so the bell badge clears.
+  Future<void> markLowStockSeen() async {
+    final auth = AdminAuthService();
+    await auth.initialize();
+    final adminId = auth.currentAdminId ?? auth.currentEmail;
+    if (adminId == null || adminId.trim().isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final inventoryIds = snapshot.value.items
+        .where((i) => i.type == 'inventory')
+        .map((i) => i.id.split(':').length == 2 ? i.id.split(':')[1] : '')
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    await prefs.setStringList(_seenLowStockKey(adminId: adminId), inventoryIds);
+    await refresh();
+  }
+
   static DateTime? _getLastReadAt(SharedPreferences prefs, {required String adminId, required String conversationId}) {
     final raw = prefs.getString(_lastReadKey(adminId: adminId, conversationId: conversationId));
     if (raw == null || raw.trim().isEmpty) return null;
@@ -179,6 +204,14 @@ class AdminNotificationsService {
 
   static String _lastReadKey({required String adminId, required String conversationId}) =>
       'smartspace.admin.support.lastReadAt.$adminId.$conversationId';
+
+  static String _seenLowStockKey({required String adminId}) =>
+      'smartspace.admin.inventory.seenLowStock.$adminId';
+
+  static Set<String> _getSeenLowStockIds(SharedPreferences prefs, {required String adminId}) {
+    final raw = prefs.getStringList(_seenLowStockKey(adminId: adminId)) ?? const <String>[];
+    return raw.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+  }
 
   /// Same rules as [refresh] unread detection: show a dot when the last message is from the
   /// user (or unknown) and is newer than the admin’s last read time for this thread.

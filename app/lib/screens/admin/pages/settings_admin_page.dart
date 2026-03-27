@@ -11,11 +11,9 @@ import '../../../widgets/toast.dart';
 /// Admin settings page for managing application configuration
 /// 
 /// Allows admins to configure:
-/// - Payment settings (GCash account, QR code, downpayment percentage)
 /// - Shipping settings (fees, free shipping rules)
-/// - Store information
-/// - Tax and fees
-/// - Other configurable values
+/// - Store information (used by About Us)
+/// - Tax and service fee values
 class SettingsAdminPage extends StatefulWidget {
   const SettingsAdminPage({super.key});
 
@@ -43,10 +41,26 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
   int _freeShippingProductCount = 3;
   final TextEditingController _freeShippingCitiesController = TextEditingController();
   final TextEditingController _specialShippingCitiesController = TextEditingController();
+  final TextEditingController _selectedSpecialShippingFeeController = TextEditingController();
+  // Lets admins rename the currently-selected "special shipping location"
+  // (the map key in `specialShippingCities`).
+  final TextEditingController _editSelectedSpecialShippingCityController = TextEditingController();
+  final TextEditingController _newSpecialShippingCityController = TextEditingController();
+  final TextEditingController _newSpecialShippingFeeController = TextEditingController();
+  Map<String, double> _specialShippingCitiesMap = {};
+  String? _selectedSpecialShippingCity;
   final TextEditingController _shippingFeeBaseController = TextEditingController();
   final TextEditingController _shippingFeeMaxController = TextEditingController();
   double _defaultShippingFeeBase = 3000.0;
   double _defaultShippingFeeMax = 5000.0;
+
+  // Installment / lay-away policy + schedule
+  final TextEditingController _layawayMinController = TextEditingController();
+  final TextEditingController _layawayMaxController = TextEditingController();
+  double _huluganDownpaymentPercent = 40.0;
+  double _huluganInterestPercent = 6.0;
+  int _installmentTermMonths = 3;
+  double _lateFeePerDay = 100.0;
   
   // Store Information
   final TextEditingController _storeNameController = TextEditingController();
@@ -66,9 +80,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
   int _orderCancellationTime = 60;
 
   // Dropdown options
-  final List<int> _paymentTimeOptions = [5, 10, 15, 20, 30, 45, 60];
   final List<int> _freeShippingCountOptions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-  final List<int> _cancellationTimeOptions = [15, 30, 45, 60, 90, 120, 180, 240];
 
   @override
   void initState() {
@@ -82,8 +94,14 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
     _gcashNameController.dispose();
     _freeShippingCitiesController.dispose();
     _specialShippingCitiesController.dispose();
+    _selectedSpecialShippingFeeController.dispose();
+    _editSelectedSpecialShippingCityController.dispose();
+    _newSpecialShippingCityController.dispose();
+    _newSpecialShippingFeeController.dispose();
     _shippingFeeBaseController.dispose();
     _shippingFeeMaxController.dispose();
+    _layawayMinController.dispose();
+    _layawayMaxController.dispose();
     _storeNameController.dispose();
     _storeEmailController.dispose();
     _storePhoneController.dispose();
@@ -106,13 +124,31 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
       // Shipping Settings
       _freeShippingProductCount = settings.freeShippingProductCount;
       _freeShippingCitiesController.text = settings.freeShippingCities.join(', ');
-      _specialShippingCitiesController.text = settings.specialShippingCities.entries
+      _specialShippingCitiesMap = Map<String, double>.from(settings.specialShippingCities);
+      _specialShippingCitiesController.text = _specialShippingCitiesMap.entries
           .map((e) => '${e.key}:${e.value}')
           .join(', ');
+      final sortedCities = _specialShippingCitiesMap.keys.toList()..sort();
+      _selectedSpecialShippingCity = sortedCities.isEmpty ? null : sortedCities.first;
+      if (_selectedSpecialShippingCity != null) {
+        _selectedSpecialShippingFeeController.text =
+            _specialShippingCitiesMap[_selectedSpecialShippingCity!]!.toStringAsFixed(0);
+        _editSelectedSpecialShippingCityController.text = _selectedSpecialShippingCity!;
+      } else {
+        _selectedSpecialShippingFeeController.clear();
+        _editSelectedSpecialShippingCityController.clear();
+      }
       _defaultShippingFeeBase = settings.defaultShippingFeeBase;
       _defaultShippingFeeMax = settings.defaultShippingFeeMax;
       _shippingFeeBaseController.text = _defaultShippingFeeBase.toStringAsFixed(0);
       _shippingFeeMaxController.text = _defaultShippingFeeMax.toStringAsFixed(0);
+
+      _huluganDownpaymentPercent = settings.huluganDownpaymentPercent;
+      _huluganInterestPercent = settings.huluganInterestPercent;
+      _installmentTermMonths = settings.installmentTermMonths;
+      _lateFeePerDay = settings.lateFeePerDay;
+      _layawayMinController.text = settings.layawayDownpaymentMin.toStringAsFixed(0);
+      _layawayMaxController.text = settings.layawayDownpaymentMax.toStringAsFixed(0);
       
       // Store Information
       _storeNameController.text = settings.storeName;
@@ -167,6 +203,133 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
     }
   }
 
+  List<String> get _specialShippingCityOptions {
+    final keys = _specialShippingCitiesMap.keys.toList()..sort();
+    return keys;
+  }
+
+  void _setSelectedSpecialCity(String? city) {
+    setState(() {
+      _selectedSpecialShippingCity = city;
+      if (city == null) {
+        _selectedSpecialShippingFeeController.clear();
+        _editSelectedSpecialShippingCityController.clear();
+      } else {
+        _selectedSpecialShippingFeeController.text =
+            _specialShippingCitiesMap[city]?.toStringAsFixed(0) ?? '';
+        _editSelectedSpecialShippingCityController.text = city;
+      }
+    });
+  }
+
+  void _onSelectedSpecialFeeChanged(String raw) {
+    final city = _selectedSpecialShippingCity;
+    if (city == null) return;
+    final nextFee = double.tryParse(raw.trim());
+    if (nextFee == null || nextFee < 0) return;
+    setState(() {
+      _specialShippingCitiesMap[city] = nextFee;
+      // Keep text representation synced for backward compatibility/debugging.
+      _specialShippingCitiesController.text = _specialShippingCitiesMap.entries
+          .map((e) => '${e.key}:${e.value}')
+          .join(', ');
+    });
+  }
+
+  void _addOrUpdateSpecialShippingCity() {
+    final cityRaw = _newSpecialShippingCityController.text.trim().toLowerCase();
+    final fee = double.tryParse(_newSpecialShippingFeeController.text.trim());
+    if (cityRaw.isEmpty) {
+      Toast.error(context, 'Enter a location name');
+      return;
+    }
+    if (fee == null || fee < 0) {
+      Toast.error(context, 'Enter a valid fee amount');
+      return;
+    }
+    setState(() {
+      _specialShippingCitiesMap[cityRaw] = fee;
+      _selectedSpecialShippingCity = cityRaw;
+      _selectedSpecialShippingFeeController.text = fee.toStringAsFixed(0);
+      _editSelectedSpecialShippingCityController.text = cityRaw;
+      _specialShippingCitiesController.text = _specialShippingCitiesMap.entries
+          .map((e) => '${e.key}:${e.value}')
+          .join(', ');
+      _newSpecialShippingCityController.clear();
+      _newSpecialShippingFeeController.clear();
+    });
+    Toast.success(context, 'Location fee saved');
+  }
+
+  void _removeSelectedSpecialShippingCity() {
+    final city = _selectedSpecialShippingCity;
+    if (city == null) return;
+    setState(() {
+      _specialShippingCitiesMap.remove(city);
+      final options = _specialShippingCityOptions;
+      _selectedSpecialShippingCity = options.isEmpty ? null : options.first;
+      if (_selectedSpecialShippingCity != null) {
+        _selectedSpecialShippingFeeController.text =
+            _specialShippingCitiesMap[_selectedSpecialShippingCity!]!.toStringAsFixed(0);
+        _editSelectedSpecialShippingCityController.text = _selectedSpecialShippingCity!;
+      } else {
+        _selectedSpecialShippingFeeController.clear();
+        _editSelectedSpecialShippingCityController.clear();
+      }
+      _specialShippingCitiesController.text = _specialShippingCitiesMap.entries
+          .map((e) => '${e.key}:${e.value}')
+          .join(', ');
+    });
+    Toast.success(context, 'Location removed');
+  }
+
+  void _renameSelectedSpecialShippingCity() {
+    final oldCity = _selectedSpecialShippingCity;
+    if (oldCity == null) return;
+
+    // Rename changes the map key (location name), while keeping the existing fee.
+    final newCityRaw = _editSelectedSpecialShippingCityController.text.trim().toLowerCase();
+    if (newCityRaw.isEmpty) {
+      Toast.error(context, 'Enter a location name to rename');
+      return;
+    }
+    final oldCityLower = oldCity.toLowerCase();
+    if (newCityRaw == oldCityLower) {
+      Toast.info(context, 'Location name unchanged');
+      return;
+    }
+
+    // Case-insensitive conflict check (e.g. "Imus" vs "imus").
+    final hasCaseInsensitiveConflict = _specialShippingCitiesMap.keys.any(
+      (k) => k.toLowerCase() == newCityRaw && k != oldCity,
+    );
+    if (hasCaseInsensitiveConflict) {
+      Toast.error(context, 'That location name already exists');
+      return;
+    }
+
+    final fee = _specialShippingCitiesMap[oldCity];
+    if (fee == null) {
+      Toast.error(context, 'Selected location is missing a fee');
+      return;
+    }
+
+    setState(() {
+      _specialShippingCitiesMap.remove(oldCity);
+      _specialShippingCitiesMap[newCityRaw] = fee;
+      _selectedSpecialShippingCity = newCityRaw;
+
+      // Keep UI fields synced.
+      _selectedSpecialShippingFeeController.text = fee.toStringAsFixed(0);
+      _editSelectedSpecialShippingCityController.text = newCityRaw;
+      _specialShippingCitiesController.text = _specialShippingCitiesMap.entries
+          .map((e) => '${e.key}:${e.value}')
+          .join(', ');
+    });
+
+    Toast.success(context, 'Location renamed');
+  }
+
   Future<void> _saveSettings() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -174,22 +337,8 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
 
     setState(() => _saving = true);
     try {
-      // Parse special shipping cities
-      final specialShippingMap = <String, double>{};
-      final specialShippingText = _specialShippingCitiesController.text.trim();
-      if (specialShippingText.isNotEmpty) {
-        final entries = specialShippingText.split(',');
-        for (final entry in entries) {
-          final parts = entry.trim().split(':');
-          if (parts.length == 2) {
-            final city = parts[0].trim().toLowerCase();
-            final fee = double.tryParse(parts[1].trim());
-            if (fee != null && city.isNotEmpty) {
-              specialShippingMap[city] = fee;
-            }
-          }
-        }
-      }
+      // Special shipping cities are managed by dropdown + amount field state.
+      final specialShippingMap = Map<String, double>.from(_specialShippingCitiesMap);
 
       // Parse free shipping cities
       final freeShippingCities = _freeShippingCitiesController.text
@@ -212,6 +361,12 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
         specialShippingCities: specialShippingMap,
         defaultShippingFeeBase: _defaultShippingFeeBase,
         defaultShippingFeeMax: _defaultShippingFeeMax,
+        layawayDownpaymentMin: double.tryParse(_layawayMinController.text.trim()) ?? 3000.0,
+        layawayDownpaymentMax: double.tryParse(_layawayMaxController.text.trim()) ?? 5000.0,
+        huluganDownpaymentPercent: _huluganDownpaymentPercent,
+        huluganInterestPercent: _huluganInterestPercent,
+        installmentTermMonths: _installmentTermMonths,
+        lateFeePerDay: _lateFeePerDay,
         
         // Store Information
         storeName: _storeNameController.text.trim(),
@@ -277,6 +432,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
     TextInputType? keyboardType,
     String? Function(String?)? validator,
     int? maxLines,
+    void Function(String)? onChanged,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -321,6 +477,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
             ),
             style: GoogleFonts.poppins(fontSize: 13),
             validator: validator,
+            onChanged: onChanged,
           ),
         ],
       ),
@@ -625,7 +782,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Manage payment, shipping, and store configuration',
+                  'Manage shipping logic and store information',
                   style: GoogleFonts.poppins(
                     fontSize: 14,
                     color: Colors.grey[600],
@@ -643,68 +800,22 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Payment Settings
-                          _buildSectionTitle('Payment Settings'),
-                          _buildTextField(
-                            label: 'GCash Account Number',
-                            controller: _gcashAccountController,
-                            hint: '09123456789',
-                            keyboardType: TextInputType.phone,
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Required';
-                              }
-                              return null;
-                            },
-                          ),
-                          _buildTextField(
-                            label: 'GCash Account Name',
-                            controller: _gcashNameController,
-                            hint: 'Rosalie M. Enon',
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Required';
-                              }
-                              return null;
-                            },
-                          ),
-                          _buildImageUpload(
-                            label: 'QR Code Image',
-                            image: _qrCodeImage,
-                            imagePath: _qrCodeImagePath,
-                            onPick: () => _pickImage(isQRCode: true),
-                          ),
-                          _buildSlider(
-                            label: 'COD Downpayment Percentage',
-                            value: _codDownpaymentPercentage,
-                            min: 0,
-                            max: 100,
-                            divisions: 100,
-                            onChanged: (value) {
-                              setState(() {
-                                _codDownpaymentPercentage = value;
-                              });
-                            },
-                            valueDisplay: (value) => '${value.toStringAsFixed(0)}%',
-                          ),
-                          _buildDropdown<int>(
-                            label: 'Payment Confirmation Time',
-                            value: _paymentConfirmationTime,
-                            items: _paymentTimeOptions,
-                            displayText: (value) => '$value minutes',
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _paymentConfirmationTime = value;
-                                });
-                              }
-                            },
-                          ),
-
                           // Shipping Settings
                           _buildSectionTitle('Shipping Settings'),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Text(
+                              'Checkout uses this rule order: free-shipping product count, then free-shipping cities, then special city fee overrides, then default base/max fallback.',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: Colors.black54,
+                                height: 1.4,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                          ),
                           _buildDropdown<int>(
-                            label: 'Free Shipping Product Count',
+                            label: 'Free shipping product count threshold',
                             value: _freeShippingProductCount,
                             items: _freeShippingCountOptions,
                             displayText: (value) => value == 0 ? 'No free shipping' : '$value products',
@@ -717,14 +828,209 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                             },
                           ),
                           _buildTextField(
-                            label: 'Free Shipping Cities (comma-separated)',
+                            label: 'Free-shipping cities (comma-separated)',
                             controller: _freeShippingCitiesController,
                             hint: 'dasmariñas, dasmarinas',
                           ),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Special shipping location',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.grey[700],
+                                    decoration: TextDecoration.none,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                DropdownButtonFormField<String>(
+                                  initialValue: _selectedSpecialShippingCity,
+                                  items: _specialShippingCityOptions
+                                      .map(
+                                        (city) => DropdownMenuItem<String>(
+                                          value: city,
+                                          child: Text(
+                                            city,
+                                            style: GoogleFonts.poppins(fontSize: 13),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: _specialShippingCityOptions.isEmpty ? null : _setSelectedSpecialCity,
+                                  decoration: InputDecoration(
+                                    hintText: _specialShippingCityOptions.isEmpty
+                                        ? 'No special city overrides configured yet'
+                                        : 'Select location',
+                                    filled: true,
+                                    fillColor: const Color(0xFFF8F8F8),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: BorderSide(color: Colors.grey[300]!),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: BorderSide(color: Colors.grey[300]!),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           _buildTextField(
-                            label: 'Special Shipping Cities (format: city:amount)',
-                            controller: _specialShippingCitiesController,
-                            hint: 'bacoor:1800.0',
+                            label: 'Selected location shipping fee (₱)',
+                            controller: _selectedSpecialShippingFeeController,
+                            hint: 'Auto-filled from selected location',
+                            keyboardType: TextInputType.number,
+                            onChanged: _onSelectedSpecialFeeChanged,
+                          ),
+                          if (_selectedSpecialShippingCity != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: _editSelectedSpecialShippingCityController,
+                                      decoration: InputDecoration(
+                                        labelText: 'Edit selected location name',
+                                        hintText: 'e.g. bacoor',
+                                        filled: true,
+                                        fillColor: const Color(0xFFF8F8F8),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide(color: Colors.grey[300]!),
+                                        ),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide(color: Colors.grey[300]!),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                                        ),
+                                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      ),
+                                      style: GoogleFonts.poppins(fontSize: 13),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  SizedBox(
+                                    width: 150,
+                                    child: ElevatedButton.icon(
+                                      onPressed: _renameSelectedSpecialShippingCity,
+                                      icon: const Icon(Icons.edit_outlined, size: 18),
+                                      label: const Text('Rename'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF8D6E63),
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _newSpecialShippingCityController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Add location',
+                                      hintText: 'e.g. imus',
+                                      filled: true,
+                                      fillColor: const Color(0xFFF8F8F8),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: BorderSide(color: Colors.grey[300]!),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: BorderSide(color: Colors.grey[300]!),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                                      ),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                    ),
+                                    style: GoogleFonts.poppins(fontSize: 13),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                SizedBox(
+                                  width: 150,
+                                  child: TextFormField(
+                                    controller: _newSpecialShippingFeeController,
+                                    keyboardType: TextInputType.number,
+                                    decoration: InputDecoration(
+                                      labelText: 'Fee (₱)',
+                                      hintText: '1800',
+                                      filled: true,
+                                      fillColor: const Color(0xFFF8F8F8),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: BorderSide(color: Colors.grey[300]!),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: BorderSide(color: Colors.grey[300]!),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                        borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                                      ),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                    ),
+                                    style: GoogleFonts.poppins(fontSize: 13),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                ElevatedButton.icon(
+                                  onPressed: _addOrUpdateSpecialShippingCity,
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: const Text('Add'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF8D6E63),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_selectedSpecialShippingCity != null)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: _removeSelectedSpecialShippingCity,
+                                icon: const Icon(Icons.delete_outline),
+                                label: const Text('Remove selected location'),
+                                style: TextButton.styleFrom(foregroundColor: Colors.red.shade700),
+                              ),
+                            ),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Text(
+                              'When you pick a location above (e.g. bacoor), this field auto-fills its shipping fee (e.g. 1800).',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: Colors.black54,
+                                height: 1.35,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
                           ),
                           // Shipping fee range as input fields in one line
                           Padding(
@@ -736,7 +1042,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Shipping Fee Base (₱)',
+                                        'Fallback shipping base (₱)',
                                         style: GoogleFonts.poppins(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w500,
@@ -785,7 +1091,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Shipping Fee Max (₱)',
+                                        'Fallback shipping max (₱)',
                                         style: GoogleFonts.poppins(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w500,
@@ -830,6 +1136,69 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                                 ),
                               ],
                             ),
+                          ),
+
+                          // Plan Policy & Schedule
+                          _buildSectionTitle('Plan Policy & Schedule'),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _buildTextField(
+                                    label: 'Lay-away DP minimum (₱)',
+                                    controller: _layawayMinController,
+                                    hint: '3000',
+                                    keyboardType: TextInputType.number,
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: _buildTextField(
+                                    label: 'Lay-away DP maximum (₱)',
+                                    controller: _layawayMaxController,
+                                    hint: '5000',
+                                    keyboardType: TextInputType.number,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          _buildSlider(
+                            label: 'Hulugan down payment (%)',
+                            value: _huluganDownpaymentPercent,
+                            min: 10,
+                            max: 90,
+                            divisions: 80,
+                            onChanged: (value) => setState(() => _huluganDownpaymentPercent = value),
+                            valueDisplay: (value) => '${value.toStringAsFixed(0)}%',
+                          ),
+                          _buildSlider(
+                            label: 'Hulugan financing interest (%)',
+                            value: _huluganInterestPercent,
+                            min: 0,
+                            max: 20,
+                            divisions: 200,
+                            onChanged: (value) => setState(() => _huluganInterestPercent = value),
+                            valueDisplay: (value) => '${value.toStringAsFixed(1)}%',
+                          ),
+                          _buildSlider(
+                            label: 'Installment term (months)',
+                            value: _installmentTermMonths.toDouble(),
+                            min: 1,
+                            max: 12,
+                            divisions: 11,
+                            onChanged: (value) => setState(() => _installmentTermMonths = value.round()),
+                            valueDisplay: (value) => '${value.round()} months',
+                          ),
+                          _buildSlider(
+                            label: 'Late fee per day (₱)',
+                            value: _lateFeePerDay,
+                            min: 0,
+                            max: 1000,
+                            divisions: 200,
+                            onChanged: (value) => setState(() => _lateFeePerDay = value),
+                            valueDisplay: (value) => '₱${value.toStringAsFixed(0)}',
                           ),
                         ],
                       ),
@@ -909,47 +1278,6 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                             valueDisplay: (value) => '₱${value.toStringAsFixed(0)}',
                           ),
 
-                          // Other Settings
-                          _buildSectionTitle('Other Settings'),
-                          _buildSlider(
-                            label: 'Minimum Order Amount',
-                            value: _minOrderAmount,
-                            min: 0,
-                            max: 50000,
-                            divisions: 500,
-                            onChanged: (value) {
-                              setState(() {
-                                _minOrderAmount = value;
-                              });
-                            },
-                            valueDisplay: (value) => value == 0 ? 'No minimum' : '₱${value.toStringAsFixed(0)}',
-                          ),
-                          _buildSlider(
-                            label: 'Maximum Order Amount',
-                            value: _maxOrderAmount,
-                            min: 0,
-                            max: 500000,
-                            divisions: 500,
-                            onChanged: (value) {
-                              setState(() {
-                                _maxOrderAmount = value;
-                              });
-                            },
-                            valueDisplay: (value) => value == 0 ? 'No maximum' : '₱${value.toStringAsFixed(0)}',
-                          ),
-                          _buildDropdown<int>(
-                            label: 'Order Cancellation Time',
-                            value: _orderCancellationTime,
-                            items: _cancellationTimeOptions,
-                            displayText: (value) => '$value minutes',
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _orderCancellationTime = value;
-                                });
-                              }
-                            },
-                          ),
                         ],
                       ),
                     ),

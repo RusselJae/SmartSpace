@@ -19,6 +19,14 @@ class AppSettings {
     },
     this.defaultShippingFeeBase = 3000.0,
     this.defaultShippingFeeMax = 5000.0,
+
+    // Installment / lay-away policy + schedule
+    this.layawayDownpaymentMin = 3000.0,
+    this.layawayDownpaymentMax = 5000.0,
+    this.huluganDownpaymentPercent = 40.0,
+    this.huluganInterestPercent = 6.0,
+    this.installmentTermMonths = 3,
+    this.lateFeePerDay = 100.0,
     
     // Store Information
     this.storeName = 'Wood Home Furniture Trading',
@@ -51,6 +59,14 @@ class AppSettings {
   final double defaultShippingFeeBase; // Base shipping fee for other locations
   final double defaultShippingFeeMax; // Maximum shipping fee for other locations
 
+  // Installment / lay-away policy + schedule
+  final double layawayDownpaymentMin;
+  final double layawayDownpaymentMax;
+  final double huluganDownpaymentPercent;
+  final double huluganInterestPercent;
+  final int installmentTermMonths;
+  final double lateFeePerDay;
+
   // Store Information
   final String storeName;
   final String storeEmail;
@@ -78,6 +94,12 @@ class AppSettings {
     Map<String, double>? specialShippingCities,
     double? defaultShippingFeeBase,
     double? defaultShippingFeeMax,
+    double? layawayDownpaymentMin,
+    double? layawayDownpaymentMax,
+    double? huluganDownpaymentPercent,
+    double? huluganInterestPercent,
+    int? installmentTermMonths,
+    double? lateFeePerDay,
     String? storeName,
     String? storeEmail,
     String? storePhone,
@@ -100,6 +122,12 @@ class AppSettings {
       specialShippingCities: specialShippingCities ?? this.specialShippingCities,
       defaultShippingFeeBase: defaultShippingFeeBase ?? this.defaultShippingFeeBase,
       defaultShippingFeeMax: defaultShippingFeeMax ?? this.defaultShippingFeeMax,
+      layawayDownpaymentMin: layawayDownpaymentMin ?? this.layawayDownpaymentMin,
+      layawayDownpaymentMax: layawayDownpaymentMax ?? this.layawayDownpaymentMax,
+      huluganDownpaymentPercent: huluganDownpaymentPercent ?? this.huluganDownpaymentPercent,
+      huluganInterestPercent: huluganInterestPercent ?? this.huluganInterestPercent,
+      installmentTermMonths: installmentTermMonths ?? this.installmentTermMonths,
+      lateFeePerDay: lateFeePerDay ?? this.lateFeePerDay,
       storeName: storeName ?? this.storeName,
       storeEmail: storeEmail ?? this.storeEmail,
       storePhone: storePhone ?? this.storePhone,
@@ -125,6 +153,12 @@ class AppSettings {
       'specialShippingCities': specialShippingCities.map((k, v) => MapEntry(k, v)),
       'defaultShippingFeeBase': defaultShippingFeeBase,
       'defaultShippingFeeMax': defaultShippingFeeMax,
+      'layawayDownpaymentMin': layawayDownpaymentMin,
+      'layawayDownpaymentMax': layawayDownpaymentMax,
+      'huluganDownpaymentPercent': huluganDownpaymentPercent,
+      'huluganInterestPercent': huluganInterestPercent,
+      'installmentTermMonths': installmentTermMonths,
+      'lateFeePerDay': lateFeePerDay,
       'storeName': storeName,
       'storeEmail': storeEmail,
       'storePhone': storePhone,
@@ -150,6 +184,12 @@ class AppSettings {
       specialShippingCities: (json['specialShippingCities'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num).toDouble())) ?? const {'bacoor': 1800.0},
       defaultShippingFeeBase: (json['defaultShippingFeeBase'] as num?)?.toDouble() ?? 3000.0,
       defaultShippingFeeMax: (json['defaultShippingFeeMax'] as num?)?.toDouble() ?? 5000.0,
+      layawayDownpaymentMin: (json['layawayDownpaymentMin'] as num?)?.toDouble() ?? 3000.0,
+      layawayDownpaymentMax: (json['layawayDownpaymentMax'] as num?)?.toDouble() ?? 5000.0,
+      huluganDownpaymentPercent: (json['huluganDownpaymentPercent'] as num?)?.toDouble() ?? 40.0,
+      huluganInterestPercent: (json['huluganInterestPercent'] as num?)?.toDouble() ?? 6.0,
+      installmentTermMonths: json['installmentTermMonths'] as int? ?? 3,
+      lateFeePerDay: (json['lateFeePerDay'] as num?)?.toDouble() ?? 100.0,
       storeName: json['storeName'] as String? ?? 'Wood Home Furniture Trading',
       storeEmail: json['storeEmail'] as String? ?? '',
       storePhone: json['storePhone'] as String? ?? '',

@@ -16,67 +16,136 @@ class SuccessScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final effectiveSubtitle = subtitle ??
+        'Your order has been confirmed and will be processed shortly.';
+
     return CupertinoPageScaffold(
-      navigationBar: CupertinoNavigationBar(
-        middle: Text(
-          'Order Placed',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
-      ),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                CupertinoIcons.check_mark_circled_solid,
-                size: 80,
-                color: CupertinoColors.activeGreen,
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Thanks for your order!',
-                style: GoogleFonts.poppins(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black,
-                  decoration: TextDecoration.none,
+      // Match the screenshot: no top nav chrome; just the success card centered.
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(24, 30, 24, 24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 18,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
                 ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                subtitle ??
-                    'Your order has been confirmed and will be processed shortly.',
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.normal,
-                  color: Colors.black,
-                  decoration: TextDecoration.none,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Green checkmark in an iOS-friendly size.
+                    Icon(
+                      CupertinoIcons.check_mark_circled,
+                      size: 82,
+                      color: CupertinoColors.activeGreen,
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Handwritten-style title to mirror the screenshot.
+                    Text(
+                      'Thank You!',
+                      style: GoogleFonts.dancingScript(
+                        fontSize: 44,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black,
+                        decoration: TextDecoration.none,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // Small "processing" illustration (store + arrow).
+                    SizedBox(
+                      height: 68,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Positioned(
+                            top: 2,
+                            child: Icon(
+                              Icons.arrow_drop_down,
+                              size: 28,
+                              color: Colors.black.withValues(alpha: 0.7),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 6,
+                            child: Icon(
+                              Icons.storefront_outlined,
+                              size: 46,
+                              color: Colors.black.withValues(alpha: 0.65),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // Body copy under the illustration.
+                    Text(
+                      effectiveSubtitle,
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: const Color(0xFF5F5B56),
+                        decoration: TextDecoration.none,
+                        height: 1.45,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+
+                    const SizedBox(height: 22),
+
+                    // Screenshot-like pill button.
+                    SizedBox(
+                      width: 190,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          // Preserve existing behavior: go back to the app's home shell.
+                          if (Navigator.of(context).canPop()) {
+                            Navigator.of(context).popUntil((route) => route.isFirst);
+                          } else {
+                            Navigator.of(context, rootNavigator: true)
+                                .pushNamedAndRemoveUntil(
+                              TabShell.route,
+                              (route) => false,
+                            );
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2B2B2B),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: Text(
+                          'Back to Home',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
-              CupertinoButton.filled(
-                onPressed: () {
-                  // Check if we can pop before trying to navigate
-                  if (Navigator.of(context).canPop()) {
-                    Navigator.of(context).popUntil((route) => route.isFirst);
-                  } else {
-                    // If we can't pop, navigate to home using root navigator
-                    Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
-                      TabShell.route,
-                      (route) => false,
-                    );
-                  }
-                },
-                child: Text(
-                  'Back to Home',
-                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),

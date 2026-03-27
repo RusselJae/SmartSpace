@@ -41,6 +41,18 @@ class _AdminShellState extends State<AdminShell> {
   final AdminNotificationsService _notifications = AdminNotificationsService.instance;
   final GlobalKey _notificationsAnchorKey = GlobalKey();
 
+  Future<void> _openSupportInboxFromHeader() async {
+    await _notifications.markAllSupportRead();
+    if (!mounted) return;
+    _selectTab(6);
+  }
+
+  Future<void> _openNotificationsFromHeader(BuildContext context) async {
+    await _notifications.markLowStockSeen();
+    if (!mounted) return;
+    _showNotificationsFloatingPanel(context);
+  }
+
   void _showNotificationsFloatingPanel(BuildContext context) {
     final box = _notificationsAnchorKey.currentContext?.findRenderObject() as RenderBox?;
     final screenSize = MediaQuery.sizeOf(context);
@@ -66,19 +78,24 @@ class _AdminShellState extends State<AdminShell> {
     }
     if (top < 16) top = 16;
 
-    showGeneralDialog<void>(
+    // Use a standard dialog shell with explicit outside-tap dismiss handling.
+    // This avoids edge cases where general dialog barriers can immediately consume
+    // the same pointer event used to open the panel on web.
+    showDialog<void>(
       context: context,
       useRootNavigator: true,
-      barrierDismissible: true,
+      barrierDismissible: false,
       barrierColor: Colors.black.withValues(alpha: 0.14),
-      transitionDuration: const Duration(milliseconds: 180),
-      transitionBuilder: (ctx, animation, _, child) {
-        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
-        return FadeTransition(opacity: curved, child: child);
-      },
-      pageBuilder: (ctx, _, __) => SizedBox.expand(
+      builder: (ctx) => SizedBox.expand(
         child: Stack(
           children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.of(ctx).pop(),
+                child: const SizedBox.expand(),
+              ),
+            ),
             Positioned(
               left: left,
               top: top,
@@ -91,7 +108,10 @@ class _AdminShellState extends State<AdminShell> {
                   child: SizedBox(
                     width: panelWidth,
                     height: panelHeight,
-                    child: _InlineNotificationsPanel(service: _notifications),
+                    child: _InlineNotificationsPanel(
+                      service: _notifications,
+                      onClose: () => Navigator.of(ctx).pop(),
+                    ),
                   ),
                 ),
               ),
@@ -297,10 +317,10 @@ class _AdminShellState extends State<AdminShell> {
                     _AdminHeader(
                       title: _destinations[_index].label,
                       notifications: _notifications,
-                      onOpenSupport: () => _selectTab(6),
+                      onOpenSupport: _openSupportInboxFromHeader,
                       onOpenSettings: () => _selectTab(9),
                       onOpenProfile: () => _showProfileModal(context),
-                      onOpenNotifications: () => _showNotificationsFloatingPanel(context),
+                      onOpenNotifications: () => _openNotificationsFromHeader(context),
                       notificationsAnchorKey: _notificationsAnchorKey,
                     ),
                     Expanded(
@@ -330,10 +350,10 @@ class _AdminShellState extends State<AdminShell> {
             _AdminHeader(
               title: _destinations[_index].label,
               notifications: _notifications,
-              onOpenSupport: () => _selectTab(6),
+              onOpenSupport: _openSupportInboxFromHeader,
               onOpenSettings: () => _selectTab(9),
               onOpenProfile: () => _showProfileModal(context),
-              onOpenNotifications: () => _showNotificationsFloatingPanel(context),
+              onOpenNotifications: () => _openNotificationsFromHeader(context),
               notificationsAnchorKey: _notificationsAnchorKey,
             ),
             Expanded(
@@ -758,9 +778,10 @@ class _AdminHeaderState extends State<_AdminHeader> {
 
 
 class _InlineNotificationsPanel extends StatelessWidget {
-  const _InlineNotificationsPanel({required this.service});
+  const _InlineNotificationsPanel({required this.service, this.onClose});
 
   final AdminNotificationsService service;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -793,6 +814,13 @@ class _InlineNotificationsPanel extends StatelessWidget {
                       tooltip: 'Refresh',
                       visualDensity: VisualDensity.compact,
                     ),
+                    if (onClose != null)
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: onClose,
+                        tooltip: 'Close',
+                        visualDensity: VisualDensity.compact,
+                      ),
                   ],
                 ),
               ),

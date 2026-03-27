@@ -30,8 +30,6 @@ import 'success_screen.dart';
 const Color _kWalnut = Color(0xFF5C4033);
 const Color _kWalnutDeep = Color(0xFF3E2723);
 const Color _kWalnutSoftBg = Color(0xFFEFE8E3);
-const double _kDownMin = 3000;
-const double _kDownMax = 5000;
 
 /// Unified Order Summary page with all editable fields
 class OrderSummaryScreen extends StatefulWidget {
@@ -51,6 +49,13 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
   final AppSettingsService _settingsService = AppSettingsService();
   
   AppSettings? _settings;
+
+  double get _layawayDownMin => (_settings ?? const AppSettings()).layawayDownpaymentMin;
+  double get _layawayDownMax => (_settings ?? const AppSettings()).layawayDownpaymentMax;
+  double get _huluganDownPercent => (_settings ?? const AppSettings()).huluganDownpaymentPercent;
+  double get _huluganInterestPercent => (_settings ?? const AppSettings()).huluganInterestPercent;
+  int get _policyTermMonths => (_settings ?? const AppSettings()).installmentTermMonths;
+  double get _policyLateFeePerDay => (_settings ?? const AppSettings()).lateFeePerDay;
   
   // Contact Information
   final TextEditingController _nameController = TextEditingController();
@@ -148,8 +153,8 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     return _checkoutSubtotal + _calculateShippingFee();
   }
 
-  /// Lay-away path needs order total ≥ ₱3k (for ₱3k–₱5k DP band).
-  bool get _canOfferLayawaySplit => _baseOrderTotal() >= _kDownMin;
+  /// Lay-away path needs order total ≥ configured minimum down payment.
+  bool get _canOfferLayawaySplit => _baseOrderTotal() >= _layawayDownMin;
 
   /// Hulugan: in-stock SKUs only (inventory policy).
   bool get _allItemsEligibleForHulugan {
@@ -161,14 +166,14 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
   /// User may pick “split pay” if at least one sub-option is valid.
   bool get _canUseAnySplitPlan => _canOfferLayawaySplit || _canOfferHuluganSplit;
 
-  /// 40% of base (subtotal + shipping).
-  double _huluganDownPaymentPesos() => _baseOrderTotal() * 0.4;
+  /// Configured hulugan down-payment percent of base (subtotal + shipping).
+  double _huluganDownPaymentPesos() => _baseOrderTotal() * (_huluganDownPercent / 100);
 
   /// Principal after 40% DP (before 6% add-on).
   double _huluganFinancedPrincipal() => _baseOrderTotal() - _huluganDownPaymentPesos();
 
-  /// 6% on financed principal.
-  double _huluganInterestPesos() => _huluganFinancedPrincipal() * 0.06;
+  /// Configured interest on financed principal.
+  double _huluganInterestPesos() => _huluganFinancedPrincipal() * (_huluganInterestPercent / 100);
 
   /// Full amount customer pays on hulugan (base + interest on financed portion).
   double _huluganGrandTotalPayable() => _baseOrderTotal() + _huluganInterestPesos();
@@ -188,9 +193,9 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     if (_paymentPlan == CheckoutPaymentPlan.full) return _baseOrderTotal();
     if (_orderOption == CheckoutOrderOption.hulugan) return _huluganDownPaymentPesos();
     final total = _baseOrderTotal();
-    if (total < _kDownMin) return total;
-    final cap = math.min(_kDownMax, total);
-    return _downPaymentPesos.clamp(_kDownMin, cap);
+    if (total < _layawayDownMin) return total;
+    final cap = math.min(_layawayDownMax, total);
+    return _downPaymentPesos.clamp(_layawayDownMin, cap);
   }
 
   /// Shared required label chip (`* Required`) used beside field names.
@@ -273,7 +278,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '3 months HULUGAN (Installments)',
+                    '${_policyTermMonths} months HULUGAN (Installments)',
                     style: GoogleFonts.poppins(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
@@ -283,15 +288,15 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   const SizedBox(height: 6),
                   Text(
                     '• Available (in-stock) items only\n'
-                    '• 6% interest \n'
-                    '• 40% down payment via PayMongo\n'
+                    '• ${_huluganInterestPercent.toStringAsFixed(1)}% interest \n'
+                    '• ${_huluganDownPercent.toStringAsFixed(0)}% down payment via PayMongo\n'
                     '• Estimated delivery 10–12 days after the order is confirmed (admin)\n'
                     '• Shipping fee applies as shown in your summary',
                     style: GoogleFonts.poppins(fontSize: 13, height: 1.45, color: _kWalnutDeep),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    '3 months LAY-AWAY',
+                    '${_policyTermMonths} months LAY-AWAY',
                     style: GoogleFonts.poppins(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
@@ -300,10 +305,11 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '• ₱3,000–₱5,000 down payment (you choose within the band)\n'
+                    '• ₱${_layawayDownMin.toStringAsFixed(0)}–₱${_layawayDownMax.toStringAsFixed(0)} '
+                    'down payment (you choose within the band)\n'
                     '• 0% / no interest on the plan\n'
                     '• Custom design choices where applicable\n'
-                    '• Pay the balance within 3 months (from first PayMongo payment)\n'
+                    '• Pay the balance within ${_policyTermMonths} months (from first payment)\n'
                     '• Delivery when fully paid',
                     style: GoogleFonts.poppins(fontSize: 13, height: 1.45, color: _kWalnutDeep),
                   ),
@@ -336,10 +342,11 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
           'clears (usually seconds).';
     }
     if (_orderOption == CheckoutOrderOption.hulugan) {
-      return 'First PayMongo charge is your 40% down payment. Balance includes 6% on the financed '
+      return 'First PayMongo charge is your ${_huluganDownPercent.toStringAsFixed(0)}% down payment. '
+          'Balance includes ${_huluganInterestPercent.toStringAsFixed(1)}% on the financed '
           'amount. Estimated delivery is set 10–12 days after your order is confirmed.';
     }
-    return 'First PayMongo payment is your lay-away down payment. Your 3-month 0% window starts '
+    return 'First payment is your lay-away down payment. Your ${_policyTermMonths}-month 0% window starts '
         'when that payment clears. Delivery ships after you’re fully paid.';
   }
 
@@ -350,17 +357,21 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         '• You can cancel anytime; the no-refund rule still applies.\n';
     if (_paymentPlan == CheckoutPaymentPlan.full) {
       return '${noRefund}'
-          '• Full payment via PayMongo confirms the order; shipping fee is in your total.';
+          '• Full payment via Gcash confirms the order; shipping fee is in your total.';
     }
     if (_orderOption == CheckoutOrderOption.hulugan) {
       return '${noRefund}'
-          '• Hulugan: in-stock items only; 40% down via PayMongo; 6% on the financed balance.\n'
-          '• Balance due within 3 months from your first PayMongo payment; ₱100/day after month 3 until settled.\n'
+          '• Hulugan: in-stock items only; ${_huluganDownPercent.toStringAsFixed(0)}% down via Gcash; '
+          '${_huluganInterestPercent.toStringAsFixed(1)}% on the financed balance.\n'
+          '• Balance due within $_policyTermMonths months from your first payment; '
+          '₱${_policyLateFeePerDay.toStringAsFixed(0)}/day after month $_policyTermMonths until settled.\n'
           '• Estimated delivery 10–12 days after the order is confirmed (admin). Shipping fee included in total.';
     }
     return '${noRefund}'
-        '• Lay-away: ₱3,000–₱5,000 down via PayMongo; 0% for 3 months from first PayMongo payment.\n'
-        '• Balance within 3 months from then; ₱100/day after month 3 until settled.\n'
+        '• Lay-away: ₱${_layawayDownMin.toStringAsFixed(0)}–₱${_layawayDownMax.toStringAsFixed(0)} '
+        'down via Gcash; 0% for $_policyTermMonths months from first payment.\n'
+        '• Balance within $_policyTermMonths months from then; '
+        '₱${_policyLateFeePerDay.toStringAsFixed(0)}/day after month $_policyTermMonths until settled.\n'
         '• Delivery only after the order is fully paid. Custom design choices where applicable.';
   }
 
@@ -764,7 +775,10 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     if (_paymentPlan == CheckoutPaymentPlan.downpayment) {
       if (_orderOption == CheckoutOrderOption.layaway && !_canOfferLayawaySplit) {
         setState(() => _loading = false);
-        Toast.warning(context, 'Lay-away needs at least ₱3,000 order total — pick full pay or Hulugan');
+        Toast.warning(
+          context,
+          'Lay-away needs at least ₱${_layawayDownMin.toStringAsFixed(0)} order total — pick full pay or Hulugan',
+        );
         return;
       }
       if (_orderOption == CheckoutOrderOption.layaway) {
@@ -774,10 +788,13 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
           Toast.warning(context, 'Enter a valid down payment amount');
           return;
         }
-        final maxDp = math.min(_kDownMax, _baseOrderTotal());
-        if (parsed < _kDownMin || parsed > maxDp) {
+        final maxDp = math.min(_layawayDownMax, _baseOrderTotal());
+        if (parsed < _layawayDownMin || parsed > maxDp) {
           setState(() => _loading = false);
-          Toast.warning(context, 'Down payment must be between ₱${_kDownMin.toStringAsFixed(0)} and ₱${maxDp.toStringAsFixed(0)}');
+          Toast.warning(
+            context,
+            'Down payment must be between ₱${_layawayDownMin.toStringAsFixed(0)} and ₱${maxDp.toStringAsFixed(0)}',
+          );
           return;
         }
         _downPaymentPesos = parsed;
@@ -1200,7 +1217,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Checkout is PayMongo. Choose full pay or split pay, then your plan.',
+              'Checkout is Gcash only. Choose full pay or split pay, then your plan.',
               style: GoogleFonts.poppins(
                 fontSize: 13,
                 fontWeight: FontWeight.w400,
@@ -1360,8 +1377,8 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                 const SizedBox(height: 16),
                 Builder(
                   builder: (context) {
-                    final maxDp = math.min(_kDownMax, base);
-                    final minDp = math.min(_kDownMin, maxDp);
+                    final maxDp = math.min(_layawayDownMax, base);
+                    final minDp = math.min(_layawayDownMin, maxDp);
                     if (maxDp - minDp < 0.01) {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1389,7 +1406,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _requiredLabel('Lay-away down payment ₱3k–₱5k', fontSize: 14),
+                        _requiredLabel('Amount', fontSize: 14),
                         const SizedBox(height: 6),
                         CupertinoTextField(
                           controller: _downPaymentInputController,
@@ -1452,8 +1469,8 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '40% down now: ₱${_huluganDownPaymentPesos().toStringAsFixed(2)}\n'
-                        '6% on financed balance: ₱${_huluganInterestPesos().toStringAsFixed(2)}\n'
+                        '${_huluganDownPercent.toStringAsFixed(0)}% down now: ₱${_huluganDownPaymentPesos().toStringAsFixed(2)}\n'
+                        '${_huluganInterestPercent.toStringAsFixed(1)}% on financed balance: ₱${_huluganInterestPesos().toStringAsFixed(2)}\n'
                         'Balance after down: ₱${_huluganRemainingAfterDownPesos().toStringAsFixed(2)}',
                         style: GoogleFonts.poppins(fontSize: 12, height: 1.45, color: _kWalnutDeep),
                       ),
@@ -1615,7 +1632,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                       _orderOption == CheckoutOrderOption.hulugan) ...[
                     const SizedBox(height: 6),
                     _TotalRow(
-                      label: '6% financing (on balance after 40% DP)',
+                      label: '${_huluganInterestPercent.toStringAsFixed(1)}% financing (on balance after ${_huluganDownPercent.toStringAsFixed(0)}% DP)',
                       value: '₱${_huluganInterestPesos().toStringAsFixed(2)}',
                     ),
                   ],
@@ -1643,9 +1660,11 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                     const SizedBox(height: 8),
                     Text(
                       _orderOption == CheckoutOrderOption.hulugan
-                          ? 'After down payment, balance includes 6% on the financed portion. Second charge via PayMongo from Orders. '
+                          ? 'After down payment, balance includes ${_huluganInterestPercent.toStringAsFixed(1)}% on the financed portion. '
+                              'Second charge via PayMongo from Orders. '
                               'Delivery target: 10–12 days after the order is confirmed.'
-                          : 'Second payment via PayMongo from Orders. 0% for 3 months from first payment; delivery after full payment.',
+                          : 'Second payment via PayMongo from Orders. 0% for $_policyTermMonths months from first payment; '
+                              'delivery after full payment.',
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         fontStyle: FontStyle.italic,

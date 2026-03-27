@@ -54,6 +54,7 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
     final u = _auth.currentUser;
     if (u != null) {
       _name.text = u.fullName;
+      _phone.text = u.phoneNumber ?? '';
     }
     _primeSettings();
     _city.addListener(() {
@@ -190,6 +191,224 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
     }
   }
 
+  Future<void> _openContactEditor() async {
+    final nameCtrl = TextEditingController(text: _name.text.trim());
+    final phoneCtrl = TextEditingController(text: _phone.text.trim());
+    try {
+      await showCupertinoModalPopup<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => Material(
+          color: Colors.black.withValues(alpha: 0.5),
+          child: Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Edit contact',
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: _kWalnutDeep,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  _field('Full name', nameCtrl),
+                  const SizedBox(height: 10),
+                  _field('Phone', phoneCtrl, keyboard: TextInputType.phone),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: CupertinoButton(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          child: Text(
+                            'Cancel',
+                            style: GoogleFonts.poppins(
+                              color: _kWalnut,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: CupertinoButton(
+                          color: _kWalnut,
+                          borderRadius: BorderRadius.circular(10),
+                          onPressed: () {
+                            if (nameCtrl.text.trim().isEmpty || phoneCtrl.text.trim().isEmpty) {
+                              Toast.warning(context, 'Please enter your full name and phone number.');
+                              return;
+                            }
+                            setState(() {
+                              _name.text = nameCtrl.text.trim();
+                              _phone.text = phoneCtrl.text.trim();
+                            });
+                            Navigator.of(ctx).pop();
+                          },
+                          child: Text(
+                            'Save',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    } finally {
+      nameCtrl.dispose();
+      phoneCtrl.dispose();
+    }
+  }
+
+  Future<void> _openAddressEditor() async {
+    final line1Ctrl = TextEditingController(text: _line1.text.trim());
+    final cityCtrl = TextEditingController(text: _city.text.trim());
+    final postalCtrl = TextEditingController(text: _postal.text.trim());
+    try {
+      await showCupertinoModalPopup<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => Material(
+          color: Colors.black.withValues(alpha: 0.5),
+          child: Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Edit delivery address',
+                      style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: _kWalnutDeep,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _field('Address line (block, street, barangay)', line1Ctrl),
+                    const SizedBox(height: 10),
+                    _field('City / region', cityCtrl),
+                    const SizedBox(height: 10),
+                    _field('Postal code', postalCtrl, keyboard: TextInputType.number),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: CupertinoButton(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            child: Text(
+                              'Cancel',
+                              style: GoogleFonts.poppins(
+                                color: _kWalnut,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: CupertinoButton(
+                            color: _kWalnut,
+                            borderRadius: BorderRadius.circular(10),
+                            onPressed: () {
+                              if (line1Ctrl.text.trim().isEmpty || cityCtrl.text.trim().isEmpty) {
+                                Toast.warning(context, 'Please enter your address line and city.');
+                                return;
+                              }
+                              setState(() {
+                                _line1.text = line1Ctrl.text.trim();
+                                _city.text = cityCtrl.text.trim();
+                                _postal.text = postalCtrl.text.trim();
+                              });
+                              Navigator.of(ctx).pop();
+                            },
+                            child: Text(
+                              'Save',
+                              style: GoogleFonts.poppins(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    } finally {
+      line1Ctrl.dispose();
+      cityCtrl.dispose();
+      postalCtrl.dispose();
+    }
+  }
+
+  Widget _infoFieldRow(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.poppins(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: _kWalnutDeep.withValues(alpha: 0.75),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _kWalnut.withValues(alpha: 0.2)),
+          ),
+          child: Text(
+            value.isEmpty ? 'Not provided' : value,
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              color: _kWalnutDeep,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _field(String label, TextEditingController c, {TextInputType? keyboard}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -215,7 +434,12 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
     );
   }
 
-  Widget _sectionCard({required String title, required List<Widget> children}) {
+  Widget _sectionCard({
+    required String title,
+    required List<Widget> children,
+    String? buttonLabel,
+    VoidCallback? onTapButton,
+  }) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -233,14 +457,34 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            title,
-            style: GoogleFonts.poppins(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
-              color: _kWalnutDeep,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                    color: _kWalnutDeep,
+                  ),
+                ),
+              ),
+              if (buttonLabel != null && onTapButton != null)
+                CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  minSize: 0,
+                  onPressed: onTapButton,
+                  child: Text(
+                    buttonLabel,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: _kWalnut,
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 12),
           ...children,
@@ -249,31 +493,17 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
     );
   }
 
-  Widget _summaryRow(String label, String value, {bool strong = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: GoogleFonts.poppins(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[700],
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: GoogleFonts.poppins(
-              fontSize: 13,
-              fontWeight: strong ? FontWeight.w800 : FontWeight.w700,
-              color: _kWalnutDeep,
-            ),
-          ),
-        ],
-      ),
+  Widget _shippingHint() {
+    final city = _city.text.trim();
+    final ship = _calculateShippingFee();
+    return Text(
+      city.isEmpty
+          ? 'Tip: add your city to calculate shipping fee accurately.'
+          : (ship == 0
+              ? 'Shipping is free for your location.'
+              : 'Shipping fee is calculated from your city.'),
+      textAlign: TextAlign.center,
+      style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
     );
   }
 
@@ -325,14 +555,7 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
                   _summaryRow('Pay now (downpayment)', '₱${dp.toStringAsFixed(2)}', strong: true),
                   _summaryRow('Later', '₱${remaining.toStringAsFixed(2)}'),
                   const SizedBox(height: 4),
-                  Text(
-                    ship == 0 ? 'Shipping is free for your location.' : 'Shipping fee is calculated from your city.',
-                    style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      height: 1.35,
-                      color: Colors.grey[600],
-                    ),
-                  ),
+                  _shippingHint(),
                 ] else ...[
                   Text(
                     'Quote totals are missing. Please contact support.',
@@ -343,17 +566,26 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
             ),
             const SizedBox(height: 14),
             _sectionCard(
-              title: 'DELIVERY ADDRESS',
+              title: 'CONTACT',
+              buttonLabel: 'Edit',
+              onTapButton: _openContactEditor,
               children: [
-                _field('Full name', _name),
+                _infoFieldRow('Full name', _name.text),
                 const SizedBox(height: 10),
-                _field('Phone', _phone, keyboard: TextInputType.phone),
+                _infoFieldRow('Phone', _phone.text),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _sectionCard(
+              title: 'DELIVERY ADDRESS',
+              buttonLabel: 'Edit',
+              onTapButton: _openAddressEditor,
+              children: [
+                _infoFieldRow('Address line (block, street, barangay)', _line1.text),
                 const SizedBox(height: 10),
-                _field('Address line (block, street, barangay)', _line1),
+                _infoFieldRow('City / region', _city.text),
                 const SizedBox(height: 10),
-                _field('City / region', _city),
-                const SizedBox(height: 10),
-                _field('Postal code', _postal),
+                _infoFieldRow('Postal code', _postal.text),
               ],
             ),
             const SizedBox(height: 16),
@@ -375,14 +607,38 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            Text(
-              'Tip: pick the correct city — it changes the shipping fee.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
-            ),
+            _shippingHint(),
           ],
         ),
       ),
     );
   }
+  Widget _summaryRow(String label, String value, {bool strong = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: GoogleFonts.poppins(
+              fontSize: 13,
+              fontWeight: strong ? FontWeight.w800 : FontWeight.w700,
+              color: _kWalnutDeep,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
 }

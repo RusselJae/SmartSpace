@@ -1,13 +1,67 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../models/app_settings.dart';
+import '../../services/app_settings_service.dart';
 
 /// About Us – brand story + store details.
 ///
 /// This is where we keep the business identity and real-world contact info.
 /// Help Center stays focused on “get help + guides”.
-class AboutUsScreen extends StatelessWidget {
+class AboutUsScreen extends StatefulWidget {
   const AboutUsScreen({super.key});
+
+  @override
+  State<AboutUsScreen> createState() => _AboutUsScreenState();
+}
+
+class _AboutUsScreenState extends State<AboutUsScreen> {
+  final AppSettingsService _settingsService = AppSettingsService();
+  AppSettings _settings = const AppSettings();
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await _settingsService.loadSettings();
+      if (!mounted) return;
+      setState(() {
+        _settings = settings;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  String _displayOrFallback(String value, String fallback) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  Widget _buildBrandLogo() {
+    final logoPath = _settings.logoImagePath.trim();
+    if (logoPath.startsWith('assets/')) {
+      return Image.asset(
+        logoPath,
+        width: 72,
+        height: 72,
+        fit: BoxFit.cover,
+      );
+    }
+    return Image.asset(
+      'assets/images/logo.jpg',
+      width: 72,
+      height: 72,
+      fit: BoxFit.cover,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +91,9 @@ class AboutUsScreen extends StatelessWidget {
         ),
       ),
       child: SafeArea(
-        child: ListView(
+        child: _loading
+            ? const Center(child: CupertinoActivityIndicator())
+            : ListView(
           children: [
             const SizedBox(height: 12),
             Padding(
@@ -47,17 +103,12 @@ class AboutUsScreen extends StatelessWidget {
                   Center(
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(16),
-                      child: Image.asset(
-                        'assets/images/logo.jpg',
-                        width: 72,
-                        height: 72,
-                        fit: BoxFit.cover,
-                      ),
+                      child: _buildBrandLogo(),
                     ),
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Wood Home Furniture Trading',
+                    _displayOrFallback(_settings.storeName, 'Wood Home Furniture Trading'),
                     textAlign: TextAlign.center,
                     style: GoogleFonts.poppins(
                       fontSize: 16,
@@ -144,34 +195,34 @@ class AboutUsScreen extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 10),
-                    const _ContactRow(
+                    _ContactRow(
                       icon: CupertinoIcons.location_solid,
                       label: 'Address',
-                      value: '9W2W+M2V, Jose Abad Santos Ave,\nSalitran, Dasmariñas, Cavite',
+                      value: _displayOrFallback(_settings.storeAddress, 'Not available'),
                     ),
                     const SizedBox(height: 6),
-                    const _ContactRow(
+                    _ContactRow(
                       icon: CupertinoIcons.phone_solid,
                       label: 'Phone',
-                      value: '0945 631 7080',
+                      value: _displayOrFallback(_settings.storePhone, 'Not available'),
                     ),
                     const SizedBox(height: 6),
-                    const _ContactRow(
+                    _ContactRow(
                       icon: CupertinoIcons.time_solid,
                       label: 'Hours',
                       value: 'Open · Closes 6:00 PM',
                     ),
                     const SizedBox(height: 6),
-                    const _ContactRow(
+                    _ContactRow(
                       icon: CupertinoIcons.envelope_fill,
                       label: 'Email',
-                      value: 'enonrosalie238@gmail.com',
+                      value: _displayOrFallback(_settings.storeEmail, 'Not available'),
                     ),
                     const SizedBox(height: 6),
-                    const _ContactRow(
+                    _ContactRow(
                       icon: CupertinoIcons.chat_bubble_2_fill,
-                      label: 'FB / Messenger',
-                      value: 'Wood home Furniture Trading',
+                      label: 'Store',
+                      value: _displayOrFallback(_settings.storeName, 'Wood Home Furniture Trading'),
                     ),
                   ],
                 ),

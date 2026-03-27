@@ -34,19 +34,18 @@ class AppSettingsService {
     }
 
     try {
-      // Try to load from backend first
+      await _db.initialize();
       if (_db.isConnected) {
         try {
-          // TODO: Implement backend API endpoint for settings
-          // For now, we'll use local storage
-          // final settings = await _db.getAppSettings();
-          // _cachedSettings = settings;
-          // return settings;
-        } catch (e) {
+          final map = await _db.getAppSettings();
+          final settings = AppSettings.fromJson(map);
+          _cachedSettings = settings;
+          return settings;
+        } catch (_) {
           // Fall back to local storage if backend fails
         }
       }
-    } catch (e) {
+    } catch (_) {
       // Fall back to local storage
     }
 
@@ -81,9 +80,9 @@ class AppSettingsService {
 
     // Try to save to backend
     try {
+      await _db.initialize();
       if (_db.isConnected) {
-        // TODO: Implement backend API endpoint for saving settings
-        // await _db.saveAppSettings(settings);
+        await _db.saveAppSettings(settings.toJson());
       }
     } catch (e) {
       // If backend save fails, settings are still saved locally

@@ -1413,6 +1413,25 @@ class MySQLDatabaseService {
     return reviews;
   }
 
+  Future<Map<String, dynamic>> getAppSettings() async {
+    if (!_useApi) {
+      throw Exception('App settings require API mode.');
+    }
+    final data = await _sendRequest(method: 'GET', path: '/settings');
+    return _asMap(data, 'app settings');
+  }
+
+  Future<void> saveAppSettings(Map<String, dynamic> settingsJson) async {
+    if (!_useApi) {
+      throw Exception('App settings require API mode.');
+    }
+    await _sendRequest(
+      method: 'PUT',
+      path: '/settings',
+      body: settingsJson,
+    );
+  }
+
   /// Get all published reviews for a specific product.
   /// Only returns reviews with 'published' status.
   /// Returns reviews from ALL users who have reviewed this product.

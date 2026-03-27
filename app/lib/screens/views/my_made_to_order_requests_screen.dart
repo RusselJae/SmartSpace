@@ -19,6 +19,8 @@ class MyMadeToOrderRequestsScreen extends StatefulWidget {
 
 class _MyMadeToOrderRequestsScreenState extends State<MyMadeToOrderRequestsScreen> {
   static const Color _kWalnut = Color(0xFF5C4033);
+  static const Color _kWalnutDeep = Color(0xFF3E2723);
+  static const Color _kWalnutSoftBg = Color(0xFFF7F3EF);
 
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final AuthService _auth = AuthService();
@@ -80,9 +82,15 @@ class _MyMadeToOrderRequestsScreenState extends State<MyMadeToOrderRequestsScree
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
-      backgroundColor: const Color(0xFFF8F7F5),
+      backgroundColor: const Color(0xFFF7F7F7),
       navigationBar: CupertinoNavigationBar(
-        backgroundColor: Colors.white,
+        backgroundColor: _kWalnutSoftBg,
+        border: Border(
+          bottom: BorderSide(
+            color: _kWalnut.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+        ),
         leading: CupertinoNavigationBarBackButton(
           onPressed: () => Navigator.of(context).maybePop(),
           color: _kWalnut,
@@ -158,30 +166,80 @@ class _RequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool isQuoted = request.status == 'quoted';
+    final String meta = [
+      statusLabel,
+      if (request.orderId != null && request.orderId!.isNotEmpty) 'Order: ${request.orderId}',
+    ].join(' · ');
+
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFBCAAA4).withValues(alpha: 0.25),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            request.itemName,
-            style: GoogleFonts.poppins(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: Colors.black87,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: _MyMadeToOrderRequestsScreenState._kWalnut.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  isQuoted ? CupertinoIcons.checkmark_alt_circle_fill : CupertinoIcons.doc_text_fill,
+                  size: 16,
+                  color: _MyMadeToOrderRequestsScreenState._kWalnut,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      request.itemName,
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: _MyMadeToOrderRequestsScreenState._kWalnutDeep,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      meta,
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        color: Colors.black54,
+                        height: 1.2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            statusLabel,
-            style: GoogleFonts.poppins(fontSize: 13, color: Colors.black54, height: 1.2),
-          ),
-          if (request.status == 'quoted' &&
+          if (isQuoted &&
               request.quotedTotal != null &&
               request.quotedDownpayment != null &&
               request.quotedRemaining != null) ...[
@@ -205,27 +263,27 @@ class _RequestCard extends StatelessWidget {
               style: GoogleFonts.poppins(fontSize: 12.5, color: Colors.black87, height: 1.35),
             ),
           ],
-          if (request.orderId != null && request.orderId!.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Order ID: ${request.orderId}',
-              style: GoogleFonts.poppins(fontSize: 12.5, color: Colors.black54, height: 1.3),
-            ),
-          ],
           if (onPay != null) ...[
             const SizedBox(height: 12),
-            CupertinoButton.filled(
+            CupertinoButton(
+              padding: EdgeInsets.zero,
               onPressed: onPay,
               child: Container(
                 width: double.infinity,
                 alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(vertical: 11),
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                decoration: BoxDecoration(
+                  color: _MyMadeToOrderRequestsScreenState._kWalnut,
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Text(
                   'Enter shipping & pay deposit',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(
                     fontWeight: FontWeight.w700,
                     color: Colors.white,
+                    fontSize: 16,
+                    decoration: TextDecoration.none,
                   ),
                 ),
               ),

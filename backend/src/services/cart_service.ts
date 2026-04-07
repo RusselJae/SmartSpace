@@ -1,7 +1,7 @@
 import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
 import { CartItem } from '../models/cart_item';
-import { Product } from '../models/product';
+import { Product, ProductSetComponent } from '../models/product';
 import { generateId } from '../utils/id_generator';
 import { parseBooleanFlag, parseStringArray } from '../utils/parser';
 
@@ -35,6 +35,7 @@ type CartItemRow = RowDataPacket & {
   readonly product_inventory_qty: number | null;
   readonly product_is_archived: number | boolean | null;
   readonly product_created_at: Date;
+  readonly product_components_json: string | null;
 };
 
 type CartRow = RowDataPacket & {
@@ -70,6 +71,7 @@ const CART_SELECT = `
     p.color AS product_color,
     p.model_path AS product_model_path,
     p.image_urls AS product_image_urls,
+    p.components_json AS product_components_json,
     p.real_width_m AS product_real_width_m,
     p.real_height_m AS product_real_height_m,
     p.real_depth_m AS product_real_depth_m,
@@ -86,6 +88,43 @@ const CART_SELECT = `
   INNER JOIN products p ON p.id = ci.product_id
 `;
 
+/**
+ * Matches product_service mapProduct: parses stored JSON array into normalized components.
+ */
+const parseProductComponentsJson = (raw: string | null | undefined): ProductSetComponent[] => {
+  if (raw == null || String(raw).trim().length === 0) {
+    return [];
+  }
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => {
+        const record = item as Record<string, unknown>;
+        return {
+          name: String(record.name ?? ''),
+          quantity: Number(record.quantity ?? 0),
+          widthM: Number(record.widthM ?? 0),
+          heightM: Number(record.heightM ?? 0),
+          depthM: Number(record.depthM ?? 0),
+          modelPath: record.modelPath != null ? String(record.modelPath) : undefined,
+          notes: record.notes != null ? String(record.notes) : undefined,
+        };
+      })
+      .filter(
+        (item) =>
+          item.name.trim().length > 0 &&
+          item.quantity > 0 &&
+          item.widthM > 0 &&
+          item.heightM > 0 &&
+          item.depthM > 0,
+      );
+  } catch {
+    return [];
+  }
+};
+
 const mapProduct = (row: CartItemRow): Product => ({
   id: row.product_id,
   name: row.product_name,
@@ -96,6 +135,7 @@ const mapProduct = (row: CartItemRow): Product => ({
   material: row.product_material ?? '',
   color: row.product_color ?? '',
   modelPath: row.product_model_path ?? 'assets/chair.glb',
+  components: parseProductComponentsJson(row.product_components_json),
   realWidthM: row.product_real_width_m ?? null,
   realHeightM: row.product_real_height_m ?? null,
   realDepthM: row.product_real_depth_m ?? null,

@@ -157,7 +157,18 @@ class AdminNotificationsService {
     if (adminId == null || adminId.trim().isEmpty) return;
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastReadKey(adminId: adminId, conversationId: conversationId), DateTime.now().toIso8601String());
+    final db = MySQLDatabaseService();
+    await db.initialize();
+    final convs = await db.getSupportConversationsForAdmin(status: 'open');
+    SupportConversation? conv;
+    for (final c in convs) {
+      if (c.id == conversationId) {
+        conv = c;
+        break;
+      }
+    }
+    final timestamp = (conv?.lastMessageAt ?? conv?.updatedAt ?? DateTime.now()).toIso8601String();
+    await prefs.setString(_lastReadKey(adminId: adminId, conversationId: conversationId), timestamp);
     await refresh();
   }
 
@@ -168,12 +179,12 @@ class AdminNotificationsService {
     if (adminId == null || adminId.trim().isEmpty) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final nowIso = DateTime.now().toIso8601String();
     final db = MySQLDatabaseService();
     await db.initialize();
     final convs = await db.getSupportConversationsForAdmin(status: 'open');
     for (final c in convs) {
-      await prefs.setString(_lastReadKey(adminId: adminId, conversationId: c.id), nowIso);
+      final timestamp = (c.lastMessageAt ?? c.updatedAt).toIso8601String();
+      await prefs.setString(_lastReadKey(adminId: adminId, conversationId: c.id), timestamp);
     }
     await refresh();
   }

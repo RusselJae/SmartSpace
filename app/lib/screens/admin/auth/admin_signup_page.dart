@@ -36,25 +36,35 @@ class _AdminSignupPageState extends State<AdminSignupPage> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Logo and branding section
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: AdminPalette.brown,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AdminPalette.brown.withValues(alpha: 0.3),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          width: 80,
+                          height: 80,
+                          decoration: BoxDecoration(
+                            boxShadow: [
+                              BoxShadow(
+                                color: AdminPalette.brown.withValues(alpha: 0.22),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Image.asset(
+                            'assets/images/logo.jpg',
+                            width: 80,
+                            height: 80,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              color: AdminPalette.brown,
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.storefront_rounded,
+                                color: Colors.white,
+                                size: 40,
+                              ),
                             ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.view_in_ar_rounded,
-                          color: Colors.white,
-                          size: 40,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 32),

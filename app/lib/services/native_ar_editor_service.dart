@@ -1,11 +1,14 @@
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import 'mysql_database_service.dart';
+import '../app_nav.dart';
 import '../models/product.dart';
+import '../screens/views/product_detail.dart';
 import '../utils/model_path_helper.dart';
+import 'mysql_database_service.dart';
 
 /// ###########################################################################
 /// ## NativeArEditorService                                                  ##
@@ -23,6 +26,54 @@ class NativeArEditorService {
   NativeArEditorService._();
 
   static const MethodChannel _channel = MethodChannel('com.smartspace/ar_editor');
+
+  static bool _nativeInboundRegistered = false;
+
+  /// Handles calls from Kotlin ([ArEditorActivity]) on the same channel used for [openEditor].
+  static void registerNativeCallbacks() {
+    if (_nativeInboundRegistered) return;
+    _nativeInboundRegistered = true;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method != 'openProductDetail') return;
+      final args = call.arguments;
+      final productId = args is Map ? args['productId'] as String? : null;
+      if (productId == null || productId.isEmpty) return;
+
+      final nav = appNavigatorKey.currentState;
+      if (nav == null) {
+        debugPrint('openProductDetail: no navigator yet');
+        return;
+      }
+
+      final db = MySQLDatabaseService();
+      await db.initialize();
+      Product? match;
+      try {
+        final all = await db.getAllProducts();
+        for (final p in all) {
+          if (p.id == productId) {
+            match = p;
+            break;
+          }
+        }
+      } catch (e) {
+        debugPrint('openProductDetail: load products failed: $e');
+        return;
+      }
+
+      if (match == null) {
+        debugPrint('openProductDetail: unknown productId=$productId');
+        return;
+      }
+
+      final product = match;
+      nav.push(
+        CupertinoPageRoute<void>(
+          builder: (_) => ProductDetailScreen(product: product),
+        ),
+      );
+    });
+  }
 
   // Canonical matcher so "Dining Chairs", " dining-chairs ", etc. can still
   // resolve to the same category bucket for variants.

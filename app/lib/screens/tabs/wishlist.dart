@@ -2,7 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
-import '../../config/api_config.dart';
+import '../../utils/model_path_helper.dart';
+import '../../widgets/cached_model_src_loader.dart';
 import '../../services/wishlist_service.dart';
 import '../../models/product.dart';
 import '../../widgets/toast.dart';
@@ -261,43 +262,6 @@ class _LikeGridTile extends StatelessWidget {
     return src.toLowerCase().endsWith('.glb') || src.toLowerCase().endsWith('.gltf');
   }
 
-  String? get _resolvedModelSrc {
-    final raw = product.modelPath.trim();
-    if (raw.isEmpty) return null;
-
-    // If the backend stored a full URL already, use it directly.
-    if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return raw;
-    }
-
-    // If the backend stored an uploads path (common from /api/models/upload),
-    // it will look like:
-    // - /uploads/models/...
-    // - uploads/models/...
-    // - backend/uploads/models/... (local-ish)
-    //
-    // For Flutter Web, we MUST turn this into an absolute URL that points to
-    // the backend origin, otherwise the browser will try to fetch it from the
-    // Flutter dev-server origin and the model will fail to load (blank tile).
-    final apiUri = Uri.parse(ApiConfig.baseUrl);
-    final origin = apiUri.origin; // e.g. http://localhost:4000
-
-    if (raw.startsWith('/uploads/')) {
-      return '$origin$raw';
-    }
-    if (raw.startsWith('uploads/')) {
-      return '$origin/$raw';
-    }
-    if (raw.contains('backend/uploads/')) {
-      final idx = raw.indexOf('backend/uploads/');
-      final tail = raw.substring(idx + 'backend/'.length); // uploads/...
-      return '$origin/$tail';
-    }
-
-    // Otherwise treat it as a Flutter asset path (e.g. assets/chair.glb).
-    return raw;
-  }
-
   bool get _hasNetworkImage {
     if (product.imageUrls.isEmpty) return false;
     final first = product.imageUrls.first.trim();
@@ -350,19 +314,23 @@ class _LikeGridTile extends StatelessWidget {
                               ),
                               IgnorePointer(
                                 ignoring: true,
-                                child: ModelViewer(
-                                  // Keep transparent so our fallback icon stays visible
-                                  // if the model fails to load (instead of a blank tile).
-                                  backgroundColor: Colors.transparent,
-                                  src: _resolvedModelSrc ?? product.modelPath,
-                                  alt: '3D preview of ${product.name}',
-                                  ar: false,
-                                  environmentImage: 'neutral',
-                                  exposure: 1.35,
-                                  shadowIntensity: 0.18,
-                                  autoRotate: false,
-                                  cameraControls: false,
-                                  disableZoom: true,
+                                child: CachedModelSrcLoader(
+                                  sourceUrl: ModelPathHelper.normalize(product.modelPath),
+                                  placeholder: const SizedBox.shrink(),
+                                  builder: (context, resolvedSrc) => ModelViewer(
+                                    // Keep transparent so our fallback icon stays visible
+                                    // if the model fails to load (instead of a blank tile).
+                                    backgroundColor: Colors.transparent,
+                                    src: resolvedSrc,
+                                    alt: '3D preview of ${product.name}',
+                                    ar: false,
+                                    environmentImage: 'neutral',
+                                    exposure: 1.35,
+                                    shadowIntensity: 0.18,
+                                    autoRotate: false,
+                                    cameraControls: false,
+                                    disableZoom: true,
+                                  ),
                                 ),
                               ),
                             ],

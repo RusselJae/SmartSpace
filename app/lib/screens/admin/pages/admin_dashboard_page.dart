@@ -4,6 +4,7 @@ import '../../../models/order_record.dart';
 import '../../../models/product.dart';
 import '../../../models/review.dart';
 import '../../../models/user.dart';
+import '../../../models/made_to_order_request.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_summary_card.dart';
 
@@ -28,6 +29,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   List<OrderRecord> _orders = const [];
   List<Review> _reviews = const [];
   List<User> _users = const [];
+  List<MadeToOrderRequest> _mtoRequests = const [];
 
   @override
   void initState() {
@@ -46,6 +48,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _db.getAllOrders(),
         _db.getAllReviews(),
         _db.getAllUsers(),
+        _db.getMadeToOrderRequests(),
       ]);
       if (!mounted) return;
       setState(() {
@@ -54,6 +57,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         _orders = results[1] as List<OrderRecord>;
         _reviews = results[2] as List<Review>;
         _users = results[3] as List<User>;
+        _mtoRequests = results[4] as List<MadeToOrderRequest>;
       });
     } catch (error) {
       if (!mounted) return;
@@ -96,36 +100,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final bool wide = constraints.maxWidth > 1000;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (wide)
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: _HeroBanner(onRefresh: _loadData),
-                      ),
-                      const SizedBox(width: 20),
-                      Expanded(
-                        flex: 2,
-                        child: _SalesOverviewCard(orders: _orders),
-                      ),
-                    ],
-                  )
-                else
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _HeroBanner(onRefresh: _loadData),
-                      const SizedBox(height: 20),
-                      _SalesOverviewCard(orders: _orders),
-                    ],
-                  ),
+                _HeroBanner(onRefresh: _loadData),
                 const SizedBox(height: 24),
                 _SummaryGrid(metrics: metrics),
+                const SizedBox(height: 24),
+                _RecentOverviewPanel(
+                  users: _users,
+                  productsById: {for (final p in _products) p.id: p},
+                  orders: _orders,
+                  mtoRequests: _mtoRequests,
+                ),
                 const SizedBox(height: 24),
                 _OrdersSection(
                   orders: _recentOrders,
@@ -287,136 +274,6 @@ class _HeroBanner extends StatelessWidget {
 
 /// Compact sales overview card on the right of the hero area
 /// Shows monthly sales data with a bar chart visualization
-class _SalesOverviewCard extends StatelessWidget {
-  const _SalesOverviewCard({required this.orders});
-
-  final List<OrderRecord> orders;
-
-  /// Calculate monthly sales for the current month
-  double get _monthlySales {
-    final now = DateTime.now();
-    final currentMonthStart = DateTime(now.year, now.month, 1);
-    
-    return orders
-        .where((order) => order.createdAt.isAfter(currentMonthStart) || 
-                         order.createdAt.isAtSameMomentAs(currentMonthStart))
-        .fold(0.0, (sum, order) => sum + order.totalAmount);
-  }
-
-  /// Get sales data for the last 6 months for the bar chart
-  List<double> get _monthlySalesData {
-    final now = DateTime.now();
-    final List<double> monthlyData = [];
-    
-    // Calculate sales for each of the last 6 months
-    for (int i = 5; i >= 0; i--) {
-      final monthStart = DateTime(now.year, now.month - i, 1);
-      final monthEnd = DateTime(now.year, now.month - i + 1, 1);
-      
-      final monthSales = orders
-          .where((order) => 
-              order.createdAt.isAfter(monthStart.subtract(const Duration(milliseconds: 1))) &&
-              order.createdAt.isBefore(monthEnd))
-          .fold(0.0, (sum, order) => sum + order.totalAmount);
-      
-      monthlyData.add(monthSales);
-    }
-    
-    return monthlyData;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final monthlySales = _monthlySales;
-    final chartData = _monthlySalesData;
-    final maxSales = chartData.isEmpty ? 1.0 : chartData.reduce((a, b) => a > b ? a : b);
-    
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Monthly Sales',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '₱${monthlySales.toStringAsFixed(1)}',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 100,
-              child: _MiniBarChart(data: chartData, maxValue: maxSales),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Mini bar chart widget that displays monthly sales data
-/// Uses actual sales data from orders to visualize trends
-class _MiniBarChart extends StatelessWidget {
-  const _MiniBarChart({required this.data, required this.maxValue});
-
-  final List<double> data;
-  final double maxValue;
-
-  @override
-  Widget build(BuildContext context) {
-    // If no data, show empty chart
-    if (data.isEmpty || maxValue == 0) {
-      return Center(
-        child: Text(
-          'No sales data',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.grey[600],
-              ),
-        ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final barWidth = (width - (data.length - 1) * 6) / data.length;
-        final maxHeight = constraints.maxHeight;
-        
-        return SizedBox(
-          height: 100,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              for (int i = 0; i < data.length; i++) ...[
-                Container(
-                  width: barWidth,
-                  // Scale height based on max value, with minimum height of 4 for visibility
-                  height: maxValue > 0 
-                      ? (data[i] / maxValue * maxHeight).clamp(4.0, maxHeight)
-                      : 4.0,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(6),
-                    color: const Color(0xFF8D6E63),
-                  ),
-                ),
-                if (i < data.length - 1) const SizedBox(width: 6),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
 /// Orders section with simplified design
 class _OrdersSection extends StatelessWidget {
   const _OrdersSection({
@@ -575,24 +432,196 @@ class _SummaryGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final int columns = constraints.maxWidth > 1100 ? 4 : constraints.maxWidth > 720 ? 2 : 1;
-        // For web-based admin panel, use a lower childAspectRatio to give cards more height
-        // Lower ratio = taller cards (more vertical space)
-        // Set to 1.75 to provide 2x the height for card content without overflow
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            // Decreased to 1.75 for web - gives cards 2x more height to fit content comfortably
-            // This ratio makes cards approximately 1.75x wider than they are tall (much taller cards)
-            childAspectRatio: 1.75,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 2.3,
           ),
           itemCount: metrics.length,
-          itemBuilder: (context, index) => AdminSummaryCard(metric: metrics[index]),
+          itemBuilder: (context, index) {
+            final metric = metrics[index];
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F9FC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE3E8EF)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(metric.title, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700])),
+                    const SizedBox(height: 6),
+                    Text(metric.value, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text(metric.deltaLabel, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600])),
+                  ],
+                ),
+              ),
+            );
+          },
         );
       },
+    );
+  }
+}
+
+class _RecentOverviewPanel extends StatelessWidget {
+  const _RecentOverviewPanel({
+    required this.users,
+    required this.productsById,
+    required this.orders,
+    required this.mtoRequests,
+  });
+
+  final List<User> users;
+  final Map<String, Product> productsById;
+  final List<OrderRecord> orders;
+  final List<MadeToOrderRequest> mtoRequests;
+
+  @override
+  Widget build(BuildContext context) {
+    final recentUsers = List<User>.from(users)..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final recentOrders = List<OrderRecord>.from(orders)..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final recentMtoUnquoted = mtoRequests
+        .where((r) => r.quotedTotal == null && r.status.toLowerCase() != 'declined')
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 980;
+        final children = <Widget>[
+          Expanded(
+            child: _RecentListCard<User>(
+              title: 'Recently Made Accounts',
+              items: recentUsers.take(5).toList(),
+              emptyText: 'No recent accounts.',
+              lineBuilder: (u) => u.fullName,
+              sublineBuilder: (u) => u.email,
+              trailingBuilder: (u) => _dateLabel(u.createdAt),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _RecentListCard<OrderRecord>(
+              title: 'Recently Bought Product',
+              items: recentOrders.take(5).toList(),
+              emptyText: 'No recent product purchases.',
+              lineBuilder: (o) {
+                final productId = o.productIds.isEmpty ? '' : o.productIds.first;
+                return productsById[productId]?.name ?? 'Unknown product';
+              },
+              sublineBuilder: (o) => o.userName.isEmpty ? 'Guest user' : o.userName,
+              trailingBuilder: (o) => _dateLabel(o.createdAt),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _RecentListCard<MadeToOrderRequest>(
+              title: 'Recently Made-to-Order (Unquoted)',
+              items: recentMtoUnquoted.take(5).toList(),
+              emptyText: 'No unquoted made-to-order requests.',
+              lineBuilder: (r) => r.itemName,
+              sublineBuilder: (r) => r.userName,
+              trailingBuilder: (r) => _dateLabel(r.createdAt),
+            ),
+          ),
+        ];
+        if (isWide) {
+          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+        }
+        return Column(
+          children: [
+            _RecentListCard<User>(
+              title: 'Recently Made Accounts',
+              items: recentUsers.take(5).toList(),
+              emptyText: 'No recent accounts.',
+              lineBuilder: (u) => u.fullName,
+              sublineBuilder: (u) => u.email,
+              trailingBuilder: (u) => _dateLabel(u.createdAt),
+            ),
+            const SizedBox(height: 12),
+            _RecentListCard<OrderRecord>(
+              title: 'Recently Bought Product',
+              items: recentOrders.take(5).toList(),
+              emptyText: 'No recent product purchases.',
+              lineBuilder: (o) {
+                final productId = o.productIds.isEmpty ? '' : o.productIds.first;
+                return productsById[productId]?.name ?? 'Unknown product';
+              },
+              sublineBuilder: (o) => o.userName.isEmpty ? 'Guest user' : o.userName,
+              trailingBuilder: (o) => _dateLabel(o.createdAt),
+            ),
+            const SizedBox(height: 12),
+            _RecentListCard<MadeToOrderRequest>(
+              title: 'Recently Made-to-Order (Unquoted)',
+              items: recentMtoUnquoted.take(5).toList(),
+              emptyText: 'No unquoted made-to-order requests.',
+              lineBuilder: (r) => r.itemName,
+              sublineBuilder: (r) => r.userName,
+              trailingBuilder: (r) => _dateLabel(r.createdAt),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  static String _dateLabel(DateTime dt) {
+    final local = dt.toLocal();
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  }
+}
+
+class _RecentListCard<T> extends StatelessWidget {
+  const _RecentListCard({
+    required this.title,
+    required this.items,
+    required this.emptyText,
+    required this.lineBuilder,
+    required this.sublineBuilder,
+    required this.trailingBuilder,
+  });
+
+  final String title;
+  final List<T> items;
+  final String emptyText;
+  final String Function(T) lineBuilder;
+  final String Function(T) sublineBuilder;
+  final String Function(T) trailingBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            if (items.isEmpty)
+              Text(emptyText, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]))
+            else
+              ...items.map(
+                (item) => ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(lineBuilder(item), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(sublineBuilder(item), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: Text(trailingBuilder(item), style: Theme.of(context).textTheme.bodySmall),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

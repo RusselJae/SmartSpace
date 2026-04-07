@@ -121,9 +121,9 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
               ),
             ),
             Text(
-              '* Required',
+              '*',
               style: GoogleFonts.poppins(
-                fontSize: 11.5,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
                 color: CupertinoColors.systemRed,
               ),

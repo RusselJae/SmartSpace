@@ -10,7 +10,9 @@ import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.RenderEffect
 import android.graphics.Rect
+import android.graphics.Shader
 import android.os.Bundle
 import android.os.Build
 import android.os.Handler
@@ -39,6 +41,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import io.flutter.embedding.engine.FlutterEngineCache
+import io.flutter.plugin.common.MethodChannel
 import com.google.ar.core.Config
 import com.google.ar.core.Session
 import com.google.ar.core.HitResult
@@ -153,8 +157,14 @@ class ArEditorActivity : ComponentActivity() {
     // read‑out, plus guidance text, via a compact toolbar that floats above
     // the AR content. The toolbar is collapsible so it stays out of the way
     // once people are comfortable with the controls.
-    private var scaleLabel: TextView? = null
-    private var sizeLabel: TextView? = null
+    /** Per-axis scale readout (W / H / D) under a centered "Scale" title. */
+    private var scaleValueW: TextView? = null
+    private var scaleValueH: TextView? = null
+    private var scaleValueD: TextView? = null
+    /** Per-axis approximate size readout under a centered "Size" title. */
+    private var sizeValueW: TextView? = null
+    private var sizeValueH: TextView? = null
+    private var sizeValueD: TextView? = null
     private var overlayProductNameLabel: TextView? = null
     private var overlayContent: LinearLayout? = null
     private var isOverlayExpanded: Boolean = true
@@ -162,6 +172,8 @@ class ArEditorActivity : ComponentActivity() {
     private var scaleOverlayContainer: LinearLayout? = null
     private var scaleScrollView: ScrollView? = null
     private var variantCarouselContainer: View? = null
+    /** Used to dim/blur partially visible carousel thumbs at the viewport edges. */
+    private var variantCarouselScrollView: HorizontalScrollView? = null
     private var igVariantCarouselHeightPx: Int = 0
     private var hiddenActionsBar: FrameLayout? = null
     private var overlaysVisible: Boolean = true
@@ -169,6 +181,9 @@ class ArEditorActivity : ComponentActivity() {
 
     /** Short AR how‑to; hidden as soon as the model is anchored in the scene. */
     private var arTipsBanner: TextView? = null
+    private var arTipsRotateHandler: Handler? = null
+    private var arTipsRotateRunnable: Runnable? = null
+    private var arTipsMessageIndex: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -289,6 +304,22 @@ class ArEditorActivity : ComponentActivity() {
                 false
             }
         }
+
+        // Indoor ARCore scenes often read a little flat; nudge Filament's main directional
+        // slightly brighter while keeping HDR estimation enabled above.
+        arSceneView.post {
+            try {
+                val node = arSceneView.mainLightNode
+                if (node != null) {
+                    val i = node.intensity
+                    if (i.isFinite() && i > 0f) {
+                        node.intensity = (i * 1.42f).coerceIn(1f, 500_000f)
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+        }
+
         rootLayout.addView(
             arSceneView,
             FrameLayout.LayoutParams(
@@ -446,22 +477,73 @@ class ArEditorActivity : ComponentActivity() {
             setPadding(0, 6, 0, 0)
         }
 
-        // First row inside body: scale + size labels.
-        scaleLabel = TextView(this).apply {
-            text = "Scale: W 1.00×  ·  H 1.00×  ·  D 1.00×"
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 14f
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-        sizeLabel = TextView(this).apply {
-            text = "Size: —"
-            setTextColor(0xFFDDDDDD.toInt())
-            textSize = 12f
-            gravity = Gravity.CENTER_HORIZONTAL
+        // Scale block: title centered above a 3-column W / H / D row.
+        fun createMetricTitle(text: String): TextView {
+            return TextView(this).apply {
+                this.text = text
+                setTextColor(0xFFE8E8E8.toInt())
+                textSize = 12f
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(0, 6, 0, 2)
+            }
         }
 
-        overlayContent?.addView(scaleLabel)
-        overlayContent?.addView(sizeLabel)
+        fun createMetricCell(initial: String): TextView {
+            return TextView(this).apply {
+                this.text = initial
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 13f
+                gravity = Gravity.CENTER
+                maxLines = 1
+            }
+        }
+
+        val scaleTitleRow = createMetricTitle("Scale")
+        val scaleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 3f
+        }
+        scaleValueW = createMetricCell("W:1.00")
+        scaleValueH = createMetricCell("H:1.00")
+        scaleValueD = createMetricCell("D:1.00")
+        scaleRow.addView(
+            scaleValueW,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        scaleRow.addView(
+            scaleValueH,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        scaleRow.addView(
+            scaleValueD,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+
+        val sizeTitleRow = createMetricTitle("Size")
+        val sizeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 3f
+        }
+        sizeValueW = createMetricCell("—")
+        sizeValueH = createMetricCell("—")
+        sizeValueD = createMetricCell("—")
+        sizeRow.addView(
+            sizeValueW,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        sizeRow.addView(
+            sizeValueH,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        sizeRow.addView(
+            sizeValueD,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+
+        overlayContent?.addView(scaleTitleRow)
+        overlayContent?.addView(scaleRow)
+        overlayContent?.addView(sizeTitleRow)
+        overlayContent?.addView(sizeRow)
 
         // Helper to build a quantity‑style +/- control row for a single axis.
         fun createAxisRow(
@@ -704,8 +786,8 @@ class ArEditorActivity : ComponentActivity() {
                     lp.marginStart = 0
                     lp.marginEnd = 0
                     lp.topMargin = 0
-                    // Push carousel above the overlay pill.
-                    lp.bottomMargin = insetBottom + dp(48)
+                    // Extra space so the strip does not feel glued to the IG pill below.
+                    lp.bottomMargin = insetBottom + dp(64)
                     // Keep the IG viewport width set in attachVariantCarouselPlaceholder().
                     v.layoutParams = lp
                 }
@@ -720,7 +802,9 @@ class ArEditorActivity : ComponentActivity() {
             arTipsBanner?.let { v ->
                 (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
                     lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                    lp.topMargin = insetTop + dp(8)
+                    val screenH = resources.displayMetrics.heightPixels
+                    // Tips sit ~20% down from the top of the screen (plus status bar inset).
+                    lp.topMargin = insetTop + (screenH * 0.20f).toInt() + dp(8)
                     lp.marginStart = insetStart + dp(20)
                     lp.marginEnd = insetEnd + dp(20)
                     v.layoutParams = lp
@@ -758,19 +842,23 @@ class ArEditorActivity : ComponentActivity() {
             (dp * resources.displayMetrics.density).roundToInt()
 
         val screenW = resources.displayMetrics.widthPixels
-        val maxTextW = (screenW * 0.68f).toInt()
+        val maxTextW = (screenW * 0.72f).toInt()
+
+        // Short phrases only; we rotate every few seconds so the banner stays readable.
+        val tips = listOf(
+            "Point at a flat surface.",
+            "Drag to move. Pinch to scale.",
+            "Two fingers to rotate."
+        )
 
         val tv = TextView(this).apply {
-            text =
-                "Point at a horizontal surface — the model places when AR locks on. " +
-                    "Drag to move, pinch to scale, two fingers to rotate."
+            text = tips[0]
             setTextColor(0xFFF5F5F5.toInt())
-            textSize = 13f
+            textSize = 16f
             setLineSpacing(dpToPx(2).toFloat(), 1f)
-            setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12))
+            setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
             gravity = Gravity.CENTER_HORIZONTAL
             this.maxWidth = maxTextW
-            // Transparent tips card per latest UI request (no border).
             setBackgroundColor(0x00000000)
         }
         arTipsBanner = tv
@@ -780,14 +868,32 @@ class ArEditorActivity : ComponentActivity() {
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            topMargin = dpToPx(30)
+            // Final vertical position also tuned in [applyWindowInsetsToOverlays].
+            topMargin = dpToPx(8)
             marginStart = dpToPx(16)
             marginEnd = dpToPx(16)
         }
         root.addView(tv, lp)
+
+        val handler = Handler(Looper.getMainLooper())
+        arTipsRotateHandler = handler
+        arTipsMessageIndex = 0
+        val rotate = object : Runnable {
+            override fun run() {
+                val banner = arTipsBanner ?: return
+                arTipsMessageIndex = (arTipsMessageIndex + 1) % tips.size
+                banner.text = tips[arTipsMessageIndex]
+                arTipsRotateHandler?.postDelayed(this, 5000L)
+            }
+        }
+        arTipsRotateRunnable = rotate
+        arTipsRotateHandler?.postDelayed(rotate, 5000L)
     }
 
     private fun dismissArTipsBanner() {
+        arTipsRotateRunnable?.let { arTipsRotateHandler?.removeCallbacks(it) }
+        arTipsRotateHandler = null
+        arTipsRotateRunnable = null
         arTipsBanner?.visibility = View.GONE
         arTipsBanner = null
     }
@@ -818,10 +924,9 @@ class ArEditorActivity : ComponentActivity() {
 
         // Fixed height so the overlay above it can reserve space.
         igVariantCarouselHeightPx = dpToPx(100)
-        // IG-style: show 3 full circles at once.
-        // Selected item + 1 neighbor on each side fit exactly in the viewport width,
-        // so the next items are clipped/peeking on the edges.
-        val viewportW = thumbSizePx * 3 + itemGapPx * 2
+        // Five "slots": center three read as full circles; left/right peek ~half width.
+        // Total width == 4 circle widths + 4 gaps (geometry: half + full + full + full + half).
+        val viewportW = thumbSizePx * 4 + itemGapPx * 4
 
         val container = FrameLayout(this).apply {
             // Intentionally subtle: thumbnails already have their own ring styling.
@@ -835,6 +940,7 @@ class ArEditorActivity : ComponentActivity() {
             clipToPadding = false
             isFillViewport = false
         }
+        variantCarouselScrollView = scrollView
 
         val host = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -888,6 +994,7 @@ class ArEditorActivity : ComponentActivity() {
             val maxX = (host.width - scrollView.width).coerceAtLeast(0)
             val clampedX = targetX.coerceIn(0, maxX)
             if (smooth) scrollView.smoothScrollTo(clampedX, 0) else scrollView.scrollTo(clampedX, 0)
+            scrollView.post { this@ArEditorActivity.refreshVariantCarouselEdgeLook() }
             if (index != selectedVariantIndex) {
                 selectedVariantIndex = index
                 updateVariantThumbnailStyles()
@@ -995,6 +1102,7 @@ class ArEditorActivity : ComponentActivity() {
                 } else {
                     updateVariantThumbnailStyles()
                 }
+                refreshVariantCarouselEdgeLook()
             } catch (t: Throwable) {
                 Log.e("ArEditorActivity", "carousel snap crash guard", t)
             }
@@ -1002,6 +1110,7 @@ class ArEditorActivity : ComponentActivity() {
 
         scrollView.setOnScrollChangeListener { _, _, _, _, _ ->
             try {
+                refreshVariantCarouselEdgeLook()
                 snapHandler.removeCallbacks(snapRunnable)
                 snapHandler.postDelayed(snapRunnable, 140L)
             } catch (t: Throwable) {
@@ -1014,6 +1123,7 @@ class ArEditorActivity : ComponentActivity() {
             val pad = (container.width - thumbSizePx) / 2
             host.setPadding(pad, 0, pad, 0)
             scrollToVariantIndex(selectedVariantIndex, smooth = false)
+            refreshVariantCarouselEdgeLook()
         }
 
         val layoutParams = FrameLayout.LayoutParams(
@@ -1089,11 +1199,11 @@ class ArEditorActivity : ComponentActivity() {
             // No visible background behind icon buttons (clean, unobtrusive).
             setBackgroundColor(0x00000000)
             elevation = 10f
-            visibility = View.GONE
+            // Visible as soon as AR opens (paired with overlay visibility rules below).
+            visibility = if (overlaysVisible) View.VISIBLE else View.GONE
         }
 
         val btnSizePx = dpToPx(60)
-        val itemGapPx = dpToPx(22)
 
         fun createActionButton(iconResId: Int, contentDesc: String, onClick: () -> Unit): ImageButton {
             return ImageButton(this).apply {
@@ -1112,67 +1222,34 @@ class ArEditorActivity : ComponentActivity() {
             }
         }
 
-        fun createActionItem(
-            iconResId: Int,
-            label: String,
-            contentDesc: String,
-            onClick: () -> Unit
-        ): LinearLayout {
-            val item = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-
-            val iconBtn = createActionButton(iconResId, contentDesc, onClick).apply {
-                layoutParams = LinearLayout.LayoutParams(btnSizePx, btnSizePx)
-            }
-
-            val name = TextView(this).apply {
-                text = label
-                textSize = 11f
-                setTextColor(0xFFFFFFFF.toInt())
-                setPadding(0, dpToPx(6), 0, 0)
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-
-            item.addView(iconBtn)
-            item.addView(name, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ))
-            return item
-        }
-
-        val galleryItem = createActionItem(
+        val galleryBtn = createActionButton(
             R.drawable.ic_ar_gallery,
-            "Gallery",
             "Open gallery",
             { openGalleryPicker() }
         )
-        val previewItem = createActionItem(
+        val detailBtn = createActionButton(
             R.drawable.ic_ar_preview,
-            "Preview",
-            "Preview model",
-            { openModelPreviewActivity() }
+            "Open product details",
+            { openCurrentProductDetailInApp() }
         )
 
         val lpLeft = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
+            btnSizePx,
+            btnSizePx,
             Gravity.START or Gravity.CENTER_VERTICAL
         ).apply {
             marginStart = dpToPx(6)
         }
         val lpRight = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
+            btnSizePx,
+            btnSizePx,
             Gravity.END or Gravity.CENTER_VERTICAL
         ).apply {
             marginEnd = dpToPx(6)
         }
 
-        bar.addView(galleryItem, lpLeft)
-        bar.addView(previewItem, lpRight)
+        bar.addView(galleryBtn, lpLeft)
+        bar.addView(detailBtn, lpRight)
 
         hiddenActionsBar = bar
 
@@ -1269,27 +1346,36 @@ class ArEditorActivity : ComponentActivity() {
         Toast.makeText(this, "Captured to gallery", Toast.LENGTH_SHORT).show()
     }
 
-    private fun openModelPreviewActivity() {
-        val current = variantProducts.getOrNull(selectedVariantIndex)
-        val modelSrc = current?.modelSrc
-        val name = current?.name ?: altText ?: "Model"
-
-        if (modelSrc.isNullOrBlank()) {
-            Toast.makeText(this, "No model available to preview", Toast.LENGTH_SHORT).show()
+    /**
+     * Pops back to Flutter and opens [ProductDetailScreen] for whichever variant
+     * is currently active in the carousel.
+     */
+    private fun openCurrentProductDetailInApp() {
+        val fromVariant = variantProducts.getOrNull(selectedVariantIndex)?.productId?.trim()
+        val productId = when {
+            !fromVariant.isNullOrEmpty() -> fromVariant
+            else -> initialProductId?.trim()
+        }
+        if (productId.isNullOrEmpty()) {
+            Toast.makeText(this, "No product linked to this model", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val looksLikeHttp = modelSrc.startsWith("http://") || modelSrc.startsWith("https://")
-        if (!looksLikeHttp) {
-            Toast.makeText(this, "Preview not supported for this model path", Toast.LENGTH_SHORT).show()
+        val engine = FlutterEngineCache.getInstance().get(MainActivity.MAIN_ENGINE_ID)
+        if (engine == null) {
+            Toast.makeText(this, "Unable to open product page", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val intent = Intent(this, ModelPreviewActivity::class.java).apply {
-            putExtra("modelSrc", modelSrc)
-            putExtra("altText", name)
+        try {
+            MethodChannel(engine.dartExecutor.binaryMessenger, "com.smartspace/ar_editor")
+                .invokeMethod("openProductDetail", mapOf("productId" to productId))
+            // Close AR so Flutter's pushed route is immediately visible.
+            finish()
+        } catch (t: Throwable) {
+            Log.e("ArEditorActivity", "openProductDetail failed", t)
+            Toast.makeText(this, "Unable to open product page", Toast.LENGTH_SHORT).show()
         }
-        startActivity(intent)
     }
 
     private fun updateVariantThumbnailStyles() {
@@ -1299,6 +1385,39 @@ class ArEditorActivity : ComponentActivity() {
                 this,
                 if (selected) R.drawable.bg_variant_thumb_selected else R.drawable.bg_variant_thumb_unselected
             )
+        }
+        refreshVariantCarouselEdgeLook()
+    }
+
+    /** Fade + slight blur for carousel thumbnails that only partially peek in. */
+    private fun refreshVariantCarouselEdgeLook() {
+        val scrollView = variantCarouselScrollView ?: return
+        val vw = scrollView.width
+        if (vw <= 0 || variantThumbFrames.isEmpty()) return
+        val sx = scrollView.scrollX
+        variantThumbFrames.forEach { frame ->
+            val left = frame.left - sx
+            val right = left + frame.width
+            val visibleLeft = kotlin.math.max(left, 0)
+            val visibleRight = kotlin.math.min(right, vw)
+            val visibleW = (visibleRight - visibleLeft).coerceAtLeast(0)
+            val frac = visibleW.toFloat() / frame.width.coerceAtLeast(1)
+            val edgeLike = frac < 0.82f
+            val alpha = when {
+                frac >= 0.94f -> 1f
+                frac >= 0.62f -> 0.72f
+                else -> 0.38f
+            }
+            frame.alpha = if (edgeLike) alpha else 1f
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                frame.setRenderEffect(
+                    if (edgeLike && frac < 0.9f) {
+                        RenderEffect.createBlurEffect(4f, 4f, Shader.TileMode.CLAMP)
+                    } else {
+                        null
+                    }
+                )
+            }
         }
     }
 
@@ -1885,40 +2004,33 @@ class ArEditorActivity : ComponentActivity() {
         val node = modelNode ?: return
         val s = node.scale
 
-        // Scale label: show per‑axis scale factors so people can see which
-        // side they have stretched or compressed.
-        scaleLabel?.text = String.format(
-            "Scale: W %.2fx  ·  H %.2fx  ·  D %.2fx",
-            s.x,
-            s.y,
-            s.z
-        )
+        scaleValueW?.text = String.format("W:%.2f", s.x)
+        scaleValueH?.text = String.format("H:%.2f", s.y)
+        scaleValueD?.text = String.format("D:%.2f", s.z)
 
-        // If we know the real‑world dimensions for the product, we can provide
-        // a quick approximate "current size" hint so people can reason about
-        // fit before committing to a layout.
         val w = realWidthMeters
         val h = realHeightMeters
         val d = realDepthMeters
 
         if (w != null || h != null || d != null) {
-            val width = w?.times(s.x)
-            val height = h?.times(s.y)
-            val depth = d?.times(s.z)
+            val width = w?.times(s.x.toDouble())
+            val height = h?.times(s.y.toDouble())
+            val depth = d?.times(s.z.toDouble())
 
-            val parts = mutableListOf<String>()
-            if (width != null) parts += String.format("W %.2fm", width)
-            if (height != null) parts += String.format("H %.2fm", height)
-            if (depth != null) parts += String.format("D %.2fm", depth)
-
-            sizeLabel?.text = if (parts.isNotEmpty()) {
-                "Size: " + parts.joinToString("  ·  ")
-            } else {
-                "Size: —"
-            }
+            sizeValueW?.text = width?.let { String.format("W:%.2fm", it) } ?: "—"
+            sizeValueH?.text = height?.let { String.format("H:%.2fm", it) } ?: "—"
+            sizeValueD?.text = depth?.let { String.format("D:%.2fm", it) } ?: "—"
         } else {
-            sizeLabel?.text = "Size: real‑world dimensions unavailable"
+            val na = "—"
+            sizeValueW?.text = na
+            sizeValueH?.text = na
+            sizeValueD?.text = na
         }
+    }
+
+    override fun onDestroy() {
+        dismissArTipsBanner()
+        super.onDestroy()
     }
 
 }

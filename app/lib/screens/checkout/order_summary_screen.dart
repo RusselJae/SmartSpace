@@ -19,6 +19,7 @@ import '../../services/cart_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
 import '../../utils/model_path_helper.dart';
+import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
 import 'models.dart';
@@ -198,7 +199,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     return _downPaymentPesos.clamp(_layawayDownMin, cap);
   }
 
-  /// Shared required label chip (`* Required`) used beside field names.
+  /// Shared required label: field name + red asterisk only.
   Widget _requiredLabel(String label, {double fontSize = 13}) {
     return Row(
       children: [
@@ -214,9 +215,9 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
           ),
         ),
         Text(
-          '* Required',
+          '*',
           style: GoogleFonts.poppins(
-            fontSize: 11.5,
+            fontSize: 13,
             fontWeight: FontWeight.w700,
             color: CupertinoColors.systemRed,
             decoration: TextDecoration.none,
@@ -1035,17 +1036,21 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     clipBehavior: Clip.hardEdge,
-                    child: ModelViewer(
-                      backgroundColor: const Color(0xFFEFEFEF),
-                      src: ModelPathHelper.normalize(item.product.modelPath),
-                      alt: '3D preview of ${item.product.name}',
-                      ar: false,
-                      environmentImage: 'neutral',
-                      exposure: 1.35,
-                      shadowIntensity: 0.18,
-                      autoRotate: false,
-                      cameraControls: false,
-                      disableZoom: true,
+                    child: CachedModelSrcLoader(
+                      sourceUrl: ModelPathHelper.normalize(item.product.modelPath),
+                      placeholder: const Center(child: CupertinoActivityIndicator(radius: 10)),
+                      builder: (context, resolvedSrc) => ModelViewer(
+                        backgroundColor: const Color(0xFFEFEFEF),
+                        src: resolvedSrc,
+                        alt: '3D preview of ${item.product.name}',
+                        ar: false,
+                        environmentImage: 'neutral',
+                        exposure: 1.35,
+                        shadowIntensity: 0.18,
+                        autoRotate: false,
+                        cameraControls: false,
+                        disableZoom: true,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1500,7 +1505,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Upload one clear photo of a government-issued ID. Required before PayMongo opens.',
+                    'Upload one clear photo of a government-issued ID. PayMongo opens after you add it.',
                     style: GoogleFonts.poppins(
                       fontSize: 12,
                       height: 1.35,
@@ -2319,7 +2324,7 @@ class _DropdownFieldCompact extends StatelessWidget {
             width: 1.4,
           ),
         ),
-        errorText: showError ? 'Required' : null,
+        errorText: showError ? '*' : null,
       ),
       icon: const Icon(CupertinoIcons.chevron_down, size: 16, color: CupertinoColors.systemGrey),
       items: options

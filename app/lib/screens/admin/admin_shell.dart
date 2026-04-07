@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'admin_routes.dart';
 import 'admin_theme.dart';
 import 'pages/admin_dashboard_page.dart';
 import 'pages/admins_admin_page.dart';
@@ -7,6 +8,7 @@ import 'pages/admin_profile_page.dart';
 import 'pages/orders_admin_page.dart';
 import 'pages/products_admin_page.dart';
 import 'pages/reviews_admin_page.dart';
+import 'pages/sales_reports_admin_page.dart';
 import 'pages/faqs_admin_page.dart';
 import 'pages/legal_content_admin_page.dart';
 import 'pages/settings_admin_page.dart';
@@ -16,8 +18,20 @@ import '../../services/admin_auth_service.dart';
 import '../../services/admin_notifications_service.dart';
 import '../../widgets/loading_screen.dart';
 
+/// Builds [routes] entries for [MaterialApp]: one named route per admin tab plus legacy `/admin`.
+Map<String, WidgetBuilder> buildAdminShellRoutes() {
+  return <String, WidgetBuilder>{
+    AdminRoutes.legacyShell: (_) => const AdminShell(initialIndex: 0),
+    for (var i = 0; i < AdminRoutes.tabCount; i++)
+      AdminRoutes.pathsByIndex[i]: (_) => AdminShell(initialIndex: i),
+  };
+}
+
 class AdminShell extends StatefulWidget {
-  const AdminShell({super.key});
+  const AdminShell({super.key, this.initialIndex = 0});
+
+  /// Which sidebar / bottom-nav tab is selected when this shell is shown.
+  final int initialIndex;
 
   static const String route = '/admin';
 
@@ -36,7 +50,7 @@ class _AdminDestination {
 }
 
 class _AdminShellState extends State<AdminShell> {
-  int _index = 0;
+  late int _index;
   bool _authChecked = false;
   final AdminNotificationsService _notifications = AdminNotificationsService.instance;
   final GlobalKey _notificationsAnchorKey = GlobalKey();
@@ -44,7 +58,7 @@ class _AdminShellState extends State<AdminShell> {
   Future<void> _openSupportInboxFromHeader() async {
     await _notifications.markAllSupportRead();
     if (!mounted) return;
-    _selectTab(6);
+    _selectTab(7);
   }
 
   Future<void> _openNotificationsFromHeader(BuildContext context) async {
@@ -195,6 +209,11 @@ class _AdminShellState extends State<AdminShell> {
       ),
     ),
     _AdminDestination(
+      label: 'Sales Reports',
+      icon: Icons.query_stats_outlined,
+      builder: (_, __) => const SalesReportsAdminPage(),
+    ),
+    _AdminDestination(
       label: 'Products',
       icon: Icons.chair_alt_outlined,
       builder: (_, __) => const ProductsAdminPage(),
@@ -244,6 +263,9 @@ class _AdminShellState extends State<AdminShell> {
   @override
   void initState() {
     super.initState();
+    // Align tab with the named route (e.g. `/admin/orders`) set by [buildAdminShellRoutes].
+    final max = _destinations.length - 1;
+    _index = widget.initialIndex.clamp(0, max);
     _verifyAdminSession();
   }
 
@@ -277,8 +299,8 @@ class _AdminShellState extends State<AdminShell> {
     }
     final bool wide = MediaQuery.of(context).size.width >= 1100;
     final Widget currentPage = _destinations[_index].builder(
-      () => _selectTab(3), // Go to Reviews
-      () => _selectTab(2), // Go to Orders
+      () => _selectTab(4), // Go to Reviews
+      () => _selectTab(3), // Go to Orders
     );
 
     return Theme(
@@ -318,7 +340,7 @@ class _AdminShellState extends State<AdminShell> {
                       title: _destinations[_index].label,
                       notifications: _notifications,
                       onOpenSupport: _openSupportInboxFromHeader,
-                      onOpenSettings: () => _selectTab(9),
+                      onOpenSettings: () => _selectTab(10),
                       onOpenProfile: () => _showProfileModal(context),
                       onOpenNotifications: () => _openNotificationsFromHeader(context),
                       notificationsAnchorKey: _notificationsAnchorKey,
@@ -351,7 +373,7 @@ class _AdminShellState extends State<AdminShell> {
               title: _destinations[_index].label,
               notifications: _notifications,
               onOpenSupport: _openSupportInboxFromHeader,
-              onOpenSettings: () => _selectTab(9),
+              onOpenSettings: () => _selectTab(10),
               onOpenProfile: () => _showProfileModal(context),
               onOpenNotifications: () => _openNotificationsFromHeader(context),
               notificationsAnchorKey: _notificationsAnchorKey,
@@ -381,7 +403,17 @@ class _AdminShellState extends State<AdminShell> {
   }
 
   void _selectTab(int value) {
-    setState(() => _index = value);
+    final max = _destinations.length - 1;
+    final i = value.clamp(0, max);
+    final targetPath = AdminRoutes.pathForIndex(i);
+    final currentName = ModalRoute.of(context)?.settings.name;
+    if (currentName != targetPath) {
+      Navigator.of(context).pushReplacementNamed(targetPath);
+      return;
+    }
+    if (_index != i) {
+      setState(() => _index = i);
+    }
   }
 }
 
@@ -526,54 +558,6 @@ class _SideRail extends StatelessWidget {
               },
             ),
           ),
-          // Logout button at the bottom with same design as other navigation buttons
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF3F4F6),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: () async {
-                  await AdminAuthService().signOut();
-                  if (!context.mounted) return;
-                  // Show loading screen before navigating to login
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(
-                      builder: (_) => const LoadingScreen(
-                        message: 'Signing out...',
-                        nextRoute: '/admin/login',
-                      ),
-                    ),
-                    (route) => false,
-                  );
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.logout,
-                        color: Colors.grey[800],
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        'Logout',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.grey[800],
-                              fontWeight: FontWeight.w500,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -640,6 +624,26 @@ class _AdminHeaderState extends State<_AdminHeader> {
         children: [
           Row(
             children: [
+              // Brand mark in the content header (matches rail; Apple HIG: clear signage, calm hierarchy).
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/images/logo.jpg',
+                  width: 44,
+                  height: 44,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AdminPalette.brown,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 26),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -662,7 +666,7 @@ class _AdminHeaderState extends State<_AdminHeader> {
                     icon: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        const Icon(Icons.chat_bubble_rounded, size: 24),
+                        const Icon(Icons.forum_outlined, size: 24),
                         if (supportUnread > 0)
                           Positioned(
                             right: -4,
@@ -759,12 +763,34 @@ class _AdminHeaderState extends State<_AdminHeader> {
                       ],
                     ),
                   ),
+                  PopupMenuItem<String>(
+                    value: 'logout',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.logout, size: 20),
+                        const SizedBox(width: 12),
+                        Text('Logout', style: Theme.of(context).textTheme.bodyMedium),
+                      ],
+                    ),
+                  ),
                 ],
-                onSelected: (String value) {
+                onSelected: (String value) async {
                   if (value == 'profile') {
                     widget.onOpenProfile();
                   } else if (value == 'settings') {
                     widget.onOpenSettings();
+                  } else if (value == 'logout') {
+                    await AdminAuthService().signOut();
+                    if (!context.mounted) return;
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(
+                        builder: (_) => const LoadingScreen(
+                          message: 'Signing out...',
+                          nextRoute: '/admin/login',
+                        ),
+                      ),
+                      (route) => false,
+                    );
                   }
                 },
               ),

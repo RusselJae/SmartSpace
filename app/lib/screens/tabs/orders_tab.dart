@@ -363,7 +363,8 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     final pm = order.shippingAddress['paymentMethod']?.toString();
     if (pm == 'paymongo') {
       if (!mounted) return;
-      await Navigator.of(context).push(
+      // Root navigator so the payment page covers the whole app (tabs hidden).
+      await Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute(
           builder: (_) => _OrderPaymentScreen(
             order: order,
@@ -1491,9 +1492,9 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
           ),
         ),
         Text(
-          '* Required',
+          '*',
           style: GoogleFonts.poppins(
-            fontSize: 11.5,
+            fontSize: 13,
             fontWeight: FontWeight.w700,
             color: CupertinoColors.systemRed,
           ),
@@ -1512,11 +1513,13 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
+        centerTitle: true,
         title: Text(
           'Order Payment',
           style: GoogleFonts.poppins(
-            fontWeight: FontWeight.w600,
-            color: _kWalnut,
+            fontWeight: FontWeight.w700,
+            fontSize: 17,
+            color: const Color(0xFF3E2723),
           ),
         ),
         backgroundColor: _kWalnutWash,

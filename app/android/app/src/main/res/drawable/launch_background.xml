@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Launch background - transparent to avoid white flash before Flutter loads -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Use app's cream background color instead of white to match LoadingScreen -->
+    <!-- Solid white to match Flutter cold-start [SplashScreen] -->
     <item>
-        <color android:color="#FFFBF7" />
+        <color android:color="#FFFFFF" />
     </item>
 </layer-list>

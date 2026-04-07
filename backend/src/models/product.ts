@@ -1,3 +1,13 @@
+export interface ProductSetComponent {
+  readonly name: string;
+  readonly quantity: number;
+  readonly widthM: number;
+  readonly heightM: number;
+  readonly depthM: number;
+  readonly modelPath?: string;
+  readonly notes?: string;
+}
+
 export interface Product {
   readonly id: string;
   readonly name: string;
@@ -8,6 +18,7 @@ export interface Product {
   readonly material: string;
   readonly color: string;
   readonly modelPath: string;
+  readonly components: ProductSetComponent[];
   readonly realWidthM: number | null;
   readonly realHeightM: number | null;
   readonly realDepthM: number | null;

@@ -200,9 +200,9 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
           ),
         ),
         Text(
-          '* Required',
+          '*',
           style: GoogleFonts.poppins(
-            fontSize: 11.5,
+            fontSize: 13,
             fontWeight: FontWeight.w700,
             color: CupertinoColors.systemRed,
             decoration: TextDecoration.none,

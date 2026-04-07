@@ -33,16 +33,12 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Deep linking for email verification -->
-            <intent-filter android:autoVerify="true">
+            <!-- Custom scheme only (no domain / assetlinks.json). Use smartspace://verify-email?token=... -->
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <!-- Custom URL scheme: smartspace://verify-email?token=... -->
                 <data android:scheme="smartspace" android:host="verify-email" />
-                <!-- HTTP/HTTPS links: https://yourdomain.com/verify-email?token=... -->
-                <data android:scheme="https" android:host="*" android:pathPrefix="/verify-email" />
-                <data android:scheme="http" android:host="*" android:pathPrefix="/verify-email" />
             </intent-filter>
         </activity>
         <!-- Native AR editor Activity (launched from Flutter via MethodChannel).

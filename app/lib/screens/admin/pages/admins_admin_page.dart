@@ -391,61 +391,96 @@ class _AdminDetailsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Admin Details'),
-      content: SizedBox(
-        width: 400,
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.all(Radius.circular(24)),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _DetailRow(label: 'Full Name', value: admin.fullName),
-            const SizedBox(height: 12),
-            _DetailRow(label: 'Email', value: admin.email),
-            const SizedBox(height: 12),
-            _DetailRow(
-              label: 'Created',
-              value: _formatDateTime(admin.createdAt),
-            ),
-            const SizedBox(height: 12),
-            _DetailRow(
-              label: 'Last Login',
-              value: admin.lastLoginAt != null
-                  ? _formatDateTime(admin.lastLoginAt!)
-                  : 'Never',
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withAlpha(30),
-                borderRadius: BorderRadius.circular(8),
-              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
               child: Row(
                 children: [
-                  const Icon(Icons.lock_outline, size: 18, color: Colors.orange),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 40),
                   Expanded(
                     child: Text(
-                      'Credentials cannot be edited for security reasons.',
+                      'Admin Details',
+                      textAlign: TextAlign.center,
                       style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        color: Colors.orange[900],
+                        color: Colors.black,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.none,
                       ),
                     ),
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
                 ],
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _DetailRow(label: 'Full Name', value: admin.fullName),
+                    const SizedBox(height: 12),
+                    _DetailRow(label: 'Email', value: admin.email),
+                    const SizedBox(height: 12),
+                    _DetailRow(
+                      label: 'Created',
+                      value: _formatDateTime(admin.createdAt),
+                    ),
+                    const SizedBox(height: 12),
+                    _DetailRow(
+                      label: 'Last Login',
+                      value: admin.lastLoginAt != null
+                          ? _formatDateTime(admin.lastLoginAt!)
+                          : 'Never',
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withAlpha(30),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.lock_outline, size: 18, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Credentials cannot be edited for security reasons.',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: Colors.orange[900],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-      ],
     );
   }
 }
@@ -456,6 +491,7 @@ class _DetailRow extends StatelessWidget {
 
   final String label;
   final String value;
+  static const double _detailFontSize = 16;
 
   @override
   Widget build(BuildContext context) {
@@ -465,11 +501,11 @@ class _DetailRow extends StatelessWidget {
         SizedBox(
           width: 100,
           child: Text(
-            label,
+            '$label:',
             style: GoogleFonts.poppins(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
+              fontSize: _detailFontSize,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[600],
             ),
           ),
         ),
@@ -477,8 +513,9 @@ class _DetailRow extends StatelessWidget {
           child: Text(
             value,
             style: GoogleFonts.poppins(
-              fontSize: 14,
+              fontSize: _detailFontSize,
               color: Colors.black,
+              fontWeight: FontWeight.w400,
             ),
           ),
         ),

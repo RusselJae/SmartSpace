@@ -2,27 +2,19 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-/// Toast notification utility for showing messages
-/// 
-/// Designed following Apple's Human Interface Guidelines with a sleek,
-/// modern aesthetic. Features a two-section layout with header (icon, title,
-/// timestamp, close button) and message body, positioned in the top right corner.
+/// Toast notification utility for showing messages.
+///
+/// Compact banner in the top-right: message text, accent border, dismiss control.
 class Toast {
-  /// Shows a custom toast notification
-  /// 
-  /// [context] - Build context for overlay access
-  /// [message] - Main message to display
-  /// [title] - Optional title (defaults to message type)
-  /// [duration] - How long the toast should be visible
-  /// [accentColor] - Accent color for icon and borders (defaults based on type)
-  /// [icon] - Icon to display in the header
+  /// Shows a custom toast notification.
+  ///
+  /// [accentColor] tints the border (defaults by type for success/error/etc.).
   static void show(
     BuildContext context,
     String message, {
     String? title,
     Duration duration = const Duration(seconds: 4),
     Color? accentColor,
-    IconData? icon,
   }) {
     final overlay = Overlay.of(context);
     late OverlayEntry overlayEntry;
@@ -38,7 +30,6 @@ class Toast {
         title: title,
         duration: duration,
         accentColor: accentColor ?? const Color(0xFF8D6E63),
-        icon: icon,
         onDismiss: dismiss,
       ),
     );
@@ -52,70 +43,53 @@ class Toast {
     });
   }
 
-  /// Shows a success toast with green accent color
-  /// 
-  /// Uses a checkmark icon and green accent to indicate successful operations
+  /// Success — green border accent.
   static void success(BuildContext context, String message, {String? title}) {
     show(
       context,
       message,
       title: title ?? 'Success',
-      accentColor: const Color(0xFF4CAF50), // Green for success
-      icon: CupertinoIcons.check_mark_circled_solid,
+      accentColor: const Color(0xFF4CAF50),
     );
   }
 
-  /// Shows an error toast with red accent color
-  /// 
-  /// Uses an exclamation icon and red accent to indicate errors
+  /// Error — red border accent.
   static void error(BuildContext context, String message, {String? title}) {
     show(
       context,
       message,
       title: title ?? 'Error',
-      accentColor: const Color(0xFFF44336), // Red for errors
-      icon: CupertinoIcons.exclamationmark_circle_fill,
+      accentColor: const Color(0xFFF44336),
     );
   }
 
-  /// Shows an info toast with brown accent color
-  /// 
-  /// Uses an info icon and brown accent for informational messages
+  /// Info — brown border accent.
   static void info(BuildContext context, String message, {String? title}) {
     show(
       context,
       message,
       title: title ?? 'Info',
-      accentColor: const Color(0xFF8D6E63), // Brown for info
-      icon: CupertinoIcons.info_circle_fill,
+      accentColor: const Color(0xFF8D6E63),
     );
   }
 
-  /// Shows a warning toast with orange accent color
-  /// 
-  /// Uses a warning icon and orange accent for warnings
+  /// Warning — orange border accent.
   static void warning(BuildContext context, String message, {String? title}) {
     show(
       context,
       message,
       title: title ?? 'Warning',
-      accentColor: const Color(0xFFFF9800), // Orange for warnings
-      icon: CupertinoIcons.exclamationmark_triangle_fill,
+      accentColor: const Color(0xFFFF9800),
     );
   }
 }
 
-/// Internal widget that renders the toast notification
-/// 
-/// Implements a two-section design with header and body, following
-/// Apple's Human Interface Guidelines for modern, sleek notifications.
 class _ToastWidget extends StatefulWidget {
   const _ToastWidget({
     required this.message,
     this.title,
     required this.duration,
     required this.accentColor,
-    this.icon,
     required this.onDismiss,
   });
 
@@ -123,7 +97,6 @@ class _ToastWidget extends StatefulWidget {
   final String? title;
   final Duration duration;
   final Color accentColor;
-  final IconData? icon;
   final VoidCallback onDismiss;
 
   @override
@@ -253,20 +226,6 @@ class _ToastWidgetState extends State<_ToastWidget>
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: widget.accentColor,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Icon(
-                          widget.icon ?? CupertinoIcons.info_circle_fill,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           widget.message,

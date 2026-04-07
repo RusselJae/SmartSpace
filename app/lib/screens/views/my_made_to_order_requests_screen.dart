@@ -96,7 +96,7 @@ class _MyMadeToOrderRequestsScreenState extends State<MyMadeToOrderRequestsScree
           color: _kWalnut,
         ),
         middle: Text(
-          'My custom requests',
+          'My Custom Requests',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: _kWalnut),
         ),
       ),
@@ -164,13 +164,20 @@ class _RequestCard extends StatelessWidget {
   final String statusLabel;
   final VoidCallback? onPay;
 
+  /// Status line under the title (matches tone of address / review secondary lines).
+  String get _subtitleLine {
+    final parts = <String>[statusLabel];
+    if (request.orderId != null && request.orderId!.isNotEmpty) {
+      parts.add('Order ${request.orderId}');
+    }
+    return parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isQuoted = request.status == 'quoted';
-    final String meta = [
-      statusLabel,
-      if (request.orderId != null && request.orderId!.isNotEmpty) 'Order: ${request.orderId}',
-    ].join(' · ');
+    final bool isPending = request.status == 'pending_review';
+    final bool isDeclined = request.status == 'declined';
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
@@ -225,13 +232,13 @@ class _RequestCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      meta,
+                      _subtitleLine,
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         color: Colors.black54,
                         height: 1.2,
                       ),
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
@@ -239,23 +246,13 @@ class _RequestCard extends StatelessWidget {
               ),
             ],
           ),
-          if (isQuoted &&
-              request.quotedTotal != null &&
-              request.quotedDownpayment != null &&
-              request.quotedRemaining != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              'Total ₱${request.quotedTotal!.toStringAsFixed(2)} · '
-              'DP ₱${request.quotedDownpayment!.toStringAsFixed(2)} · '
-              'Balance ₱${request.quotedRemaining!.toStringAsFixed(2)}',
-              style: GoogleFonts.poppins(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-                height: 1.3,
-              ),
-            ),
-          ],
+          const SizedBox(height: 10),
+          _RequestAmountPanel(
+            request: request,
+            isQuoted: isQuoted,
+            isPending: isPending,
+            isDeclined: isDeclined,
+          ),
           if ((request.adminMessage ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
@@ -291,6 +288,187 @@ class _RequestCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Amount / status detail block — separate layouts for quoted vs pending vs declined
+/// so values are scannable (not a single dense line).
+class _RequestAmountPanel extends StatelessWidget {
+  const _RequestAmountPanel({
+    required this.request,
+    required this.isQuoted,
+    required this.isPending,
+    required this.isDeclined,
+  });
+
+  final MadeToOrderRequest request;
+  final bool isQuoted;
+  final bool isPending;
+  final bool isDeclined;
+
+  static const Color _kWalnut = Color(0xFF5C4033);
+  static const Color _kWalnutDeep = Color(0xFF3E2723);
+
+  @override
+  Widget build(BuildContext context) {
+    if (isQuoted &&
+        request.quotedTotal != null &&
+        request.quotedDownpayment != null &&
+        request.quotedRemaining != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F3EF),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: _kWalnut.withValues(alpha: 0.14),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'QUOTE',
+              style: GoogleFonts.poppins(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.6,
+                color: _kWalnut.withValues(alpha: 0.75),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _labeledAmountRow(
+              label: 'Total',
+              value: '₱${request.quotedTotal!.toStringAsFixed(2)}',
+              emphasize: true,
+            ),
+            const SizedBox(height: 8),
+            _labeledAmountRow(
+              label: 'Down payment',
+              value: '₱${request.quotedDownpayment!.toStringAsFixed(2)}',
+            ),
+            const SizedBox(height: 8),
+            _labeledAmountRow(
+              label: 'Balance after DP',
+              value: '₱${request.quotedRemaining!.toStringAsFixed(2)}',
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (isPending) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFBCAAA4).withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'REVIEW',
+              style: GoogleFonts.poppins(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.6,
+                color: _kWalnut.withValues(alpha: 0.75),
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (request.downPaymentAmount > 0.009) ...[
+              _labeledAmountRow(
+                label: 'Inquiry deposit (reference)',
+                value: '₱${request.downPaymentAmount.toStringAsFixed(2)}',
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Final pricing comes after we review your request.',
+                style: GoogleFonts.poppins(fontSize: 11.5, color: Colors.black54, height: 1.35),
+              ),
+            ] else
+              Text(
+                'Awaiting admin quote — no deposit on file.',
+                style: GoogleFonts.poppins(fontSize: 12.5, color: _kWalnutDeep, height: 1.35),
+              ),
+          ],
+        ),
+      );
+    }
+
+    if (isDeclined) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFAFAFA),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.black12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'DECLINED',
+              style: GoogleFonts.poppins(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.6,
+                color: Colors.black45,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'No quote was issued for this request.',
+              style: GoogleFonts.poppins(fontSize: 12.5, color: Colors.black54, height: 1.35),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _labeledAmountRow({
+    required String label,
+    required String value,
+    bool emphasize = false,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          flex: 5,
+          child: Text(
+            label,
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.black54,
+              height: 1.25,
+            ),
+          ),
+        ),
+        Expanded(
+          flex: 4,
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: GoogleFonts.poppins(
+              fontSize: emphasize ? 15 : 13,
+              fontWeight: emphasize ? FontWeight.w800 : FontWeight.w700,
+              color: _kWalnutDeep,
+              height: 1.2,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -13,7 +13,9 @@ import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/cart_service.dart';
 import '../../services/mysql_database_service.dart';
+import '../../services/native_ar_editor_service.dart';
 import '../../services/wishlist_service.dart';
+import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../../utils/model_path_helper.dart';
 import 'made_to_order_request_screen.dart';
@@ -84,6 +86,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   void dispose() {
     _quantityController.dispose();
     super.dispose();
+  }
+
+  /// Same native AR entry point as catalog / product list cards (SceneView / ARCore).
+  Future<void> _openNativeArEditor() {
+    return NativeArEditorService.openForProduct(widget.product);
   }
 
   /// Load all published reviews for this product from ALL users
@@ -408,22 +415,23 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                         clipBehavior: Clip.hardEdge,
-                        child: ModelViewer(
-                          key: ValueKey('${product.id}_detail'),
-                          backgroundColor: const Color(0xFFF9F4EF),
-                          src: ModelPathHelper.normalize(product.modelPath),
-                          alt: '3D model of ${product.name}',
-                          ar: true,
-                          environmentImage: 'neutral',
-                          exposure: 1.35,
-                          shadowIntensity: 0.18,
-                          arModes: const ['scene-viewer'],
-                          arPlacement: ArPlacement.floor,
-                          arScale: ArScale.auto,
-                          autoRotate: false,
-                          cameraControls: true,
-                          disableZoom: false,
-                          interactionPrompt: InteractionPrompt.none,
+                        child: CachedModelSrcLoader(
+                          sourceUrl: ModelPathHelper.normalize(product.modelPath),
+                          builder: (context, resolvedSrc) => ModelViewer(
+                            key: ValueKey('${product.id}_detail'),
+                            backgroundColor: const Color(0xFFF9F4EF),
+                            src: resolvedSrc,
+                            alt: '3D model of ${product.name}',
+                            // Match catalog cards: in-viewer AR off; use overlay cube → native editor.
+                            ar: false,
+                            environmentImage: 'neutral',
+                            exposure: 1.35,
+                            shadowIntensity: 0.18,
+                            autoRotate: false,
+                            cameraControls: true,
+                            disableZoom: false,
+                            interactionPrompt: InteractionPrompt.none,
+                          ),
                         ),
                       ),
                       Positioned(
@@ -464,11 +472,27 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           ),
                         ),
                       ),
+                      Positioned(
+                        bottom: 8,
+                        right: 8,
+                        child: CupertinoButton(
+                          padding: const EdgeInsets.all(6),
+                          minimumSize: Size.zero,
+                          color: Colors.white.withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(18),
+                          onPressed: _openNativeArEditor,
+                          child: const Icon(
+                            CupertinoIcons.cube_box,
+                            size: 18,
+                            color: Color(0xFF8D6E63),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
             const SizedBox(height: 8),
             Text(
-              'Tip: Use AR inside the card. WebXR button lights up when browser-based AR is available.',
+              'Tip: Tap the cube to open AR with true-to-scale editing (same as the shop).',
               style: GoogleFonts.poppins(
                 fontSize: 14,
                 color: Colors.black,
@@ -611,10 +635,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final h = _formatMetersAsCm(product.realHeightMeters);
     final len = _formatMetersAsCm(product.realDepthMeters);
     final depth = _formatMetersAsCm(product.realWidthMeters);
+    final hasComponents = product.components.isNotEmpty;
     final lines = <String>[
-      if (h != '-') '- Height: $h',
-      if (len != '-') '- Length: $len',
-      if (depth != '-') '- Depth: $depth',
+      if (!hasComponents && h != '-') '- Height: $h',
+      if (!hasComponents && len != '-') '- Length: $len',
+      if (!hasComponents && depth != '-') '- Depth: $depth',
+      if (hasComponents) '- Set includes:',
+      if (hasComponents) ...product.components.map((component) {
+        final widthCm = _formatMetersAsCm(component.widthMeters);
+        final heightCm = _formatMetersAsCm(component.heightMeters);
+        final depthCm = _formatMetersAsCm(component.depthMeters);
+        return '  - ${component.name} (x${component.quantity})'
+            ' - W: $widthCm, H: $heightCm, D: $depthCm';
+      }),
       '- Style: ${product.style}',
       '- Material: ${product.material}',
       '- Color: ${product.color}',
@@ -1445,7 +1478,7 @@ class _ProductReviewComposerPage extends StatefulWidget {
 }
 
 class _ProductReviewComposerPageState extends State<_ProductReviewComposerPage> with SingleTickerProviderStateMixin {
-  int _rating = 5;
+  int _rating = 0;
   final TextEditingController _controller = TextEditingController();
   bool _submitting = false;
   String? _error;
@@ -1729,8 +1762,8 @@ class _ProductReviewComposerPageState extends State<_ProductReviewComposerPage> 
                   begin: 0.0,
                   end: index < _rating ? 1.0 : 0.0,
                 ),
-                duration: Duration(milliseconds: 200 + (index * 50)),
-                curve: Curves.elasticOut,
+                duration: Duration(milliseconds: 160 + (index * 40)),
+                curve: Curves.easeOutBack,
                 builder: (context, value, child) {
                   return Transform.scale(
                     scale: index < _rating ? 1.0 + (value * 0.1) : 1.0,

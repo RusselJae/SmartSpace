@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
+import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/filters_sheet.dart';
 import '../../models/product.dart';
 import '../../utils/model_path_helper.dart';
@@ -388,19 +389,22 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                             borderRadius: BorderRadius.circular(999),
                                           ),
                                           clipBehavior: Clip.hardEdge,
-                                          child: ModelViewer(
-                                            key: ValueKey('${product.id}_suggestion'),
-                                            backgroundColor: const Color(0xFFF9F4EF),
-                                            src: ModelPathHelper.normalize(product.modelPath),
-                                            alt: 'Preview of ${product.name}',
-                                            ar: false,
-                                            environmentImage: 'neutral',
-                                            exposure: 1.35,
-                                            shadowIntensity: 0.18,
-                                            autoRotate: false,
-                                            cameraControls: false,
-                                            disableZoom: true,
-                                            interactionPrompt: InteractionPrompt.none,
+                                          child: CachedModelSrcLoader(
+                                            sourceUrl: ModelPathHelper.normalize(product.modelPath),
+                                            builder: (context, resolvedSrc) => ModelViewer(
+                                              key: ValueKey('${product.id}_suggestion'),
+                                              backgroundColor: const Color(0xFFF9F4EF),
+                                              src: resolvedSrc,
+                                              alt: 'Preview of ${product.name}',
+                                              ar: false,
+                                              environmentImage: 'neutral',
+                                              exposure: 1.35,
+                                              shadowIntensity: 0.18,
+                                              autoRotate: false,
+                                              cameraControls: false,
+                                              disableZoom: true,
+                                              interactionPrompt: InteractionPrompt.none,
+                                            ),
                                           ),
                                         ),
                                         const SizedBox(width: 10),
@@ -631,19 +635,22 @@ class _ProductGridCardState extends State<_ProductGridCard> {
                     child: SizedBox(
                       height: 140,
                       width: double.infinity,
-                      child: ModelViewer(
-                        key: ValueKey('${widget.product.id}_preview'),
-                        backgroundColor: const Color(0xFFF9F4EF),
-                        src: ModelPathHelper.normalize(widget.product.modelPath),
-                        alt: 'Preview of ${widget.product.name}',
-                        ar: false,
-                        environmentImage: 'neutral',
-                        exposure: 1.35,
-                        shadowIntensity: 0.18,
-                        autoRotate: false,
-                        cameraControls: false,
-                        disableZoom: true,
-                        interactionPrompt: InteractionPrompt.none,
+                      child: CachedModelSrcLoader(
+                        sourceUrl: ModelPathHelper.normalize(widget.product.modelPath),
+                        builder: (context, resolvedSrc) => ModelViewer(
+                          key: ValueKey('${widget.product.id}_preview'),
+                          backgroundColor: const Color(0xFFF9F4EF),
+                          src: resolvedSrc,
+                          alt: 'Preview of ${widget.product.name}',
+                          ar: false,
+                          environmentImage: 'neutral',
+                          exposure: 1.35,
+                          shadowIntensity: 0.18,
+                          autoRotate: false,
+                          cameraControls: false,
+                          disableZoom: true,
+                          interactionPrompt: InteractionPrompt.none,
+                        ),
                       ),
                     ),
                   ),

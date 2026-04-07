@@ -5,12 +5,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 
-import '../../config/api_config.dart';
 import '../../models/cart_item.dart';
 import '../../models/product.dart';
 import '../../services/auth_service.dart';
 import '../../services/cart_service.dart';
 import '../../utils/model_path_helper.dart';
+import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../checkout/order_summary_screen.dart';
 import '../views/sign_in.dart';
@@ -24,22 +24,6 @@ bool _productHasModel(Product p) {
   final src = p.modelPath.trim();
   if (src.isEmpty) return false;
   return src.toLowerCase().endsWith('.glb') || src.toLowerCase().endsWith('.gltf');
-}
-
-String? _productResolvedModelSrc(Product p) {
-  final raw = p.modelPath.trim();
-  if (raw.isEmpty) return null;
-  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-  final apiUri = Uri.parse(ApiConfig.baseUrl);
-  final origin = apiUri.origin;
-  if (raw.startsWith('/uploads/')) return '$origin$raw';
-  if (raw.startsWith('uploads/')) return '$origin/$raw';
-  if (raw.contains('backend/uploads/')) {
-    final idx = raw.indexOf('backend/uploads/');
-    final tail = raw.substring(idx + 'backend/'.length);
-    return '$origin/$tail';
-  }
-  return ModelPathHelper.normalize(raw);
 }
 
 bool _productHasNetworkImage(Product p) {
@@ -63,17 +47,21 @@ Widget _buildCartLineThumbnail(Product product) {
         ),
         IgnorePointer(
           ignoring: true,
-          child: ModelViewer(
-            backgroundColor: Colors.transparent,
-            src: _productResolvedModelSrc(product) ?? product.modelPath,
-            alt: '3D preview of ${product.name}',
-            ar: false,
-            environmentImage: 'neutral',
-            exposure: 1.35,
-            shadowIntensity: 0.18,
-            autoRotate: false,
-            cameraControls: false,
-            disableZoom: true,
+          child: CachedModelSrcLoader(
+            sourceUrl: ModelPathHelper.normalize(product.modelPath),
+            placeholder: const SizedBox.shrink(),
+            builder: (context, resolvedSrc) => ModelViewer(
+              backgroundColor: Colors.transparent,
+              src: resolvedSrc,
+              alt: '3D preview of ${product.name}',
+              ar: false,
+              environmentImage: 'neutral',
+              exposure: 1.35,
+              shadowIntensity: 0.18,
+              autoRotate: false,
+              cameraControls: false,
+              disableZoom: true,
+            ),
           ),
         ),
       ],

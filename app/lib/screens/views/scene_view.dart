@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../utils/model_path_helper.dart';
+import '../../widgets/cached_model_src_loader.dart';
 
 /// =============================================================
 /// SceneViewScreen
@@ -34,18 +35,21 @@ class SceneViewScreen extends StatelessWidget {
         ),
       ),
       child: SafeArea(
-        child: ModelViewer(
-          backgroundColor: const Color(0xFFF9F4EF),
-          src: ModelPathHelper.normalize(modelSrc),
-          alt: altText,
-          ar: false,
-          environmentImage: 'neutral',
-          exposure: 1.35,
-          shadowIntensity: 0.18,
-          autoRotate: false,
-          cameraControls: true,
-          disableZoom: false,
-          interactionPrompt: InteractionPrompt.whenFocused,
+        child: CachedModelSrcLoader(
+          sourceUrl: ModelPathHelper.normalize(modelSrc),
+          builder: (context, resolvedSrc) => ModelViewer(
+            backgroundColor: const Color(0xFFF9F4EF),
+            src: resolvedSrc,
+            alt: altText,
+            ar: false,
+            environmentImage: 'neutral',
+            exposure: 1.35,
+            shadowIntensity: 0.18,
+            autoRotate: false,
+            cameraControls: true,
+            disableZoom: false,
+            interactionPrompt: InteractionPrompt.whenFocused,
+          ),
         ),
       ),
     );

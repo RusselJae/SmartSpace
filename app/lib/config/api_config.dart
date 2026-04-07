@@ -21,14 +21,11 @@ class ApiConfig {
     // For web platform, check window.flutterConfig first
     if (kIsWeb) {
       final webUrl = WebConfigHelper.getApiBaseUrl();
-      if (webUrl != null && webUrl.isNotEmpty) {
-        developer.log('🌐 Raw API URL from window.flutterConfig: $webUrl');
-        final normalized = _normalizedBaseUrl(webUrl);
-        developer.log('✅ Final normalized API URL: $normalized');
-        return normalized;
-      } else {
-        developer.log('⚠️  window.flutterConfig.apiBaseUrl is null or empty');
-      }
+        if (webUrl != null && webUrl.isNotEmpty) {
+          return _normalizedBaseUrl(webUrl);
+        }
+        // hard fallback for production web
+        return 'https://smartspace-xhuu.onrender.com/api';
     }
     
     // Try .env file (works for mobile/desktop, and web if .env is in assets)
@@ -92,8 +89,12 @@ class ApiConfig {
         ? cleaned.substring(0, cleaned.length - 1) 
         : cleaned;
     
-    // Check if port :4000 is explicitly in the string
-    final hasExplicitPort = RegExp(r':4000').hasMatch(normalized);
+    // Check if any port is explicitly provided (e.g. :4000, :443, :8080).
+    //
+    // We only auto-add :4000 for local/dev style hosts. In production, your API
+    // will typically sit behind a reverse proxy (Render, Vercel, Cloud Run),
+    // and forcing :4000 breaks HTTPS deployments.
+    final hasExplicitPort = RegExp(r':\d+').hasMatch(normalized);
     
     // Ensure protocol is present (default to http://)
     if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
@@ -105,16 +106,24 @@ class ApiConfig {
     try {
       final uri = Uri.parse(normalized);
       
-      // Check if port is missing or is the default port (80 for http, 443 for https)
-      // We want to use port 4000 for our API, so if it's default or missing, add :4000
-      final isDefaultPort = (uri.scheme == 'http' && uri.port == 80) || 
-                            (uri.scheme == 'https' && uri.port == 443) ||
-                            uri.port == 0;
-      
-      // If no explicit port in original string AND it's using default port, add :4000
-      if (!hasExplicitPort && (isDefaultPort || uri.port == 0)) {
-        developer.log('⚠️  API URL missing port :4000, adding it');
-        // Reconstruct URI with port 4000, explicitly excluding fragments
+      // If caller didn't specify a port, only auto-add :4000 for local/dev hosts.
+      final bool looksLikeDevHost =
+          uri.host == 'localhost' ||
+          uri.host == '127.0.0.1' ||
+          uri.host == '0.0.0.0' ||
+          uri.host == '10.0.2.2' ||
+          uri.host.startsWith('192.168.') ||
+          uri.host.startsWith('10.') ||
+          uri.host.startsWith('172.16.') ||
+          uri.host.startsWith('172.17.') ||
+          uri.host.startsWith('172.18.') ||
+          uri.host.startsWith('172.19.') ||
+          uri.host.startsWith('172.2') ||
+          uri.host.startsWith('172.30.') ||
+          uri.host.startsWith('172.31.');
+
+      if (!hasExplicitPort && looksLikeDevHost) {
+        developer.log('⚠️  Dev API URL missing port :4000, adding it');
         final scheme = uri.scheme.isEmpty ? 'http' : uri.scheme;
         final newUri = Uri(
           scheme: scheme,
@@ -122,24 +131,21 @@ class ApiConfig {
           port: 4000,
           path: uri.path,
           query: uri.query,
-          // Explicitly set fragment to empty - we don't want fragments in API URLs
         );
         normalized = newUri.toString();
-        developer.log('✅ Normalized API URL: $normalized');
-      } else {
-        // Even if port is correct, ensure no fragments
-        if (uri.hasFragment) {
-          developer.log('⚠️  Removing hash fragment from API URL');
-          final cleanUri = Uri(
-            scheme: uri.scheme,
-            host: uri.host,
-            port: uri.port,
-            path: uri.path,
-            query: uri.query,
-            // No fragment
-          );
-          normalized = cleanUri.toString();
-        }
+      }
+
+      // Ensure no fragments (fragments are never sent to the server).
+      if (uri.hasFragment) {
+        developer.log('⚠️  Removing hash fragment from API URL');
+        final cleanUri = Uri(
+          scheme: uri.scheme,
+          host: uri.host,
+          port: uri.hasPort ? uri.port : null,
+          path: uri.path,
+          query: uri.query,
+        );
+        normalized = cleanUri.toString();
       }
       
       return normalized;

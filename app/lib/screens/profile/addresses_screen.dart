@@ -205,7 +205,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
   }
 }
 
-/// Required field label: "Label " with red asterisk (matches add/edit product behavior).
+/// Required field label: field name + red asterisk only.
 Widget _requiredLabel(String label) {
   return Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -217,8 +217,8 @@ Widget _requiredLabel(String label) {
         ),
       ),
       Text(
-        '* Required',
-        style: GoogleFonts.poppins(fontSize: 11.5, fontWeight: FontWeight.w700, color: CupertinoColors.systemRed),
+        '*',
+        style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w700, color: CupertinoColors.systemRed),
       ),
     ],
   );
@@ -273,7 +273,7 @@ class _DropdownFieldCompact extends StatelessWidget {
                 width: 1.4,
               ),
             ),
-            errorText: showError ? 'Required' : null,
+            errorText: showError ? '*' : null,
             errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
           ),
       icon: const Icon(CupertinoIcons.chevron_down, size: 16, color: CupertinoColors.systemGrey),
@@ -955,9 +955,10 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                'Required',
+                '*',
                 style: GoogleFonts.poppins(
                   fontSize: 12,
+                  fontWeight: FontWeight.w700,
                   color: CupertinoColors.systemRed,
                 ),
               ),

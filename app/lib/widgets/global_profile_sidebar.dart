@@ -23,6 +23,7 @@ import '../services/auth_service.dart';
 import '../services/cart_service.dart';
 import '../services/mysql_database_service.dart';
 import '../services/profile_storage.dart';
+import '../services/support_notifications_service.dart';
 import '../widgets/loading_screen.dart';
 
 /// =============================================================
@@ -67,6 +68,7 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
   final AuthService _auth = AuthService();
   final ProfileStorage _storage = ProfileStorage();
   final CartService _cart = CartService();
+  final SupportNotificationsService _supportNotifications = SupportNotificationsService.instance;
 
   ProfileExtras? _extras;
   Uint8List? _avatarBytes;
@@ -92,6 +94,9 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
     // We keep this cheap: only hydrate if authenticated.
     if (widget.controller.isOpen.value && _auth.currentUser != null) {
       _hydrate();
+      _supportNotifications.startPolling();
+    } else if (!widget.controller.isOpen.value) {
+      _supportNotifications.stopPolling();
     }
 
     setState(() {});
@@ -235,6 +240,7 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
     required String title,
     required VoidCallback onTap,
     Color? textColor,
+    int? badgeCount,
   }) {
     return Center(
       child: CupertinoButton(
@@ -263,14 +269,38 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
               ),
               const SizedBox(width: 7),
               Expanded(
-                child: Text(
-                  title,
-                  style: GoogleFonts.poppins(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                    color: textColor ?? Colors.black,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                          color: textColor ?? Colors.black,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if ((badgeCount ?? 0) > 0) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.all(Radius.circular(999)),
+                        ),
+                        child: Text(
+                          (badgeCount ?? 0) > 99 ? '99+' : '${badgeCount ?? 0}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               Icon(CupertinoIcons.chevron_forward,
@@ -347,7 +377,9 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
   }
 
   Widget _buildButtons(User user) {
-    return Column(
+    return ValueListenableBuilder<int>(
+      valueListenable: _supportNotifications.unreadCount,
+      builder: (context, supportUnread, _) => Column(
       children: [
         _buildTile(
           icon: CupertinoIcons.location,
@@ -370,6 +402,7 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
         _buildTile(
           icon: CupertinoIcons.chat_bubble_2,
           title: 'Support Chat',
+          badgeCount: supportUnread,
           onTap: () => Navigator.of(context, rootNavigator: true)
               .push(CupertinoPageRoute(builder: (_) => const SupportChatScreen())),
         ),
@@ -389,8 +422,8 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
         ),
         _buildTile(
           icon: CupertinoIcons.list_bullet,
-          title: 'My custom requests',
-          onTap: () {
+          title: 'My Custom Requests',
+          onTap: () { 
             if (_auth.currentUser == null) {
               Navigator.of(context, rootNavigator: true).push(
                 CupertinoPageRoute(builder: (_) => const SignInScreen(), fullscreenDialog: true),
@@ -420,6 +453,7 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
           onTap: _handleLogout,
         ),
       ],
+    ),
     );
   }
 

@@ -1,3 +1,53 @@
+import '../utils/model_path_helper.dart';
+
+class ProductSetComponent {
+  final String name;
+  final int quantity;
+  final double widthMeters;
+  final double heightMeters;
+  final double depthMeters;
+  final String? modelPath;
+  final String? notes;
+
+  const ProductSetComponent({
+    required this.name,
+    required this.quantity,
+    required this.widthMeters,
+    required this.heightMeters,
+    required this.depthMeters,
+    this.modelPath,
+    this.notes,
+  });
+
+  factory ProductSetComponent.fromJson(Map<String, dynamic> json) {
+    return ProductSetComponent(
+      name: (json['name'] ?? '').toString(),
+      quantity: (json['quantity'] as num?)?.toInt() ?? 1,
+      widthMeters: (json['widthM'] as num?)?.toDouble() ?? 0,
+      heightMeters: (json['heightM'] as num?)?.toDouble() ?? 0,
+      depthMeters: (json['depthM'] as num?)?.toDouble() ?? 0,
+      modelPath: (json['modelPath'] as String?)?.trim().isEmpty == true
+          ? null
+          : (json['modelPath'] as String?),
+      notes: (json['notes'] as String?)?.trim().isEmpty == true
+          ? null
+          : (json['notes'] as String?),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'quantity': quantity,
+      'widthM': widthMeters,
+      'heightM': heightMeters,
+      'depthM': depthMeters,
+      if (modelPath != null) 'modelPath': modelPath,
+      if (notes != null) 'notes': notes,
+    };
+  }
+}
+
 class Product {
   final String id;
   final String name;
@@ -8,6 +58,7 @@ class Product {
   final String material;
   final String color;
   final String modelPath; // Path to 3D model file
+  final List<ProductSetComponent> components; // Optional per-piece dimensions for set products.
   final double? realWidthMeters;
   final double? realHeightMeters;
   final double? realDepthMeters;
@@ -33,6 +84,7 @@ class Product {
     required this.material,
     required this.color,
     required this.modelPath,
+    this.components = const [],
     required this.realWidthMeters,
     required this.realHeightMeters,
     required this.realDepthMeters,
@@ -50,6 +102,8 @@ class Product {
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
+    final rawImages = List<String>.from(json['imageUrls'] as List);
+    final rawComponents = (json['components'] as List?) ?? const [];
     return Product(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -59,12 +113,23 @@ class Product {
       style: json['style'] as String,
       material: json['material'] as String,
       color: json['color'] as String,
-      modelPath: json['modelPath'] as String,
+      // Resolve `/uploads/...` against the same API origin the app uses (critical on phones).
+      modelPath: ModelPathHelper.normalize(json['modelPath'] as String),
+      components: rawComponents
+          .whereType<Map>()
+          .map((item) => ProductSetComponent.fromJson(Map<String, dynamic>.from(item)))
+          .where((item) =>
+              item.name.trim().isNotEmpty &&
+              item.quantity > 0 &&
+              item.widthMeters > 0 &&
+              item.heightMeters > 0 &&
+              item.depthMeters > 0)
+          .toList(growable: false),
       realWidthMeters: (json['realWidthM'] as num?)?.toDouble(),
       realHeightMeters: (json['realHeightM'] as num?)?.toDouble(),
       realDepthMeters: (json['realDepthM'] as num?)?.toDouble(),
       modelBaseScale: (json['modelBaseScale'] as num?)?.toDouble() ?? 1.0,
-      imageUrls: List<String>.from(json['imageUrls'] as List),
+      imageUrls: rawImages.map(ModelPathHelper.normalizeImageUrl).toList(),
       rating: (json['rating'] as num).toDouble(),
       reviewCount: json['reviewCount'] as int,
       orderCount: (json['orderCount'] as num?)?.toInt(),
@@ -88,6 +153,7 @@ class Product {
       'material': material,
       'color': color,
       'modelPath': modelPath,
+      'components': components.map((c) => c.toJson()).toList(growable: false),
       'realWidthM': realWidthMeters,
       'realHeightM': realHeightMeters,
       'realDepthM': realDepthMeters,
@@ -115,6 +181,7 @@ class Product {
     String? material,
     String? color,
     String? modelPath,
+    List<ProductSetComponent>? components,
     double? realWidthMeters,
     double? realHeightMeters,
     double? realDepthMeters,
@@ -140,6 +207,7 @@ class Product {
       material: material ?? this.material,
       color: color ?? this.color,
       modelPath: modelPath ?? this.modelPath,
+      components: components ?? this.components,
       realWidthMeters: realWidthMeters ?? this.realWidthMeters,
       realHeightMeters: realHeightMeters ?? this.realHeightMeters,
       realDepthMeters: realDepthMeters ?? this.realDepthMeters,

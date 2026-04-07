@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../../services/ar_support_service.dart';
 import '../../utils/model_path_helper.dart';
+import '../../widgets/cached_model_src_loader.dart';
 import 'ar_view.dart'; // Import ArModelDimensions
 
 /// =============================================================
@@ -333,31 +334,34 @@ class _ArLauncherScreenState extends State<ArLauncherScreen> {
                   final bool isLandscape = orientation == Orientation.landscape;
 
                   // --- Shared: viewer -------------------------------------------------
-                  final Widget viewer = ModelViewer(
-                    backgroundColor: const Color(0xFFF9F4EF),
-                    src: ModelPathHelper.normalize(widget.modelSrc),
-                    alt: widget.altText,
-                    ar: true,
-                    arModes: const ['scene-viewer'],
-                    arPlacement: ArPlacement.floor,
-                    arScale: ArScale.auto,
-                    cameraControls: true,
-                    environmentImage: 'neutral',
-                    exposure: 1.35,
-                    shadowIntensity: 0.18,
-                    autoRotate: false,
-                    disableZoom: false,
-                    id: _viewerId,
-                    relatedJs: _combinedScript,
-                    javascriptChannels: <JavascriptChannel>{
-                      JavascriptChannel(
-                        _dimensionChannelName,
-                        onMessageReceived: (dynamic message) {
-                          final String messageStr = message is String ? message : (message?.toString() ?? '{}');
-                          _handleDimensionMessage(messageStr);
-                        },
-                      ),
-                    },
+                  final Widget viewer = CachedModelSrcLoader(
+                    sourceUrl: ModelPathHelper.normalize(widget.modelSrc),
+                    builder: (context, resolvedSrc) => ModelViewer(
+                      backgroundColor: const Color(0xFFF9F4EF),
+                      src: resolvedSrc,
+                      alt: widget.altText,
+                      ar: true,
+                      arModes: const ['scene-viewer'],
+                      arPlacement: ArPlacement.floor,
+                      arScale: ArScale.auto,
+                      cameraControls: true,
+                      environmentImage: 'neutral',
+                      exposure: 1.35,
+                      shadowIntensity: 0.18,
+                      autoRotate: false,
+                      disableZoom: false,
+                      id: _viewerId,
+                      relatedJs: _combinedScript,
+                      javascriptChannels: <JavascriptChannel>{
+                        JavascriptChannel(
+                          _dimensionChannelName,
+                          onMessageReceived: (dynamic message) {
+                            final String messageStr = message is String ? message : (message?.toString() ?? '{}');
+                            _handleDimensionMessage(messageStr);
+                          },
+                        ),
+                      },
+                    ),
                   );
 
                   // --- Shared: panels ------------------------------------------------
@@ -465,31 +469,34 @@ class _ArLauncherScreenState extends State<ArLauncherScreen> {
               builder: (BuildContext context, Orientation orientation) {
                 final bool isLandscape = orientation == Orientation.landscape;
 
-                final Widget viewer = ModelViewer(
-                  backgroundColor: const Color(0xFFF9F4EF),
-                  src: ModelPathHelper.normalize(widget.modelSrc),
-                  alt: widget.altText,
-                  ar: _supportsArCore,
-                  arModes: _supportsArCore ? const ['scene-viewer'] : const [],
-                  arPlacement: ArPlacement.floor,
-                  arScale: ArScale.auto,
-                  cameraControls: true,
-                  environmentImage: 'neutral',
-                  exposure: 1.35,
-                  shadowIntensity: 0.18,
-                  autoRotate: false,
-                  disableZoom: false,
-                  id: _viewerId,
-                  relatedJs: _combinedScript,
-                  javascriptChannels: <JavascriptChannel>{
-                    JavascriptChannel(
-                      _dimensionChannelName,
-                      onMessageReceived: (dynamic message) {
-                        final String messageStr = message is String ? message : (message?.toString() ?? '{}');
-                        _handleDimensionMessage(messageStr);
-                      },
-                    ),
-                  },
+                final Widget viewer = CachedModelSrcLoader(
+                  sourceUrl: ModelPathHelper.normalize(widget.modelSrc),
+                  builder: (context, resolvedSrc) => ModelViewer(
+                    backgroundColor: const Color(0xFFF9F4EF),
+                    src: resolvedSrc,
+                    alt: widget.altText,
+                    ar: _supportsArCore,
+                    arModes: _supportsArCore ? const ['scene-viewer'] : const [],
+                    arPlacement: ArPlacement.floor,
+                    arScale: ArScale.auto,
+                    cameraControls: true,
+                    environmentImage: 'neutral',
+                    exposure: 1.35,
+                    shadowIntensity: 0.18,
+                    autoRotate: false,
+                    disableZoom: false,
+                    id: _viewerId,
+                    relatedJs: _combinedScript,
+                    javascriptChannels: <JavascriptChannel>{
+                      JavascriptChannel(
+                        _dimensionChannelName,
+                        onMessageReceived: (dynamic message) {
+                          final String messageStr = message is String ? message : (message?.toString() ?? '{}');
+                          _handleDimensionMessage(messageStr);
+                        },
+                      ),
+                    },
+                  ),
                 );
 
                 final List<Widget> panels = <Widget>[

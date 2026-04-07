@@ -34,6 +34,9 @@ dependencies:
   flutter_localizations:
     sdk: flutter
 
+  flutter_web_plugins:
+    sdk: flutter
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -56,6 +59,11 @@ dependencies:
   firebase_storage: ^12.3.2
   # Opens PayMongo hosted checkout in browser / external app
   url_launcher: ^6.3.1
+  path_provider: ^2.1.5
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  crypto: ^3.0.7
+  app_links: ^7.0.0
 
 dev_dependencies:
   flutter_test:
@@ -130,5 +138,5 @@ flutter_launcher_icons:
   android: true
   ios: false  # Set to true if you want iOS icons generated too
   image_path: "assets/images/logo.jpg"
-  adaptive_icon_background: "#FFFBF7"  # Light cream background matching app theme
+  adaptive_icon_background: "#FFFFFF"  # Match splash / launcher with white canvas
   adaptive_icon_foreground: "assets/images/logo.jpg"

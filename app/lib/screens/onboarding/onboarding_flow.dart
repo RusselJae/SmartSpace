@@ -1,15 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../services/onboarding_storage.dart';
 import '../shell/tab_shell.dart';
 
 /// =============================================================
 /// OnboardingFlow
 ///
-/// Uses the same typography-forward, left-aligned style as the
-/// loading screen, but layered over a wood furniture hero image.
-/// Three pages, three dots, and a simple Next / Get started flow.
+/// Full-bleed [onboarding_background.png] with a light veil so copy stays legible.
+/// Typography-forward, left-aligned Poppins + walnut primary. Three pages, dots,
+/// Next / Get started at the bottom.
 /// =============================================================
 class OnboardingFlow extends StatefulWidget {
   const OnboardingFlow({super.key});
@@ -26,9 +29,9 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   late final PageController _pageController;
   int _pageIndex = 0;
 
-  void _goToApp(BuildContext context) {
-    // Replace onboarding with the main tab shell. In a real app, we
-    // would persist completion so onboarding isn't shown next launch.
+  Future<void> _goToApp(BuildContext context) async {
+    await OnboardingStorage.markComplete();
+    if (!context.mounted) return;
     Navigator.of(context).pushReplacementNamed(TabShell.route);
   }
 
@@ -39,7 +42,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         curve: Curves.easeOutCubic,
       );
     } else {
-      _goToApp(context);
+      unawaited(_goToApp(context));
     }
   }
 
@@ -77,18 +80,21 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Fullscreen onboarding background image
+          // Hero photo fills the screen; bottom-weighted so furniture reads well.
           const Positioned.fill(
             child: Image(
               image: AssetImage('assets/images/onboarding_background.png'),
               fit: BoxFit.cover,
               alignment: Alignment.bottomCenter,
+              filterQuality: FilterQuality.high,
             ),
           ),
-          // Slight veil so text stays readable on top of the photo
+          // Thin white wash so brown text stays readable on busy wood tones.
           Positioned.fill(
-            child: Container(
-              color: Colors.white.withValues(alpha: 0.04),
+            child: IgnorePointer(
+              child: ColoredBox(
+                color: Colors.white.withValues(alpha: 0.04),
+              ),
             ),
           ),
           SafeArea(

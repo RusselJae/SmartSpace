@@ -11,6 +11,7 @@ import '../tabs/orders_tab.dart';
 import '../tabs/profile.dart';
 import '../../services/cart_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/support_notifications_service.dart';
 import '../../widgets/global_profile_sidebar.dart';
 import '_nav_icon.dart';
 import '../views/sign_in.dart';
@@ -41,6 +42,7 @@ class TabShell extends StatefulWidget {
 class _TabShellState extends State<TabShell> {
   final CartService _cart = CartService();
   final AuthService _auth = AuthService();
+  final SupportNotificationsService _supportNotifications = SupportNotificationsService.instance;
   final CupertinoTabController _tabs = CupertinoTabController();
   final GlobalProfileSidebarController _profileSidebar = GlobalProfileSidebarController.instance;
 
@@ -51,7 +53,9 @@ class _TabShellState extends State<TabShell> {
   void initState() {
     super.initState();
     _cart.addListener(_onCartChanged);
+    _supportNotifications.unreadCount.addListener(_onCartChanged);
     _primeSession();
+    _supportNotifications.startPolling();
   }
 
   Future<void> _primeSession() async {
@@ -66,6 +70,8 @@ class _TabShellState extends State<TabShell> {
   @override
   void dispose() {
     _cart.removeListener(_onCartChanged);
+    _supportNotifications.unreadCount.removeListener(_onCartChanged);
+    _supportNotifications.stopPolling();
     _tabs.dispose();
     super.dispose();
   }
@@ -79,6 +85,28 @@ class _TabShellState extends State<TabShell> {
     // Use productCount (number of unique items) instead of totalQuantity
     final isAuthenticated = _auth.isAuthenticated;
     final cartCount = isAuthenticated ? _cart.productCount : 0;
+    final supportUnread = isAuthenticated ? _supportNotifications.unreadCount.value : 0;
+    Widget _buildSupportBadge() {
+      if (supportUnread <= 0) return const SizedBox.shrink();
+      return Positioned(
+        right: -5,
+        top: -5,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: const BoxDecoration(
+            color: Colors.red,
+            borderRadius: BorderRadius.all(Radius.circular(999)),
+          ),
+          constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+          child: Text(
+            supportUnread > 99 ? '99+' : '$supportUnread',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+          ),
+        ),
+      );
+    }
+
     
     // Walnut navigation bar with white icons
     const walnut = Color(0xFF5C4033); // Walnut background
@@ -173,9 +201,15 @@ class _TabShellState extends State<TabShell> {
         ),
       // Profile/Login is always last
       BottomNavigationBarItem(
-        icon: NavIcon(
-          icon: CupertinoIcons.person,
-          active: _selectedIndex == (isAuthenticated ? 4 : 3),
+        icon: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            NavIcon(
+              icon: CupertinoIcons.person,
+              active: _selectedIndex == (isAuthenticated ? 4 : 3),
+            ),
+            _buildSupportBadge(),
+          ],
         ),
         label: isAuthenticated ? 'Profile' : 'Login',
       ),

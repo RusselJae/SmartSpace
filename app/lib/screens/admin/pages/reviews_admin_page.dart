@@ -280,15 +280,6 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
                               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                               child: Column(
                                 children: [
-                                  Text(
-                                    'Page ${safePageIndex + 1} of $pageCount',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black54,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
@@ -307,6 +298,15 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
                                         tooltip: 'Next page',
                                       ),
                                     ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Page ${safePageIndex + 1} of $pageCount',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black54,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -447,6 +447,7 @@ class _ReviewDetailsDialog extends StatelessWidget {
   });
 
   final Review review;
+  static const double _detailFontSize = 16;
 
   @override
   Widget build(BuildContext context) {
@@ -455,7 +456,7 @@ class _ReviewDetailsDialog extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
       ),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 780),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.all(Radius.circular(24)),
@@ -465,23 +466,37 @@ class _ReviewDetailsDialog extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
-              child: Row(
+              child: Column(
                 children: [
-                  Text(
-                    'Review Details',
-                    style: GoogleFonts.poppins(
-                      color: Colors.black,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      decoration: TextDecoration.none,
-                    ),
+                  Row(
+                    children: [
+                      const SizedBox(width: 40),
+                      Expanded(
+                        child: Text(
+                          'Review Details',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(
+                            color: Colors.black,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
                   ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                  const SizedBox(height: 10),
+                  CircleAvatar(
+                    radius: 36,
+                    backgroundColor: Colors.grey[200],
+                    backgroundImage: const AssetImage('assets/images/logo2.png'),
+                    onBackgroundImageError: (_, __) {},
                   ),
                 ],
               ),
@@ -494,58 +509,48 @@ class _ReviewDetailsDialog extends StatelessWidget {
                     _DetailRow(
                       label: 'Product',
                       value: review.productName.isNotEmpty ? review.productName : 'Unknown Product',
+                      fontSize: _detailFontSize,
                     ),
-                    _DetailRow(label: 'Product ID', value: review.productId),
+                    _DetailRow(
+                      label: 'Product ID',
+                      value: review.productId,
+                      fontSize: _detailFontSize,
+                    ),
                     _DetailRow(
                       label: 'Customer',
                       value: review.userName.isNotEmpty ? review.userName : 'Anonymous',
+                      fontSize: _detailFontSize,
                     ),
-                    _DetailRow(label: 'Customer ID', value: review.userId),
+                    _DetailRow(
+                      label: 'Customer ID',
+                      value: review.userId,
+                      fontSize: _detailFontSize,
+                    ),
                     _DetailRow(
                       label: 'Rating',
                       value: '${review.rating} / 5 ${'⭐' * review.rating}',
+                      fontSize: _detailFontSize,
                     ),
                     _DetailRow(
                       label: 'Status',
                       value: review.status[0].toUpperCase() + review.status.substring(1),
+                      fontSize: _detailFontSize,
                     ),
                     _DetailRow(
                       label: 'Created',
                       value: review.createdAt.toLocal().toString().substring(0, 19),
+                      fontSize: _detailFontSize,
                     ),
                     if (review.updatedAt != null)
                       _DetailRow(
                         label: 'Last Updated',
                         value: review.updatedAt!.toLocal().toString().substring(0, 19),
+                        fontSize: _detailFontSize,
                       ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Review Content',
-                      style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[50],
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey[200]!),
-                      ),
-                      child: Text(
-                        review.content.isEmpty ? '(No comment provided)' : review.content,
-                        style: GoogleFonts.poppins(
-                          color: review.content.isEmpty ? Colors.grey[600] : Colors.black,
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          fontStyle: review.content.isEmpty ? FontStyle.italic : FontStyle.normal,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
+                    _DetailRow(
+                      label: 'Review Content',
+                      value: review.content.isEmpty ? '(No comment provided)' : review.content,
+                      fontSize: _detailFontSize,
                     ),
                     const SizedBox(height: 20),
                     // Read‑only admin view: no approve / reject actions. Admins
@@ -563,10 +568,15 @@ class _ReviewDetailsDialog extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
+  const _DetailRow({
+    required this.label,
+    required this.value,
+    this.fontSize = 16,
+  });
 
   final String label;
   final String value;
+  final double fontSize;
 
   @override
   Widget build(BuildContext context) {
@@ -579,10 +589,10 @@ class _DetailRow extends StatelessWidget {
           SizedBox(
             width: 120,
             child: Text(
-              label,
+              '$label:',
               style: GoogleFonts.poppins(
-                color: Colors.black,
-                fontSize: 15,
+                color: Colors.grey[600],
+                fontSize: fontSize,
                 fontWeight: FontWeight.w500,
                 decoration: TextDecoration.none,
               ),
@@ -593,8 +603,8 @@ class _DetailRow extends StatelessWidget {
               value.trim(),
               style: GoogleFonts.poppins(
                 color: Colors.black,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+                fontSize: fontSize,
+                fontWeight: FontWeight.w400,
                 decoration: TextDecoration.none,
               ),
             ),

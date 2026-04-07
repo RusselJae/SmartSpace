@@ -10,6 +10,7 @@ import '../../models/support_conversation.dart';
 import '../../models/support_message.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
+import '../../services/support_notifications_service.dart';
 import '../../utils/file_mime_utils.dart';
 
 class SupportChatScreen extends StatefulWidget {
@@ -20,8 +21,10 @@ class SupportChatScreen extends StatefulWidget {
 }
 
 class _SupportChatScreenState extends State<SupportChatScreen> {
+  static const int _maxAttachmentBytes = 30 * 1024 * 1024;
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final AuthService _auth = AuthService();
+  final SupportNotificationsService _supportNotifications = SupportNotificationsService.instance;
   final TextEditingController _input = TextEditingController();
 
   SupportConversation? _conversation;
@@ -127,6 +130,11 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
         _loading = false;
         _lastSeenMessageCount = msgs.length;
       });
+      await _supportNotifications.markConversationRead(
+        userId: user.id,
+        conversationId: conv.id,
+        lastMessageAt: conv.lastMessageAt ?? conv.updatedAt,
+      );
       _startPolling();
     } catch (e) {
       if (!mounted) return;
@@ -169,6 +177,15 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
             ),
           );
         }
+        final user = _auth.currentUser;
+        final conv = _conversation;
+        if (user != null && conv != null) {
+          await _supportNotifications.markConversationRead(
+            userId: user.id,
+            conversationId: conv.id,
+            lastMessageAt: conv.lastMessageAt ?? conv.updatedAt,
+          );
+        }
       } catch (_) {}
     });
   }
@@ -201,6 +218,13 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     if (file.bytes == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Attachment data not available')),
+      );
+      return;
+    }
+    if (file.bytes!.length > _maxAttachmentBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Attachment exceeds 30MB limit')),
       );
       return;
     }

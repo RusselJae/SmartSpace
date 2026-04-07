@@ -4,7 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../models/support_conversation.dart';
 import '../../../models/support_message.dart';
+import '../../../models/user.dart';
 import '../../../services/admin_auth_service.dart';
+import '../../../services/admin_support_inbox_navigation_service.dart';
 import '../../../utils/file_mime_utils.dart';
 import '../../../services/admin_notifications_service.dart';
 import '../../../services/mysql_database_service.dart';
@@ -26,6 +28,7 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
   String? _error;
   List<SupportConversation> _conversations = [];
   final Map<String, String> _userNameById = {};
+  final Map<String, String?> _userAvatarById = {};
   final TextEditingController _conversationSearchController = TextEditingController();
   String _conversationSearchQuery = '';
 
@@ -70,7 +73,7 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
     });
     try {
       await _db.initialize();
-      final convs = await _db.getSupportConversationsForAdmin(status: 'open');
+      final convs = await _db.getSupportConversationsForAdmin();
       if (!mounted) return;
       setState(() {
         _conversations = convs;
@@ -82,6 +85,15 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
       });
 
       await _primeUserNames(convs);
+
+      final pendingUserId = AdminSupportInboxNavigationService.instance.pendingUserId;
+      if (pendingUserId != null && pendingUserId.trim().isNotEmpty) {
+        AdminSupportInboxNavigationService.instance.pendingUserId = null;
+        final target = convs.where((c) => c.userId == pendingUserId).toList();
+        if (target.isNotEmpty) {
+          await _loadMessages(target.first);
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -106,6 +118,7 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
       if (name.isNotEmpty) {
         _userNameById[id] = name;
       }
+      _userAvatarById[id] = user?.avatarUrl;
     });
 
     await Future.wait(futures);
@@ -117,6 +130,23 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
     final name = _userNameById[userId];
     if (name != null && name.trim().isNotEmpty) return name.trim();
     return userId;
+  }
+
+  Widget _userAvatar(String userId, {double radius = 18}) {
+    final avatarUrl = _userAvatarById[userId];
+    if (avatarUrl != null && avatarUrl.trim().isNotEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundImage: NetworkImage(avatarUrl),
+      );
+    }
+    final initials = _displayNameForUserId(userId).trim();
+    final letter = initials.isEmpty ? 'U' : initials[0].toUpperCase();
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: Colors.grey.shade300,
+      child: Text(letter, style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.black87)),
+    );
   }
 
   /// Recent activity within this window is treated as "online" (no realtime presence API).
@@ -256,19 +286,7 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Conversations',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-          ),
-        ),
-        const Divider(height: 1),
+        const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
           child: TextField(
@@ -306,7 +324,7 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
             valueListenable: _notifications.snapshot,
             builder: (context, _, __) {
               if (filteredConversations.isEmpty) {
-                return const Center(child: Text('No open conversations'));
+                return const Center(child: Text('No conversations'));
               }
               return ListView.separated(
                 itemCount: filteredConversations.length,
@@ -339,63 +357,72 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
         onTap: () => _loadMessages(conv),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[900],
+              _userAvatar(conv.userId),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey[900],
+                                ),
                           ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    online ? 'online' : 'offline',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: online ? Colors.green[700] : Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (unread)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 5, right: 8),
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
                         ),
-                      ),
-                    ),
-                  Expanded(
-                    child: Text(
-                      preview,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: unread ? Colors.grey[900] : Colors.grey[700],
-                            fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
-                            height: 1.35,
+                        const SizedBox(width: 8),
+                        Text(
+                          online ? 'online' : 'offline',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: online ? Colors.green[700] : Colors.grey[600],
                           ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 6),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (unread)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 5, right: 8),
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        Expanded(
+                          child: Text(
+                            preview,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: unread ? Colors.grey[900] : Colors.grey[700],
+                                  fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+                                  height: 1.35,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -422,6 +449,8 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           title: Row(
             children: [
+              _userAvatar(conv.userId, radius: 16),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   _displayNameForUserId(conv.userId),
@@ -552,6 +581,7 @@ class _AdminReplyComposer extends StatefulWidget {
 }
 
 class _AdminReplyComposerState extends State<_AdminReplyComposer> {
+  static const int _maxAttachmentBytes = 30 * 1024 * 1024;
   final TextEditingController _controller = TextEditingController();
   bool _sending = false;
   PlatformFile? _attachment;
@@ -585,6 +615,13 @@ class _AdminReplyComposerState extends State<_AdminReplyComposer> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Attachment data not available')),
+      );
+      return;
+    }
+    if (file.bytes!.length > _maxAttachmentBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Attachment exceeds 30MB limit')),
       );
       return;
     }

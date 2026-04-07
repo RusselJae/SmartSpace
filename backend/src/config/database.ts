@@ -7,7 +7,7 @@ const normalizePem = (value?: string): string | undefined => {
   if (!value) return undefined;
 
   // Some platforms store PEM strings with literal "\n". Convert to real newlines.
-  return value.includes('\\n') ? value.replaceAll('\\n', '\n') : value;
+  return value.includes('\\n') ? value.replace('\\n', '\n') : value;
 };
 
 const createPoolOptions = (): PoolOptions => {

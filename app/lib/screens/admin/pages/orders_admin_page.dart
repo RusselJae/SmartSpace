@@ -1189,16 +1189,6 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
               ),
               const SizedBox(width: 12),
               FilledButton.icon(
-                onPressed: _showOrderHistory,
-                icon: const Icon(Icons.history, size: 18),
-                label: const Text('History'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF8D6E63),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
                 onPressed: _showMadeToOrderRequests,
                 icon: const Icon(Icons.design_services_outlined, size: 18),
                 label: const Text('Made-to-Order'),
@@ -1350,8 +1340,28 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                           if (pageCount > 1)
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                              child: Row(
+                              child: Column(
                                 children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.chevron_left),
+                                        onPressed: safePageIndex > 0
+                                            ? () => setState(() => _pageIndex = safePageIndex - 1)
+                                            : null,
+                                        tooltip: 'Previous page',
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.chevron_right),
+                                        onPressed: safePageIndex < pageCount - 1
+                                            ? () => setState(() => _pageIndex = safePageIndex + 1)
+                                            : null,
+                                        tooltip: 'Next page',
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
                                   Text(
                                     'Page ${safePageIndex + 1} of $pageCount',
                                     style: GoogleFonts.poppins(
@@ -1359,21 +1369,6 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                                       fontWeight: FontWeight.w500,
                                       color: Colors.black54,
                                     ),
-                                  ),
-                                  const Spacer(),
-                                  IconButton(
-                                    icon: const Icon(Icons.chevron_left),
-                                    onPressed: safePageIndex > 0
-                                        ? () => setState(() => _pageIndex = safePageIndex - 1)
-                                        : null,
-                                    tooltip: 'Previous page',
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.chevron_right),
-                                    onPressed: safePageIndex < pageCount - 1
-                                        ? () => setState(() => _pageIndex = safePageIndex + 1)
-                                        : null,
-                                    tooltip: 'Next page',
                                   ),
                                 ],
                               ),
@@ -1861,7 +1856,7 @@ class _OrderDetailsDialog extends StatelessWidget {
         value: '₱${order.totalAmount.toStringAsFixed(2)}',
       ),
       _DetailRow(
-        label: 'Payment method',
+        label: 'Mode of Payment',
         value: _paymentMethodLabel(order.shippingAddress['paymentMethod']?.toString()),
       ),
       _DetailRow(
@@ -1869,11 +1864,11 @@ class _OrderDetailsDialog extends StatelessWidget {
         value: order.shippingAddress['paymentPlan']?.toString() ?? '—',
       ),
       _DetailRow(
-        label: 'Order option',
+        label: 'Order Option',
         value: order.shippingAddress['orderOption']?.toString() ?? '—',
       ),
       _DetailRow(
-        label: 'Payment status',
+        label: 'Payment Status',
         value: order.shippingAddress['paymentStatus']?.toString() ?? '—',
       ),
       if (order.shippingAddress['estimatedDeliveryAt'] != null &&
@@ -1886,12 +1881,12 @@ class _OrderDetailsDialog extends StatelessWidget {
         ),
       if (parseShippingDouble(order.shippingAddress, 'downpayment') != null)
         _DetailRow(
-          label: 'Down payment (line)',
+          label: 'Down Payment (line)',
           value: '₱${parseShippingDouble(order.shippingAddress, 'downpayment')!.toStringAsFixed(2)}',
         ),
       if (parseShippingDouble(order.shippingAddress, 'remainingBalance') != null)
         _DetailRow(
-          label: 'Remaining balance',
+          label: 'Remaining Balance',
           value: '₱${parseShippingDouble(order.shippingAddress, 'remainingBalance')!.toStringAsFixed(2)}',
         ),
       if (parseFirstInstallmentPaidAt(order) != null)
@@ -1933,7 +1928,7 @@ class _OrderDetailsDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.sizeOf(context).width;
-    final maxDialogW = math.min(960.0, screenW - 24);
+    final maxDialogW = math.min(1040.0, screenW - 24);
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 28),
@@ -1943,7 +1938,7 @@ class _OrderDetailsDialog extends StatelessWidget {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: maxDialogW,
-          maxHeight: MediaQuery.of(context).size.height * 0.92,
+          maxHeight: MediaQuery.of(context).size.height * 0.95,
         ),
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -1956,16 +1951,19 @@ class _OrderDetailsDialog extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
               child: Row(
                 children: [
-                  Text(
-                    'Order Details',
-                    style: GoogleFonts.poppins(
-                      color: Colors.black,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      decoration: TextDecoration.none,
+                  const SizedBox(width: 40),
+                  Expanded(
+                    child: Text(
+                      'Order Details',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                        color: Colors.black,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.none,
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.of(context).pop(),
@@ -2650,6 +2648,7 @@ class _DetailRow extends StatelessWidget {
 
   final String label;
   final String value;
+  static const double _detailFontSize = 16;
 
   @override
   Widget build(BuildContext context) {
@@ -2662,10 +2661,10 @@ class _DetailRow extends StatelessWidget {
           SizedBox(
             width: 140,
             child: Text(
-              label,
+              '$label:',
               style: GoogleFonts.poppins(
-                color: Colors.black,
-                fontSize: 15,
+                color: Colors.grey[600],
+                fontSize: _detailFontSize,
                 fontWeight: FontWeight.w500,
                 decoration: TextDecoration.none,
               ),
@@ -2676,8 +2675,8 @@ class _DetailRow extends StatelessWidget {
               value.trim(),
               style: GoogleFonts.poppins(
                 color: Colors.black,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+                fontSize: _detailFontSize,
+                fontWeight: FontWeight.w400,
                 decoration: TextDecoration.none,
               ),
             ),

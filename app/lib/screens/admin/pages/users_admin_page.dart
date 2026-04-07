@@ -2,8 +2,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../models/address_entry.dart';
 import '../../../models/user.dart';
+import '../../../services/admin_support_inbox_navigation_service.dart';
 import '../../../services/mysql_database_service.dart';
+import '../admin_routes.dart';
 import '../widgets/admin_toolbar.dart';
 import '../../../widgets/toast.dart';
 
@@ -119,6 +122,18 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
     } catch (e) {
       if (!mounted) return;
       Toast.error(context, 'Failed to create user: $e');
+    }
+  }
+
+  Future<void> _openSupportForUser(User user) async {
+    try {
+      await _db.getOrCreateSupportConversation(user.id);
+      AdminSupportInboxNavigationService.instance.pendingUserId = user.id;
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed(AdminRoutes.support);
+    } catch (e) {
+      if (!mounted) return;
+      Toast.error(context, 'Failed to open support conversation: $e');
     }
   }
 
@@ -276,6 +291,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                                 return _UsersTableRow(
                                   user: user,
                                   onTap: () => _showUserDetails(user),
+                                  onMessageTap: () => _openSupportForUser(user),
                                 );
                               },
                             ),
@@ -285,15 +301,6 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                               child: Column(
                                 children: [
-                                  Text(
-                                    'Page ${safePageIndex + 1} of $pageCount',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black54,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
@@ -312,6 +319,15 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                                         tooltip: 'Next page',
                                       ),
                                     ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Page ${safePageIndex + 1} of $pageCount',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black54,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -351,10 +367,15 @@ class _UsersHeaderRow extends StatelessWidget {
 }
 
 class _UsersTableRow extends StatelessWidget {
-  const _UsersTableRow({required this.user, required this.onTap});
+  const _UsersTableRow({
+    required this.user,
+    required this.onTap,
+    required this.onMessageTap,
+  });
 
   final User user;
   final VoidCallback onTap;
+  final VoidCallback onMessageTap;
 
   @override
   Widget build(BuildContext context) {
@@ -391,9 +412,10 @@ class _UsersTableRow extends StatelessWidget {
               child: Text('${user.orderIds.length}'),
             ),
             const SizedBox(width: 8),
-            OutlinedButton(
-              onPressed: onTap,
-              child: const Text('More'),
+            IconButton(
+              onPressed: onMessageTap,
+              tooltip: 'Open support chat',
+              icon: const Icon(Icons.forum_outlined),
             ),
           ],
         ),
@@ -407,6 +429,21 @@ class _UserDetailsDialog extends StatelessWidget {
   const _UserDetailsDialog({required this.user});
 
   final User user;
+  static const double _detailFontSize = 16;
+
+  String _formatDefaultAddress(List<AddressEntry> addresses) {
+    if (addresses.isEmpty) return 'No addresses on file';
+    final selected = addresses.firstWhere(
+      (entry) => entry.isDefault,
+      orElse: () => addresses.first,
+    );
+    final parts = <String>[
+      selected.street.trim(),
+      selected.region.trim(),
+      selected.postalCode.trim(),
+    ].where((part) => part.isNotEmpty).toList();
+    return parts.isEmpty ? 'No addresses on file' : parts.join(', ');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -415,7 +452,7 @@ class _UserDetailsDialog extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
       ),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 780),
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.all(Radius.circular(24)),
@@ -425,23 +462,42 @@ class _UserDetailsDialog extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
-              child: Row(
+              child: Column(
                 children: [
-                  Text(
-                    'Customer Details',
-                    style: GoogleFonts.poppins(
-                      color: Colors.black,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      decoration: TextDecoration.none,
-                    ),
+                  Row(
+                    children: [
+                      const SizedBox(width: 40),
+                      Expanded(
+                        child: Text(
+                          'Customer Details',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(
+                            color: Colors.black,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
                   ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                  const SizedBox(height: 10),
+                  CircleAvatar(
+                    radius: 36,
+                    backgroundColor: Colors.grey[200],
+                    backgroundImage: (user.avatarUrl != null &&
+                            user.avatarUrl!.trim().isNotEmpty)
+                        ? NetworkImage(user.avatarUrl!.trim())
+                        : null,
+                    child: (user.avatarUrl == null || user.avatarUrl!.trim().isEmpty)
+                        ? Icon(Icons.person, size: 38, color: Colors.grey[600])
+                        : null,
                   ),
                 ],
               ),
@@ -451,119 +507,68 @@ class _UserDetailsDialog extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                 child: Column(
                   children: [
-                    _DetailRow(label: 'Name', value: user.fullName),
-                    _DetailRow(label: 'Email', value: user.email),
+                    _DetailRow(
+                      label: 'Name',
+                      value: user.fullName,
+                      fontSize: _detailFontSize,
+                    ),
+                    _DetailRow(
+                      label: 'Email',
+                      value: user.email,
+                      fontSize: _detailFontSize,
+                    ),
                     if (user.username.isNotEmpty)
-                      _DetailRow(label: 'Username', value: user.username),
+                      _DetailRow(
+                        label: 'Username',
+                        value: user.username,
+                        fontSize: _detailFontSize,
+                      ),
                     if (user.phoneNumber != null)
-                      _DetailRow(label: 'Phone', value: user.phoneNumber!),
+                      _DetailRow(
+                        label: 'Phone',
+                        value: user.phoneNumber!,
+                        fontSize: _detailFontSize,
+                      ),
                     if (user.gender != null)
                       _DetailRow(
                         label: 'Gender',
                         value: user.gender![0].toUpperCase() + user.gender!.substring(1),
+                        fontSize: _detailFontSize,
                       ),
                     _DetailRow(
                       label: 'Joined',
                       value: user.createdAt.toLocal().toString().substring(0, 19),
+                      fontSize: _detailFontSize,
                     ),
                     _DetailRow(
                       label: 'Last Login',
                       value: user.lastLoginAt.toLocal().toString().substring(0, 19),
+                      fontSize: _detailFontSize,
                     ),
                     if (user.preferredStyle.isNotEmpty)
-                      _DetailRow(label: 'Preferred Style', value: user.preferredStyle),
+                      _DetailRow(
+                        label: 'Preferred Style',
+                        value: user.preferredStyle,
+                        fontSize: _detailFontSize,
+                      ),
                     if (user.minBudget > 0 || user.maxBudget > 0)
                       _DetailRow(
                         label: 'Budget Range',
                         value: '₱${user.minBudget.toStringAsFixed(0)} - ₱${user.maxBudget.toStringAsFixed(0)}',
+                        fontSize: _detailFontSize,
                       ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Addresses',
-                      style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    if (user.addresses.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'No addresses on file',
-                          style: GoogleFonts.poppins(
-                            color: Colors.grey[600],
-                            fontSize: 14,
-                            fontStyle: FontStyle.italic,
-                            decoration: TextDecoration.none,
-                          ),
-                        ),
-                      )
-                    else
-                      ...user.addresses.where((a) => a.trim().isNotEmpty).map((address) => Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[50],
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.grey[200]!),
-                              ),
-                              child: Text(
-                                address.trim(),
-                                style: GoogleFonts.poppins(
-                                  color: Colors.black,
-                                  fontSize: 15,
-                                  decoration: TextDecoration.none,
-                                ),
-                              ),
-                            ),
-                          )),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Orders',
-                      style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${user.orderIds.length} ${user.orderIds.length == 1 ? 'order' : 'orders'}',
-                      style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 15,
-                        fontWeight: FontWeight.normal,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Likes',
-                      style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${user.wishlistProductIds.length} ${user.wishlistProductIds.length == 1 ? 'item' : 'items'}',
-                      style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 15,
-                        fontWeight: FontWeight.normal,
-                        decoration: TextDecoration.none,
-                      ),
+                    FutureBuilder<List<AddressEntry>>(
+                      future: MySQLDatabaseService().getAddresses(user.id),
+                      builder: (context, snapshot) {
+                        final addressValue = snapshot.hasData
+                            ? _formatDefaultAddress(snapshot.data!)
+                            : 'Loading...';
+                        return _DetailRow(
+                          label: 'Address',
+                          value: addressValue,
+                          fontSize: _detailFontSize,
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -577,10 +582,15 @@ class _UserDetailsDialog extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
+  const _DetailRow({
+    required this.label,
+    required this.value,
+    this.fontSize = 16,
+  });
 
   final String label;
   final String value;
+  final double fontSize;
 
   @override
   Widget build(BuildContext context) {
@@ -593,10 +603,10 @@ class _DetailRow extends StatelessWidget {
           SizedBox(
             width: 120,
             child: Text(
-              label,
+              '$label:',
               style: GoogleFonts.poppins(
-                color: Colors.black,
-                fontSize: 15,
+                color: Colors.grey[600],
+                fontSize: fontSize,
                 fontWeight: FontWeight.w500,
                 decoration: TextDecoration.none,
               ),
@@ -607,8 +617,8 @@ class _DetailRow extends StatelessWidget {
               value.trim(),
               style: GoogleFonts.poppins(
                 color: Colors.black,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+                fontSize: fontSize,
+                fontWeight: FontWeight.w400,
                 decoration: TextDecoration.none,
               ),
             ),

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'package:smartspace_ar/screens/admin/admin_shell.dart';
 import 'package:smartspace_ar/services/admin_auth_service.dart';
+import 'package:smartspace_ar/utils/admin_post_login_path.dart';
 import 'package:smartspace_ar/widgets/toast.dart';
 
 import '../admin_theme.dart';
@@ -32,8 +32,8 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     await adminAuth.initialize();
     if (!mounted) return;
     if (adminAuth.isAuthenticated) {
-      // If an admin session already exists, go straight to the shell.
-      Navigator.of(context).pushReplacementNamed(AdminShell.route);
+      // Resume the tab from `/#/admin/...` on web when the hash targets a panel.
+      Navigator.of(context).pushReplacementNamed(adminPostLoginTargetPath());
     } else {
       setState(() {
         _checkingSession = false;
@@ -71,25 +71,36 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Logo and branding section
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: AdminPalette.brown,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AdminPalette.brown.withValues(alpha: 0.3),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
+                      // Logo and branding — same asset as in-app admin chrome.
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          width: 80,
+                          height: 80,
+                          decoration: BoxDecoration(
+                            boxShadow: [
+                              BoxShadow(
+                                color: AdminPalette.brown.withValues(alpha: 0.22),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Image.asset(
+                            'assets/images/logo.jpg',
+                            width: 80,
+                            height: 80,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              color: AdminPalette.brown,
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.storefront_rounded,
+                                color: Colors.white,
+                                size: 40,
+                              ),
                             ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.view_in_ar_rounded,
-                          color: Colors.white,
-                          size: 40,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 32),
@@ -246,7 +257,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         setState(() => isLoading = false);
         return;
       }
-      Navigator.of(context).pushReplacementNamed(AdminShell.route);
+      Navigator.of(context).pushReplacementNamed(adminPostLoginTargetPath());
     } catch (error) {
       if (!mounted) return;
       Toast.error(context, 'Failed to sign in: $error');

@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
-/// Minimal, typography-first loading screen.
-/// Keeps the same 3-second duration + navigation/callback behavior.
+import 'app_brand_logo.dart';
+
+/// Transitional loading after login, logout, sign-out, etc. Logo + optional message.
+/// Not used on cold start (see `SplashScreen`). Same 3-second duration as before.
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({
     super.key,
@@ -17,7 +18,7 @@ class LoadingScreen extends StatefulWidget {
   /// Callback when loading completes (after 3 seconds)
   final VoidCallback? onComplete;
 
-  /// Optional message to display below the app name
+  /// Optional line shown under the logo (e.g. "Signing out…") — not used on cold start.
   final String? message;
 
   /// Optional route name to navigate to after loading
@@ -40,7 +41,6 @@ class _LoadingScreenState extends State<LoadingScreen>
   void initState() {
     super.initState();
 
-    // Subtle motion only: fade + gentle slide.
     _controller = AnimationController(
       duration: const Duration(milliseconds: 900),
       vsync: this,
@@ -65,21 +65,17 @@ class _LoadingScreenState extends State<LoadingScreen>
 
     _controller.forward();
 
-    // Wait 3 seconds then navigate or call onComplete
     Timer(const Duration(seconds: 3), () {
       if (!mounted) return;
-      
+
       if (widget.nextRoute != null) {
-        // Navigate to route
         Navigator.of(context, rootNavigator: true)
             .pushReplacementNamed(widget.nextRoute!);
       } else if (widget.nextBuilder != null) {
-        // Navigate to widget - use CupertinoPageRoute for Cupertino-style navigation
         Navigator.of(context, rootNavigator: true).pushReplacement(
           CupertinoPageRoute(builder: widget.nextBuilder!),
         );
       } else if (widget.onComplete != null) {
-        // Call callback
         widget.onComplete!();
       }
     });
@@ -93,86 +89,64 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Brown color palette matching the app theme
-    const Color kBrownDark = Color(0xFF6D4C41);
-    const Color kSurface = Color(0xFFFFFBF7);
+    const Color kCaption = Color(0xFF6D4C41);
 
     return Scaffold(
-      backgroundColor: kSurface,
-      body: SafeArea(
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, child) {
-            return FadeTransition(
-              opacity: _fadeAnimation,
-              child: SlideTransition(
-                position: _slideAnimation,
-                child: child,
-              ),
-            );
-          },
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 280),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'WOOD HOME',
-                    textAlign: TextAlign.left,
-                    style: GoogleFonts.poppins(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                      height: 0.8,
-                      color: kBrownDark,
-                      letterSpacing: 1.5,
+      backgroundColor: Colors.white,
+      body: ColoredBox(
+        color: Colors.white,
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final shortest = (constraints.maxWidth < constraints.maxHeight)
+                  ? constraints.maxWidth
+                  : constraints.maxHeight;
+
+              return AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  return FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: SlideTransition(
+                      position: _slideAnimation,
+                      child: child,
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'FURNITURE',
-                    textAlign: TextAlign.left,
-                    style: GoogleFonts.poppins(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      height: .5,
-                      color: kBrownDark.withValues(alpha: 0.78),
-                      letterSpacing: 1.5,
+                  );
+                },
+                child: Stack(
+                  fit: StackFit.expand,
+                  alignment: Alignment.center,
+                  children: [
+                    // Logo stays visually centered in the remaining space.
+                    Center(
+                      child: AppBrandLogo(layoutShortestSide: shortest),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'TRADING',
-                    textAlign: TextAlign.left,
-                    style: GoogleFonts.poppins(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      height: .5,
-                      color: kBrownDark.withValues(alpha: 0.78),
-                      letterSpacing: 1.5,
-                    ),
-                  ),
-                  if (widget.message != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      widget.message!,
-                      textAlign: TextAlign.left,
-                      style: GoogleFonts.poppins(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w400,
-                        height: 1.35,
-                        color: kBrownDark.withValues(alpha: 0.55),
+                    // Status copy anchored to the bottom (sign-out / welcome lines).
+                    if (widget.message != null)
+                      Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+                          child: Text(
+                            widget.message!,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyLarge
+                                ?.copyWith(
+                                  color: kCaption.withValues(alpha: 0.75),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                          ),
+                        ),
                       ),
-                    ),
                   ],
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),
     );
   }
 }
-

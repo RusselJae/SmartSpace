@@ -372,82 +372,193 @@ class _FaqFormDialogState extends State<_FaqFormDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.isEdit ? 'Edit FAQ' : 'Add FAQ'),
-      content: SizedBox(
-        width: 400,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextFormField(
-                  controller: _questionController,
-                  decoration: const InputDecoration(
-                    labelText: 'Question',
-                    hintText: 'e.g. Where is my order?',
-                  ),
-                  maxLines: 2,
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Required' : null,
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 860, maxHeight: 640),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F8F8),
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
                 ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _answerController,
-                  decoration: const InputDecoration(
-                    labelText: 'Answer',
-                    hintText: 'Response shown when user taps this FAQ',
-                  ),
-                  maxLines: 4,
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Required' : null,
-                ),
-                const SizedBox(height: 16),
-                Row(
+                child: Row(
                   children: [
-                    Text(
-                      'Sort order:',
-                      style: GoogleFonts.poppins(fontSize: 14),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () => Navigator.of(context).pop(),
+                      tooltip: 'Close',
                     ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 80,
-                      child: TextFormField(
-                        controller: _sortOrderController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          hintText: '0',
-                        ),
+                    Expanded(
+                      child: Text(
+                        widget.isEdit ? 'Edit FAQ' : 'Add FAQ',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextFormField(
+                          controller: _questionController,
+                          decoration: InputDecoration(
+                            labelText: 'Question',
+                            hintText: 'e.g. Where is my order?',
+                            filled: true,
+                            fillColor: const Color(0xFFF8F8F8),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: CupertinoColors.separator.withValues(alpha: 0.1),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: CupertinoColors.separator.withValues(alpha: 0.1),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                            ),
+                          ),
+                          maxLines: 2,
+                          validator: (v) =>
+                              (v == null || v.trim().isEmpty) ? 'Fill this field' : null,
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _answerController,
+                          decoration: InputDecoration(
+                            labelText: 'Answer',
+                            hintText: 'Response shown when user taps this FAQ',
+                            filled: true,
+                            fillColor: const Color(0xFFF8F8F8),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: CupertinoColors.separator.withValues(alpha: 0.1),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: CupertinoColors.separator.withValues(alpha: 0.1),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                            ),
+                          ),
+                          maxLines: 8,
+                          validator: (v) =>
+                              (v == null || v.trim().isEmpty) ? 'Fill this field' : null,
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Text(
+                              'Sort order:',
+                              style: GoogleFonts.poppins(fontSize: 14),
+                            ),
+                            const SizedBox(width: 12),
+                            SizedBox(
+                              width: 100,
+                              child: TextFormField(
+                                controller: _sortOrderController,
+                                keyboardType: TextInputType.number,
+                                decoration: InputDecoration(
+                                  hintText: '0',
+                                  filled: true,
+                                  fillColor: const Color(0xFFF8F8F8),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide(
+                                      color: CupertinoColors.separator.withValues(alpha: 0.1),
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide(
+                                      color: CupertinoColors.separator.withValues(alpha: 0.1),
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: () {
+                        if (!_formKey.currentState!.validate()) return;
+                        final sortOrder = int.tryParse(_sortOrderController.text.trim()) ?? 0;
+                        Navigator.of(context).pop(_FaqFormData(
+                          question: _questionController.text.trim(),
+                          answer: _answerController.text.trim(),
+                          sortOrder: sortOrder,
+                        ));
+                      },
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
+                      child: const Text('Save'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            final sortOrder = int.tryParse(_sortOrderController.text.trim()) ?? 0;
-            Navigator.of(context).pop(_FaqFormData(
-              question: _questionController.text.trim(),
-              answer: _answerController.text.trim(),
-              sortOrder: sortOrder,
-            ));
-          },
-          style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
-          child: const Text('Save'),
-        ),
-      ],
     );
   }
 }

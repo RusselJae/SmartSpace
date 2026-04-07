@@ -1219,7 +1219,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                             hint: 'Wood Home Furniture Trading',
                             validator: (value) {
                               if (value == null || value.isEmpty) {
-                                return 'Required';
+                                return 'Fill this field';
                               }
                               return null;
                             },

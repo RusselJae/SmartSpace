@@ -4,14 +4,24 @@ import android.content.Intent
 import com.google.ar.core.ArCoreApk
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    companion object {
+        /** Stable cache key shared with [ArEditorActivity] for MethodChannel access. */
+        const val MAIN_ENGINE_ID = "smartspace_main"
+    }
+
     private val supportChannelName = "com.smartspace/ar_support"
     private val editorChannelName = "com.smartspace/ar_editor"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // Keep a handle so native-only screens (e.g. [ArEditorActivity]) can ask
+        // Flutter to navigate without spinning up a second engine.
+        FlutterEngineCache.getInstance().put(MAIN_ENGINE_ID, flutterEngine)
 
         // --------------------------------------------------------------------
         // Channel 1: AR support / availability checks (existing behavior).

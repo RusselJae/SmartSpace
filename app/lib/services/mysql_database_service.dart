@@ -23,6 +23,7 @@ import '../models/user.dart';
 /// Service that now talks to the Node.js API and falls back to mock data if needed.
 class MySQLDatabaseService {
   static final MySQLDatabaseService _instance = MySQLDatabaseService._internal();
+  static const int _maxSupportAttachmentBytes = 30 * 1024 * 1024;
   factory MySQLDatabaseService() => _instance;
   MySQLDatabaseService._internal();
 
@@ -291,6 +292,7 @@ class MySQLDatabaseService {
     required String material,
     required String color,
     required String modelPath,
+    List<Map<String, dynamic>> components = const [],
     double? realWidthM,
     double? realHeightM,
     double? realDepthM,
@@ -310,6 +312,7 @@ class MySQLDatabaseService {
       'material': material,
       'color': color,
       'modelPath': modelPath,
+      'components': components,
       if (realWidthM != null) 'realWidthM': realWidthM,
       if (realHeightM != null) 'realHeightM': realHeightM,
       if (realDepthM != null) 'realDepthM': realDepthM,
@@ -422,6 +425,7 @@ class MySQLDatabaseService {
     required String material,
     required String color,
     required String modelPath,
+    List<ProductSetComponent> components = const [],
     double? realWidthM,
     double? realHeightM,
     double? realDepthM,
@@ -446,6 +450,7 @@ class MySQLDatabaseService {
         material: material,
         color: color,
         modelPath: modelPath,
+        components: List<ProductSetComponent>.unmodifiable(components),
         realWidthMeters: realWidthM,
         realHeightMeters: realHeightM,
         realDepthMeters: realDepthM,
@@ -474,6 +479,7 @@ class MySQLDatabaseService {
       material: material,
       color: color,
       modelPath: modelPath,
+      components: components.map((c) => c.toJson()).toList(growable: false),
       realWidthM: realWidthM,
       realHeightM: realHeightM,
       realDepthM: realDepthM,
@@ -505,6 +511,7 @@ class MySQLDatabaseService {
       material: product.material,
       color: product.color,
       modelPath: product.modelPath,
+      components: product.components.map((c) => c.toJson()).toList(growable: false),
       realWidthM: product.realWidthMeters,
       realHeightM: product.realHeightMeters,
       realDepthM: product.realDepthMeters,
@@ -1743,6 +1750,9 @@ class MySQLDatabaseService {
     required String fileName,
     required String mimeType,
   }) async {
+    if (attachmentBytes.length > _maxSupportAttachmentBytes) {
+      throw Exception('Attachment exceeds 30MB limit');
+    }
     if (!_useApi) {
       return SupportMessage(
         id: _generateId('sm'),
@@ -1879,6 +1889,9 @@ class MySQLDatabaseService {
     required String fileName,
     required String mimeType,
   }) async {
+    if (attachmentBytes.length > _maxSupportAttachmentBytes) {
+      throw Exception('Attachment exceeds 30MB limit');
+    }
     if (!_useApi) {
       return SupportMessage(
         id: _generateId('sm'),

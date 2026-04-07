@@ -393,9 +393,9 @@ Widget _requiredLabel(String label) {
         ),
       ),
       Text(
-        '* Required',
+        '*',
         style: GoogleFonts.poppins(
-          fontSize: 11.5,
+          fontSize: 13,
           fontWeight: FontWeight.w700,
           color: CupertinoColors.systemRed,
           decoration: TextDecoration.none,
@@ -466,9 +466,10 @@ class _CupertinoField extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              'Required',
+              '*',
               style: GoogleFonts.poppins(
                 fontSize: 12,
+                fontWeight: FontWeight.w700,
                 color: CupertinoColors.systemRed,
                 decoration: TextDecoration.none,
               ),
@@ -505,9 +506,9 @@ class _SectionTitle extends StatelessWidget {
         if (isRequired) ...[
           const SizedBox(width: 4),
           Text(
-            '* Required',
+            '*',
             style: GoogleFonts.poppins(
-              fontSize: 11.5,
+              fontSize: 13,
               fontWeight: FontWeight.w700,
               color: CupertinoColors.systemRed,
               decoration: TextDecoration.none,
@@ -587,7 +588,7 @@ class _DropdownField extends StatelessWidget {
                 width: 1.4,
               ),
             ),
-            errorText: showError ? 'Required' : null,
+            errorText: showError ? '*' : null,
             errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
           ),
           icon: const Icon(CupertinoIcons.chevron_down, size: 16, color: CupertinoColors.systemGrey),

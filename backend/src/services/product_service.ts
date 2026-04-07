@@ -1,6 +1,6 @@
 import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
-import { Product } from '../models/product';
+import { Product, ProductSetComponent } from '../models/product';
 import { generateId } from '../utils/id_generator';
 import { parseBooleanFlag, parseStringArray } from '../utils/parser';
 
@@ -14,6 +14,7 @@ export type ProductInput = {
   readonly color: string;
   readonly modelPath: string;
   readonly imageUrls: string[];
+  readonly components?: ProductSetComponent[];
   readonly realWidthM?: number | null;
   readonly realHeightM?: number | null;
   readonly realDepthM?: number | null;
@@ -37,6 +38,7 @@ type ProductRow = RowDataPacket & {
   readonly color: string | null;
   readonly model_path: string | null;
   readonly image_urls: string | null;
+  readonly components_json: string | null;
   readonly real_width_m: number | null;
   readonly real_height_m: number | null;
   readonly real_depth_m: number | null;
@@ -78,6 +80,40 @@ const mapProduct = (row: ProductRowWithOrderCount): Product => {
   const createdAt = row.created_at ?? new Date();
   const orderCount = Number(row.order_count ?? 0);
   
+  const components = (() => {
+    if (!row.components_json || row.components_json.trim().length === 0) {
+      return [] as ProductSetComponent[];
+    }
+    try {
+      const parsed = JSON.parse(row.components_json);
+      if (!Array.isArray(parsed)) return [] as ProductSetComponent[];
+      return parsed
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => {
+          const record = item as Record<string, unknown>;
+          return {
+            name: String(record.name ?? ''),
+            quantity: Number(record.quantity ?? 0),
+            widthM: Number(record.widthM ?? 0),
+            heightM: Number(record.heightM ?? 0),
+            depthM: Number(record.depthM ?? 0),
+            modelPath: record.modelPath != null ? String(record.modelPath) : undefined,
+            notes: record.notes != null ? String(record.notes) : undefined,
+          };
+        })
+        .filter(
+          (item) =>
+            item.name.trim().length > 0 &&
+            item.quantity > 0 &&
+            item.widthM > 0 &&
+            item.heightM > 0 &&
+            item.depthM > 0,
+        );
+    } catch {
+      return [] as ProductSetComponent[];
+    }
+  })();
+
   return {
     id: row.id,
     name: row.name,
@@ -89,6 +125,7 @@ const mapProduct = (row: ProductRowWithOrderCount): Product => {
     material: row.material ?? '',
     color: row.color ?? '',
     modelPath: row.model_path ?? 'assets/chair.glb',
+    components,
     // Dimension + scale fields may come back as strings from MySQL; normalize
     realWidthM: row.real_width_m != null ? Number(row.real_width_m) : null,
     realHeightM: row.real_height_m != null ? Number(row.real_height_m) : null,
@@ -144,6 +181,9 @@ const ensureProductSchema = async (): Promise<void> => {
     await pool.query(`ALTER TABLE products ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`CREATE INDEX idx_products_is_archived ON products (is_archived)`);
   }
+  if (!(await columnExists('products', 'components_json'))) {
+    await pool.query(`ALTER TABLE products ADD COLUMN components_json JSON NULL AFTER image_urls`);
+  }
 
   _productSchemaEnsured = true;
 };
@@ -182,6 +222,7 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
   await ensureProductSchema();
   const pool = getPool();
   const inventoryQty = input.inventoryQty ?? 0;
+  const components = input.components ?? [];
   const realWidthM = input.realWidthM ?? null;
   const realHeightM = input.realHeightM ?? null;
   const realDepthM = input.realDepthM ?? null;
@@ -198,8 +239,8 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
     INSERT INTO products (
       id, name, description, price, category, style, material, color,
       size, model_path, real_width_m, real_height_m, real_depth_m, model_base_scale,
-      image_urls, rating, review_count, inventory_qty, is_popular, is_new_arrival, in_stock, is_archived
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      image_urls, components_json, rating, review_count, inventory_qty, is_popular, is_new_arrival, in_stock, is_archived
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       productId,
@@ -219,6 +260,7 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
       realDepthM,
       modelBaseScale,
       JSON.stringify(input.imageUrls),
+      JSON.stringify(components),
       0, // rating
       0, // review_count
       inventoryQty,
@@ -242,6 +284,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
   }
 
   const inventoryQty = input.inventoryQty ?? existing.inventoryQty;
+  const components = input.components ?? existing.components;
   const isArchived = input.isArchived ?? existing.isArchived;
 
   // Note: isPopular and isNewArrival are calculated dynamically, so we don't update them
@@ -252,7 +295,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
     UPDATE products SET
       name = ?, description = ?, price = ?, category = ?, style = ?, material = ?,
       color = ?, model_path = ?, real_width_m = ?, real_height_m = ?, real_depth_m = ?, model_base_scale = ?,
-      image_urls = ?, inventory_qty = ?, in_stock = ?, is_archived = ?
+      image_urls = ?, components_json = ?, inventory_qty = ?, in_stock = ?, is_archived = ?
     WHERE id = ?
   `,
     [
@@ -269,6 +312,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
       input.realDepthM ?? existing.realDepthM,
       input.modelBaseScale ?? existing.modelBaseScale,
       JSON.stringify(input.imageUrls),
+      JSON.stringify(components),
       inventoryQty,
       input.inStock ? 1 : 0,
       isArchived ? 1 : 0,

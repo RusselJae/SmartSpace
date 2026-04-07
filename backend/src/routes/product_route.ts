@@ -9,6 +9,16 @@ import {
 } from '../services/product_service';
 import { asyncHandler } from '../utils/async_handler';
 
+const productComponentSchema = z.object({
+  name: z.string().min(1),
+  quantity: z.coerce.number().int().positive(),
+  widthM: z.coerce.number().positive(),
+  heightM: z.coerce.number().positive(),
+  depthM: z.coerce.number().positive(),
+  modelPath: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 const productSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(''),
@@ -18,6 +28,7 @@ const productSchema = z.object({
   material: z.string().default(''),
   color: z.string().default(''),
   modelPath: z.string().default('assets/chair.glb'),
+  components: z.array(productComponentSchema).default([]),
   realWidthM: z.coerce.number().nonnegative().optional(),
   realHeightM: z.coerce.number().nonnegative().optional(),
   realDepthM: z.coerce.number().nonnegative().optional(),

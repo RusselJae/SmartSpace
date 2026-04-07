@@ -11,6 +11,7 @@ import '../widgets/admin_toolbar.dart';
 import '../../../services/backend_storage_service.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/model_path_helper.dart';
+import '../../../widgets/cached_model_src_loader.dart';
 
 class ProductsAdminPage extends StatefulWidget {
   const ProductsAdminPage({super.key});
@@ -142,6 +143,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
         material: data.material,
         color: data.color,
         modelPath: data.modelPath,
+        components: data.components,
         realWidthM: data.realWidthM,
         realHeightM: data.realHeightM,
         realDepthM: data.realDepthM,
@@ -183,6 +185,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
           material: data.material,
           color: data.color,
           modelPath: data.modelPath,
+          components: data.components,
           realWidthMeters: data.realWidthM,
           realHeightMeters: data.realHeightM,
           realDepthMeters: data.realDepthM,
@@ -410,15 +413,6 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                               child: Column(
                                 children: [
-                                  Text(
-                                    'Page ${safePageIndex + 1} of $pageCount',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black54,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
@@ -437,6 +431,15 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                                         tooltip: 'Next page',
                                       ),
                                     ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Page ${safePageIndex + 1} of $pageCount',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black54,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -514,19 +517,23 @@ class _ProductRow extends StatelessWidget {
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: product.modelPath.isNotEmpty
-                      ? ModelViewer(
-                          key: ValueKey('${product.id}_admin_preview'),
-                          backgroundColor: Colors.transparent,
-                          src: ModelPathHelper.normalize(product.modelPath),
-                          alt: 'Preview of ${product.name}',
-                          ar: false,
-                          environmentImage: 'neutral',
-                          exposure: 1.35,
-                          shadowIntensity: 0.18,
-                          autoRotate: false,
-                          cameraControls: false,
-                          disableZoom: true,
-                          interactionPrompt: InteractionPrompt.none,
+                      ? CachedModelSrcLoader(
+                          sourceUrl: ModelPathHelper.normalize(product.modelPath),
+                          placeholder: const SizedBox.shrink(),
+                          builder: (context, resolvedSrc) => ModelViewer(
+                            key: ValueKey('${product.id}_admin_preview'),
+                            backgroundColor: Colors.transparent,
+                            src: resolvedSrc,
+                            alt: 'Preview of ${product.name}',
+                            ar: false,
+                            environmentImage: 'neutral',
+                            exposure: 1.35,
+                            shadowIntensity: 0.18,
+                            autoRotate: false,
+                            cameraControls: false,
+                            disableZoom: true,
+                            interactionPrompt: InteractionPrompt.none,
+                          ),
                         )
                       : product.imageUrls.isNotEmpty
                           ? Image.network(
@@ -666,6 +673,7 @@ class _ProductFormData {
     required this.realDepthM,
     required this.modelBaseScale,
     required this.modelPath,
+    required this.components,
     required this.imageUrls,
     required this.inventoryQty,
     required this.inStock,
@@ -683,6 +691,7 @@ class _ProductFormData {
   final double? realDepthM;
   final double modelBaseScale;
   final String modelPath;
+  final List<ProductSetComponent> components;
   final List<String> imageUrls;
   final int inventoryQty;
   final bool inStock;
@@ -709,6 +718,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _modelPath;
   late final List<String> _imageUrls;
   late final TextEditingController _inventoryQty;
+  late final List<_SetComponentDraft> _componentDrafts;
   
   // Dropdown selected values
   String? _selectedCategory;
@@ -797,6 +807,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _realDepthM = TextEditingController(text: product?.realDepthMeters?.toStringAsFixed(3) ?? '');
     _modelBaseScale = TextEditingController(text: product?.modelBaseScale.toStringAsFixed(2) ?? '1.00');
     _modelPath = TextEditingController(text: product?.modelPath ?? '');
+    _componentDrafts = (product?.components ?? const <ProductSetComponent>[])
+        .map(_SetComponentDraft.fromComponent)
+        .toList(growable: true);
     _imageUrls = List<String>.from(product?.imageUrls ?? []);
     _inventoryQty = TextEditingController(text: product?.inventoryQty.toString() ?? '0');
     _inStock = product?.inStock ?? true;
@@ -857,6 +870,224 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         selection: TextSelection.collapsed(offset: 0),
       );
     }
+  }
+
+  void _addComponentDraft() {
+    setState(() {
+      _componentDrafts.add(_SetComponentDraft.empty());
+    });
+  }
+
+  void _removeComponentDraft(int index) {
+    if (index < 0 || index >= _componentDrafts.length) return;
+    setState(() {
+      final draft = _componentDrafts.removeAt(index);
+      draft.dispose();
+    });
+  }
+
+  void _duplicateComponentDraft(int index) {
+    if (index < 0 || index >= _componentDrafts.length) return;
+    setState(() {
+      final source = _componentDrafts[index];
+      _componentDrafts.insert(index + 1, source.copy());
+    });
+  }
+
+  Widget _buildSetComponentsEditor() {
+    final hasError = (_fieldErrors['components'] ?? '').isNotEmpty;
+    final totalPieces = _componentDrafts.fold<int>(0, (sum, draft) {
+      final qty = int.tryParse(draft.quantity.text.trim()) ?? 0;
+      return sum + (qty > 0 ? qty : 0);
+    });
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Set Items (optional)',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF6D4C41),
+                    ),
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: _addComponentDraft,
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Add Item'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Add one row per piece in the set (e.g., table + chairs).',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+          ),
+          const SizedBox(height: 8),
+          if (_componentDrafts.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F8F8),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Text(
+                'No set items added. Single-piece dimensions above will be used.',
+                style: TextStyle(color: Colors.grey.shade700),
+              ),
+            ),
+          if (_componentDrafts.isNotEmpty)
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              buildDefaultDragHandles: false,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _componentDrafts.length,
+              onReorder: (oldIndex, newIndex) {
+                setState(() {
+                  if (newIndex > oldIndex) newIndex -= 1;
+                  final item = _componentDrafts.removeAt(oldIndex);
+                  _componentDrafts.insert(newIndex, item);
+                });
+              },
+              itemBuilder: (context, index) {
+                final draft = _componentDrafts[index];
+                return Container(
+                  key: ValueKey(draft),
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.grey.shade300),
+                    color: Colors.white,
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          ReorderableDragStartListener(
+                            index: index,
+                            child: const Icon(Icons.drag_indicator, color: Colors.grey),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: TextField(
+                              controller: draft.name,
+                              decoration: const InputDecoration(
+                                labelText: 'Item name',
+                                filled: true,
+                                fillColor: Color(0xFFF8F8F8),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 120,
+                            child: TextField(
+                              controller: draft.quantity,
+                              keyboardType: TextInputType.number,
+                              onChanged: (_) => setState(() {}),
+                              decoration: const InputDecoration(
+                                labelText: 'Qty',
+                                filled: true,
+                                fillColor: Color(0xFFF8F8F8),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: () => _duplicateComponentDraft(index),
+                            tooltip: 'Duplicate item',
+                            icon: const Icon(Icons.copy_outlined),
+                          ),
+                          IconButton(
+                            onPressed: () => _removeComponentDraft(index),
+                            tooltip: 'Remove item',
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: draft.widthM,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Width (m)',
+                                filled: true,
+                                fillColor: Color(0xFFF8F8F8),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: draft.heightM,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Height (m)',
+                                filled: true,
+                                fillColor: Color(0xFFF8F8F8),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: draft.depthM,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Depth (m)',
+                                filled: true,
+                                fillColor: Color(0xFFF8F8F8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          if (_componentDrafts.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Total pieces: $totalPieces',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF6D4C41),
+                      ),
+                ),
+              ),
+            ),
+          if (hasError)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                _fieldErrors['components']!,
+                style: const TextStyle(
+                  color: CupertinoColors.systemRed,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   /// Uploads product images to the backend server
@@ -1069,6 +1300,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _realDepthM.dispose();
     _modelBaseScale.dispose();
     _modelPath.dispose();
+    for (final draft in _componentDrafts) {
+      draft.dispose();
+    }
     _inventoryQty.dispose();
     super.dispose();
   }
@@ -1084,21 +1318,63 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     final double? depthM = double.tryParse(_realDepthM.text.trim().replaceAll(',', '.'));
     final double baseScale =
         double.tryParse(_modelBaseScale.text.trim().replaceAll(',', '.')) ?? 1.0;
+    final parsedComponents = <ProductSetComponent>[];
 
-    if (_name.text.trim().isEmpty) _fieldErrors['name'] = 'Required';
-    if (_description.text.trim().isEmpty) _fieldErrors['description'] = 'Required';
+    if (_name.text.trim().isEmpty) _fieldErrors['name'] = 'Fill this field';
+    if (_description.text.trim().isEmpty) _fieldErrors['description'] = 'Fill this field';
     if (parsedPrice == null || parsedPrice <= 0) _fieldErrors['price'] = 'Enter a valid price';
-    if (_selectedCategory == null || _selectedCategory!.isEmpty) _fieldErrors['category'] = 'Required';
-    if (_selectedStyle == null || _selectedStyle!.isEmpty) _fieldErrors['style'] = 'Required';
-    if (_selectedMaterial == null || _selectedMaterial!.isEmpty) _fieldErrors['material'] = 'Required';
-    if (_selectedColor == null || _selectedColor!.isEmpty) _fieldErrors['color'] = 'Required';
-    if (widthM == null || widthM <= 0) _fieldErrors['width'] = 'Required, must be > 0';
-    if (heightM == null || heightM <= 0) _fieldErrors['height'] = 'Required, must be > 0';
-    if (depthM == null || depthM <= 0) _fieldErrors['depth'] = 'Required, must be > 0';
-    if (baseScale <= 0) _fieldErrors['modelBaseScale'] = 'Required, must be > 0';
-    if (_modelPath.text.trim().isEmpty) _fieldErrors['modelPath'] = 'Required';
-    if (parsedInventoryQty == null || parsedInventoryQty < 0) _fieldErrors['inventory'] = 'Required (0 or greater)';
-    if (_imageUrls.isEmpty) _fieldErrors['images'] = 'At least one image required';
+    if (_selectedCategory == null || _selectedCategory!.isEmpty) _fieldErrors['category'] = 'Choose a category';
+    if (_selectedStyle == null || _selectedStyle!.isEmpty) _fieldErrors['style'] = 'Choose a style';
+    if (_selectedMaterial == null || _selectedMaterial!.isEmpty) _fieldErrors['material'] = 'Choose a material';
+    if (_selectedColor == null || _selectedColor!.isEmpty) _fieldErrors['color'] = 'Choose a color';
+    if (widthM == null || widthM <= 0) _fieldErrors['width'] = 'Must be greater than 0';
+    if (heightM == null || heightM <= 0) _fieldErrors['height'] = 'Must be greater than 0';
+    if (depthM == null || depthM <= 0) _fieldErrors['depth'] = 'Must be greater than 0';
+    if (baseScale <= 0) _fieldErrors['modelBaseScale'] = 'Must be greater than 0';
+    if (_modelPath.text.trim().isEmpty) _fieldErrors['modelPath'] = 'Add a model path';
+    for (final draft in _componentDrafts) {
+      final name = draft.name.text.trim();
+      final quantityText = draft.quantity.text.trim();
+      final widthText = draft.widthM.text.trim();
+      final heightText = draft.heightM.text.trim();
+      final depthText = draft.depthM.text.trim();
+
+      final isRowCompletelyEmpty = name.isEmpty &&
+          quantityText.isEmpty &&
+          widthText.isEmpty &&
+          heightText.isEmpty &&
+          depthText.isEmpty;
+      if (isRowCompletelyEmpty) continue;
+
+      final quantity = int.tryParse(quantityText);
+      final width = double.tryParse(widthText.replaceAll(',', '.'));
+      final height = double.tryParse(heightText.replaceAll(',', '.'));
+      final depth = double.tryParse(depthText.replaceAll(',', '.'));
+      if (name.isEmpty ||
+          quantity == null ||
+          quantity <= 0 ||
+          width == null ||
+          width <= 0 ||
+          height == null ||
+          height <= 0 ||
+          depth == null ||
+          depth <= 0) {
+        _fieldErrors['components'] =
+            'Each set item row needs name, quantity, width, height, and depth';
+        break;
+      }
+      parsedComponents.add(
+        ProductSetComponent(
+          name: name,
+          quantity: quantity,
+          widthMeters: width,
+          heightMeters: height,
+          depthMeters: depth,
+        ),
+      );
+    }
+    if (parsedInventoryQty == null || parsedInventoryQty < 0) _fieldErrors['inventory'] = 'Use 0 or greater';
+    if (_imageUrls.isEmpty) _fieldErrors['images'] = 'Add at least one image';
 
     if (_fieldErrors.isNotEmpty) {
       setState(() {});
@@ -1119,6 +1395,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       realDepthM: depthM,
       modelBaseScale: baseScale,
       modelPath: _modelPath.text.trim(),
+      components: parsedComponents,
       imageUrls: _imageUrls,
       inventoryQty: parsedInventoryQty!,
       inStock: _inStock,
@@ -1253,6 +1530,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                         keyboardType: TextInputType.number,
                         errorText: _fieldErrors['modelBaseScale'],
                       ),
+                      _buildSetComponentsEditor(),
                       const SizedBox(height: 8),
               // 3D Model Upload Section
               Column(
@@ -1666,6 +1944,60 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         ],
       ),
     );
+  }
+}
+
+class _SetComponentDraft {
+  _SetComponentDraft({
+    required this.name,
+    required this.quantity,
+    required this.widthM,
+    required this.heightM,
+    required this.depthM,
+  });
+
+  factory _SetComponentDraft.empty() {
+    return _SetComponentDraft(
+      name: TextEditingController(),
+      quantity: TextEditingController(text: '1'),
+      widthM: TextEditingController(),
+      heightM: TextEditingController(),
+      depthM: TextEditingController(),
+    );
+  }
+
+  factory _SetComponentDraft.fromComponent(ProductSetComponent component) {
+    return _SetComponentDraft(
+      name: TextEditingController(text: component.name),
+      quantity: TextEditingController(text: component.quantity.toString()),
+      widthM: TextEditingController(text: component.widthMeters.toStringAsFixed(3)),
+      heightM: TextEditingController(text: component.heightMeters.toStringAsFixed(3)),
+      depthM: TextEditingController(text: component.depthMeters.toStringAsFixed(3)),
+    );
+  }
+
+  _SetComponentDraft copy() {
+    return _SetComponentDraft(
+      name: TextEditingController(text: name.text),
+      quantity: TextEditingController(text: quantity.text),
+      widthM: TextEditingController(text: widthM.text),
+      heightM: TextEditingController(text: heightM.text),
+      depthM: TextEditingController(text: depthM.text),
+    );
+  }
+
+  final TextEditingController name;
+  final TextEditingController quantity;
+  final TextEditingController widthM;
+  final TextEditingController heightM;
+  final TextEditingController depthM;
+
+  void dispose() {
+    name.dispose();
+    quantity.dispose();
+    widthM.dispose();
+    heightM.dispose();
+    depthM.dispose();
   }
 }
 

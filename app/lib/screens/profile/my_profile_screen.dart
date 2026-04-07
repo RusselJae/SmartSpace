@@ -347,9 +347,9 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
             ),
           ),
           Text(
-            '* Required',
+            '*',
             style: GoogleFonts.poppins(
-              fontSize: 11.5,
+              fontSize: 13,
               fontWeight: FontWeight.w700,
               color: CupertinoColors.systemRed,
             ),

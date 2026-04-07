@@ -3,11 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../models/address_entry.dart';
 import '../../models/app_settings.dart';
 import '../../models/made_to_order_request.dart';
+import '../../models/user.dart';
 import '../../services/app_settings_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
+import '../../services/profile_storage.dart';
 import '../../widgets/toast.dart';
 
 /// After admin quotes, customer confirms shipping and creates the PayMongo order.
@@ -28,7 +31,13 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final AuthService _auth = AuthService();
   final AppSettingsService _settingsService = AppSettingsService();
+  final ProfileStorage _storage = ProfileStorage();
   AppSettings? _settings;
+
+  /// Saved profile addresses (same source as [OrderSummaryScreen]).
+  List<AddressEntry> _savedAddresses = [];
+  String? _selectedAddressId;
+  bool _addressesLoading = true;
 
   final _name = TextEditingController();
   final _phone = TextEditingController();
@@ -55,12 +64,72 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
     if (u != null) {
       _name.text = u.fullName;
       _phone.text = u.phoneNumber ?? '';
+      _hydrateAddressesFromProfile(u);
     }
     _primeSettings();
     _city.addListener(() {
       if (!mounted) return;
       setState(() {});
     });
+  }
+
+  /// Maps a stored [AddressEntry] into the simplified MTO line / city / postal fields.
+  void _applyAddressEntry(AddressEntry a) {
+    final street = a.street.trim();
+    _line1.text = street;
+    final regionParts =
+        a.region.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+    _city.text = regionParts.length > 1 ? regionParts.sublist(1).join(', ') : a.region.trim();
+    _postal.text = a.postalCode.trim();
+  }
+
+  Future<void> _hydrateAddressesFromProfile(User u) async {
+    setState(() => _addressesLoading = true);
+    try {
+      final saved = await _storage.loadAddresses(u.id);
+      if (!mounted) return;
+      if (saved.isNotEmpty) {
+        final def = saved.firstWhere(
+          (e) => e.isDefault,
+          orElse: () => saved.first,
+        );
+        setState(() {
+          _savedAddresses = saved;
+          _selectedAddressId = def.id;
+          _applyAddressEntry(def);
+          _addressesLoading = false;
+        });
+        return;
+      }
+      if (u.addresses.isNotEmpty) {
+        final legacy = u.addresses.first;
+        final parts = legacy.split(', ');
+        setState(() {
+          _savedAddresses = [];
+          _selectedAddressId = null;
+          _line1.text = parts.isNotEmpty ? parts.first : legacy;
+          if (parts.length > 1) {
+            _city.text = parts[1];
+          }
+          if (parts.length > 2) {
+            _postal.text = parts[2];
+          }
+          _addressesLoading = false;
+        });
+        return;
+      }
+      setState(() {
+        _savedAddresses = [];
+        _addressesLoading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _savedAddresses = [];
+          _addressesLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _primeSettings() async {
@@ -528,7 +597,11 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
         ),
         middle: Text(
           'Checkout',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w700, color: _kWalnutDeep),
+          style: GoogleFonts.poppins(
+            fontWeight: FontWeight.w700,
+            fontSize: 17,
+            color: _kWalnutDeep,
+          ),
         ),
       ),
       child: SafeArea(
@@ -581,6 +654,60 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
               buttonLabel: 'Edit',
               onTapButton: _openAddressEditor,
               children: [
+                if (!_addressesLoading && _savedAddresses.isNotEmpty) ...[
+                  Text(
+                    'Saved address',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _kWalnutDeep,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: _kWalnutSoftBg,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _kWalnut.withValues(alpha: 0.22)),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedAddressId,
+                        isExpanded: true,
+                        icon: Icon(Icons.expand_more, color: _kWalnut),
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: _kWalnutDeep,
+                        ),
+                        items: _savedAddresses.asMap().entries.map((entry) {
+                          final idx = entry.key;
+                          final address = entry.value;
+                          final title =
+                              'Address ${idx + 1}${address.isDefault ? ' (Default)' : ''}';
+                          return DropdownMenuItem<String>(
+                            value: address.id,
+                            child: Text(
+                              title,
+                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          final picked = _savedAddresses.where((a) => a.id == value).toList();
+                          if (picked.isEmpty) return;
+                          setState(() {
+                            _selectedAddressId = value;
+                            _applyAddressEntry(picked.first);
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _infoFieldRow('Address line (block, street, barangay)', _line1.text),
                 const SizedBox(height: 10),
                 _infoFieldRow('City / region', _city.text),

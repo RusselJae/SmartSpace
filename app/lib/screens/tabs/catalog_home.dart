@@ -7,6 +7,7 @@ import '../views/product_detail.dart';
 import '../views/product_list.dart';
 import '../views/made_to_order_request_screen.dart';
 import '../views/sign_in.dart';
+import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/filters_sheet.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/cart_service.dart';
@@ -239,14 +240,17 @@ class _CatalogHomeState extends State<CatalogHome> {
 
   /// Navigate to product list filtered by category
   void _navigateToCategory(String category) {
-    final categoryProducts = _allProducts
-        .where((product) => product.category.toLowerCase() == category.toLowerCase())
-        .toList();
+    final bool showAll = category.toLowerCase() == 'all';
+    final categoryProducts = showAll
+        ? List<Product>.from(_allProducts)
+        : _allProducts
+            .where((product) => product.category.toLowerCase() == category.toLowerCase())
+            .toList();
     
     Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(
         builder: (_) => ProductListScreen(
-          title: category,
+          title: showAll ? 'All Products' : category,
           products: categoryProducts,
         ),
       ),
@@ -491,7 +495,7 @@ class _CatalogHomeState extends State<CatalogHome> {
             // it collapses to zero height so the catalog content moves up.
             SliverPersistentHeader(
               pinned: true,
-              floating: true,
+              floating: false,
               delegate: _CatalogSearchResultsHeaderDelegate(
                 suggestions: _searchSuggestions,
                 totalResults: _searchResults.length,
@@ -1090,22 +1094,25 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
                     child: SizedBox(
                       height: 140,
                       width: double.infinity,
-                      child: ModelViewer(
-                        key: ValueKey('${widget.product.id}_preview'),
-                        backgroundColor: const Color(0xFFF9F4EF),
-                        src: ModelPathHelper.normalize(widget.product.modelPath),
-                        alt: 'Preview of ${widget.product.name}',
-                        ar: false,
-                        // Brighter, more even studio lighting.
-                        // `neutral` applies a balanced environment map, and
-                        // exposure boosts overall brightness without washing out.
-                        environmentImage: 'neutral',
-                        exposure: 1.35,
-                        shadowIntensity: 0.18,
-                        autoRotate: false,
-                        cameraControls: false,
-                        disableZoom: true,
-                        interactionPrompt: InteractionPrompt.none,
+                      child: CachedModelSrcLoader(
+                        sourceUrl: ModelPathHelper.normalize(widget.product.modelPath),
+                        builder: (context, resolvedSrc) => ModelViewer(
+                          key: ValueKey('${widget.product.id}_preview'),
+                          backgroundColor: const Color(0xFFF9F4EF),
+                          src: resolvedSrc,
+                          alt: 'Preview of ${widget.product.name}',
+                          ar: false,
+                          // Brighter, more even studio lighting.
+                          // `neutral` applies a balanced environment map, and
+                          // exposure boosts overall brightness without washing out.
+                          environmentImage: 'neutral',
+                          exposure: 1.35,
+                          shadowIntensity: 0.18,
+                          autoRotate: false,
+                          cameraControls: false,
+                          disableZoom: true,
+                          interactionPrompt: InteractionPrompt.none,
+                        ),
                       ),
                     ),
                   ),
@@ -1287,29 +1294,7 @@ class _CatalogSearchResultsHeaderDelegate extends SliverPersistentHeaderDelegate
                 onPressed: () => onTapProduct(product),
                 child: Row(
                   children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9F4EF),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      clipBehavior: Clip.hardEdge,
-                      child: ModelViewer(
-                        key: ValueKey('${product.id}_suggestion_header'),
-                        backgroundColor: const Color(0xFFF9F4EF),
-                        src: ModelPathHelper.normalize(product.modelPath),
-                        alt: 'Preview of ${product.name}',
-                        ar: false,
-                        environmentImage: 'neutral',
-                        exposure: 1.35,
-                        shadowIntensity: 0.18,
-                        autoRotate: false,
-                        cameraControls: false,
-                        disableZoom: true,
-                        interactionPrompt: InteractionPrompt.none,
-                      ),
-                    ),
+                    _SearchSuggestionThumb(product: product),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -1406,11 +1391,12 @@ class _CatalogKeywordHeaderDelegate extends SliverPersistentHeaderDelegate {
     return Container(
       width: double.infinity,
       color: Colors.white,
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             for (final category in categories) ...[
               CupertinoButton(
@@ -1439,5 +1425,40 @@ class _CatalogKeywordHeaderDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(covariant _CatalogKeywordHeaderDelegate oldDelegate) {
     return oldDelegate.categories != categories;
+  }
+}
+
+class _SearchSuggestionThumb extends StatelessWidget {
+  const _SearchSuggestionThumb({required this.product});
+
+  final Product product;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = product.imageUrls.isNotEmpty ? product.imageUrls.first : '';
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9F4EF),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: imageUrl.isNotEmpty
+          ? Image.network(
+              ModelPathHelper.normalize(imageUrl),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const Icon(
+                CupertinoIcons.photo,
+                size: 14,
+                color: CupertinoColors.systemGrey,
+              ),
+            )
+          : const Icon(
+              CupertinoIcons.photo,
+              size: 14,
+              color: CupertinoColors.systemGrey,
+            ),
+    );
   }
 }

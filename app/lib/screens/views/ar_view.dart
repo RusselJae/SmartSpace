@@ -5,6 +5,7 @@ import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../services/ar_support_service.dart';
 import '../../utils/model_path_helper.dart';
+import '../../widgets/cached_model_src_loader.dart';
 
 class ArViewScreen extends StatelessWidget {
   const ArViewScreen({
@@ -191,36 +192,39 @@ class _ArBodyState extends State<_ArBody> {
     }
 
     // --- Shared: the 3D / AR canvas -----------------------------------------
-    final Widget viewer = ModelViewer(
-      src: ModelPathHelper.normalize(widget.modelSrc),
-      alt: widget.altText,
-      ar: arEnabledForMode,
-      arModes: arModes,
-      arPlacement: ArPlacement.floor,
-      arScale: ArScale.auto,
-      cameraControls: true,
-      environmentImage: 'neutral',
-      exposure: 1.35,
-      shadowIntensity: 0.18,
-      autoRotate: false,
-      disableZoom: false,
-      touchAction: TouchAction.none,
-      iosSrc: null,
-      backgroundColor: const Color(0xFFFFFFFF),
-      id: _viewerId,
-      // Inject custom JS so we can query `<model-viewer>` for its live
-      // bounding-box and current scale factors.
-      relatedJs: _dimensionProbeScript,
-      javascriptChannels: <JavascriptChannel>{
-        JavascriptChannel(
-          _dimensionChannelName,
-          onMessageReceived: (dynamic message) {
-            // Extract message string from the callback parameter
-            final String messageStr = message is String ? message : (message?.toString() ?? '{}');
-            _handleDimensionMessage(messageStr);
-          },
-        ),
-      },
+    final Widget viewer = CachedModelSrcLoader(
+      sourceUrl: ModelPathHelper.normalize(widget.modelSrc),
+      builder: (context, resolvedSrc) => ModelViewer(
+        src: resolvedSrc,
+        alt: widget.altText,
+        ar: arEnabledForMode,
+        arModes: arModes,
+        arPlacement: ArPlacement.floor,
+        arScale: ArScale.auto,
+        cameraControls: true,
+        environmentImage: 'neutral',
+        exposure: 1.35,
+        shadowIntensity: 0.18,
+        autoRotate: false,
+        disableZoom: false,
+        touchAction: TouchAction.none,
+        iosSrc: null,
+        backgroundColor: const Color(0xFFFFFFFF),
+        id: _viewerId,
+        // Inject custom JS so we can query `<model-viewer>` for its live
+        // bounding-box and current scale factors.
+        relatedJs: _dimensionProbeScript,
+        javascriptChannels: <JavascriptChannel>{
+          JavascriptChannel(
+            _dimensionChannelName,
+            onMessageReceived: (dynamic message) {
+              // Extract message string from the callback parameter
+              final String messageStr = message is String ? message : (message?.toString() ?? '{}');
+              _handleDimensionMessage(messageStr);
+            },
+          ),
+        },
+      ),
     );
 
     // --- Shared: supporting UI panels ---------------------------------------

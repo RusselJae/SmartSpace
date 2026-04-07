@@ -11,6 +11,7 @@ import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../widgets/toast.dart';
+import '../../utils/model_path_helper.dart';
 import '../views/sign_in.dart';
 
 class ReviewsScreen extends StatefulWidget {
@@ -456,7 +457,7 @@ class _ReviewComposerPage extends StatefulWidget {
 
 class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTickerProviderStateMixin {
   late Product _selectedProduct = widget.products.first;
-  int _rating = 5;
+  int _rating = 0;
   final TextEditingController _controller = TextEditingController();
   bool _submitting = false;
   String? _error;
@@ -465,6 +466,7 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
   final FocusNode _focusNode = FocusNode();
   static const int _minReviewLength = 10;
   static const int _maxReviewLength = 500;
+  static const Color _composerBrown = Color(0xFF8D6E63);
 
   @override
   void initState() {
@@ -666,59 +668,15 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: CupertinoColors.systemGrey4,
               width: 1,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
           ),
           child: CupertinoButton(
-            padding: const EdgeInsets.all(16),
-            onPressed: _submitting ? null : () {
-              HapticFeedback.selectionClick();
-              showCupertinoModalPopup<void>(
-                context: context,
-                builder: (_) => CupertinoActionSheet(
-                  title: Text(
-                    'Choose a product',
-                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                  ),
-                  actions: widget.products
-                      .map(
-                        (product) => CupertinoActionSheetAction(
-                          onPressed: () {
-                            HapticFeedback.selectionClick();
-                            Navigator.of(context).pop();
-                            setState(() => _selectedProduct = product);
-                          },
-                          child: Text(
-                            product.name,
-                            style: GoogleFonts.poppins(),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  cancelButton: CupertinoActionSheetAction(
-                    onPressed: () {
-                      HapticFeedback.selectionClick();
-                      Navigator.of(context).pop();
-                    },
-                    isDefaultAction: true,
-                    child: Text(
-                      'Cancel',
-                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ),
-              );
-            },
+            padding: const EdgeInsets.all(14),
+            onPressed: _submitting ? null : _showProductPickerSheet,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -734,10 +692,13 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 10),
+                _buildProductThumb(_selectedProduct, size: 28),
+                const SizedBox(width: 8),
                 const Icon(
                   CupertinoIcons.chevron_down,
                   color: Colors.black45,
-                  size: 20,
+                  size: 18,
                 ),
               ],
             ),
@@ -773,8 +734,8 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
                   begin: 0.0,
                   end: index < _rating ? 1.0 : 0.0,
                 ),
-                duration: Duration(milliseconds: 200 + (index * 50)),
-                curve: Curves.elasticOut,
+                duration: Duration(milliseconds: 160 + (index * 40)),
+                curve: Curves.easeOutBack,
                 builder: (context, value, child) {
                   return Transform.scale(
                     scale: index < _rating ? 1.0 + (value * 0.1) : 1.0,
@@ -816,6 +777,131 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
           ),
         ),
       ],
+    );
+  }
+
+  void _showProductPickerSheet() {
+    HapticFeedback.selectionClick();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: SizedBox(
+            height: 360,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Choose a product',
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        minSize: 0,
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        child: Text(
+                          'Close',
+                          style: GoogleFonts.poppins(
+                            color: _composerBrown,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: widget.products.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final product = widget.products[index];
+                      final isSelected = product.id == _selectedProduct.id;
+                      return Material(
+                        color: isSelected ? const Color(0xFFF8F2EC) : Colors.white,
+                        child: InkWell(
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            Navigator.of(sheetContext).pop();
+                            setState(() => _selectedProduct = product);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    product.name,
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 14,
+                                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                      color: Colors.black,
+                                      decoration: TextDecoration.none,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                _buildProductThumb(product, size: 28),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildProductThumb(Product product, {double size = 30}) {
+    final imageUrl = product.imageUrls.isNotEmpty ? product.imageUrls.first : '';
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F3F3),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: CupertinoColors.systemGrey4, width: 0.8),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: imageUrl.isNotEmpty
+          ? Image.network(
+              ModelPathHelper.normalize(imageUrl),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const Icon(
+                CupertinoIcons.photo,
+                size: 14,
+                color: CupertinoColors.systemGrey,
+              ),
+            )
+          : const Icon(
+              CupertinoIcons.photo,
+              size: 14,
+              color: CupertinoColors.systemGrey,
+            ),
     );
   }
 

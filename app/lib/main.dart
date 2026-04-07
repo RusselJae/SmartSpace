@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -20,10 +22,14 @@ import 'screens/profile/privacy_policy_screen.dart';
 import 'screens/profile/security_privacy_screen.dart';
 import 'screens/profile/change_password_screen.dart';
 import 'utils/env_loader.dart';
+import 'utils/deep_link_handler.dart';
+import 'app_nav.dart';
 import 'services/mysql_database_service.dart';
+import 'services/native_ar_editor_service.dart';
 import 'config/database_config.dart';
 import 'services/auth_service.dart';
-import 'widgets/loading_screen.dart';
+import 'services/onboarding_storage.dart';
+import 'widgets/splash_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -85,11 +91,60 @@ Future<void> main() async {
   runApp(const WoodHomeFurnitureApp());
 }
 
-class WoodHomeFurnitureApp extends StatelessWidget {
+class WoodHomeFurnitureApp extends StatefulWidget {
   const WoodHomeFurnitureApp({super.key});
 
   static final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
+
+  @override
+  State<WoodHomeFurnitureApp> createState() => _WoodHomeFurnitureAppState();
+}
+
+class _WoodHomeFurnitureAppState extends State<WoodHomeFurnitureApp> {
+  StreamSubscription<Uri>? _appLinkSubscription;
+  String? _lastHandledLink;
+  DateTime? _lastHandledAt;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!kIsWeb) {
+      _appLinkSubscription = AppLinks().uriLinkStream.listen(_handleAppLink);
+      AppLinks().getInitialLink().then(_handleAppLink);
+    }
+  }
+
+  @override
+  void dispose() {
+    final sub = _appLinkSubscription;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
+    super.dispose();
+  }
+
+  void _handleAppLink(Uri? uri) {
+    if (uri == null) return;
+    final url = uri.toString();
+    final now = DateTime.now();
+    if (_lastHandledLink == url &&
+        _lastHandledAt != null &&
+        now.difference(_lastHandledAt!) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastHandledLink = url;
+    _lastHandledAt = now;
+
+    final token = DeepLinkHandler.extractVerificationToken(url);
+    if (token == null) return;
+
+    unawaited(
+      runWhenNavigatorReady((nav) {
+        nav.pushNamed(VerifyEmailScreen.route, arguments: token);
+      }),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +207,8 @@ class WoodHomeFurnitureApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Wood Home Furniture Trading',
-      scaffoldMessengerKey: _scaffoldMessengerKey,
+      navigatorKey: appNavigatorKey,
+      scaffoldMessengerKey: WoodHomeFurnitureApp._scaffoldMessengerKey,
       /// Inject the delegates Material widgets require so we never see the
       /// "No MaterialLocalizations found" exception again.
       localizationsDelegates: const [
@@ -209,13 +265,18 @@ class WoodHomeFurnitureApp extends StatelessWidget {
       home: _AppInitializer(),
       routes: {
         TabShell.route: TabShell.builder,
-        AdminShell.route: (_) => const AdminShell(),
+        ...buildAdminShellRoutes(),
         AdminLoginPage.route: (_) => const AdminLoginPage(),
         AdminSignupPage.route: (_) => const AdminSignupPage(),
         VerifyEmailScreen.route: (context) {
-          // Extract token from URL query parameters
-          final uri = Uri.base;
-          final token = uri.queryParameters['token'];
+          final args = ModalRoute.of(context)?.settings.arguments;
+          String? token;
+          if (args is String) {
+            token = args;
+          }
+          if (kIsWeb && (token == null || token.isEmpty)) {
+            token = Uri.base.queryParameters['token'];
+          }
           return VerifyEmailScreen(token: token);
         },
         TermsAndConditionsScreen.route: (_) => const TermsAndConditionsScreen(),
@@ -228,7 +289,7 @@ class WoodHomeFurnitureApp extends StatelessWidget {
   }
 }
 
-/// Initializes the app and determines whether to show onboarding or main app
+/// Cold start: splash -> onboarding until completed, then home. Auth runs during splash.
 class _AppInitializer extends StatefulWidget {
   const _AppInitializer();
 
@@ -237,29 +298,33 @@ class _AppInitializer extends StatefulWidget {
 }
 
 class _AppInitializerState extends State<_AppInitializer> {
-  bool _isLoading = true;
+  /// True until cold-start splash + auth check both finish.
+  bool _isBootstrapping = true;
   bool _showOnboarding = true;
   bool _authCheckComplete = false;
-  bool _loadingScreenComplete = false;
+  bool _splashComplete = false;
 
   @override
   void initState() {
     super.initState();
-    // Start the auth check in parallel with loading screen display
+    // Native AR screen can invoke Flutter navigation while the engine runs.
+    NativeArEditorService.registerNativeCallbacks();
+    // Auth runs in parallel with the splash; we only advance when both are done.
     _checkAuthState();
   }
 
   Future<void> _checkAuthState() async {
     try {
       await AuthService().initializeSession();
-      final auth = AuthService();
+      final onboardingDone = await OnboardingStorage.isComplete();
       if (mounted) {
         setState(() {
-          _showOnboarding = !auth.isAuthenticated;
+          // Do not tie onboarding to guest vs signed-in: a restored session used to
+          // skip the carousel entirely; we only skip after Get started has been tapped.
+          _showOnboarding = !onboardingDone;
           _authCheckComplete = true;
-          // Proceed if loading screen has also completed
-          if (_loadingScreenComplete) {
-            _isLoading = false;
+          if (_splashComplete) {
+            _isBootstrapping = false;
           }
         });
       }
@@ -269,23 +334,20 @@ class _AppInitializerState extends State<_AppInitializer> {
         setState(() {
           _showOnboarding = true;
           _authCheckComplete = true;
-          // Proceed if loading screen has also completed
-          if (_loadingScreenComplete) {
-            _isLoading = false;
+          if (_splashComplete) {
+            _isBootstrapping = false;
           }
         });
       }
     }
   }
 
-  void _handleLoadingComplete() {
-    // Called when LoadingScreen completes its 3-second display
+  void _handleSplashComplete() {
     if (mounted) {
       setState(() {
-        _loadingScreenComplete = true;
-        // Proceed if auth check has also completed
+        _splashComplete = true;
         if (_authCheckComplete) {
-          _isLoading = false;
+          _isBootstrapping = false;
         }
       });
     }
@@ -293,11 +355,11 @@ class _AppInitializerState extends State<_AppInitializer> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      // Show custom loading screen while checking auth state
-      // LoadingScreen displays for 3 seconds, then calls onComplete
-      return LoadingScreen(
-        onComplete: _handleLoadingComplete,
+    if (_isBootstrapping) {
+      // Cold start: branding splash → onboarding (until completed) or home.
+      // Login / logout use [LoadingScreen], not this widget.
+      return SplashScreen(
+        onComplete: _handleSplashComplete,
       );
     }
     return _showOnboarding ? const OnboardingFlow() : const TabShell();

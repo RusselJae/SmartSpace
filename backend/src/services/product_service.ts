@@ -2,6 +2,7 @@ import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
 import { Product, ProductSetComponent } from '../models/product';
 import { generateId } from '../utils/id_generator';
+import { parseProductComponentsFromDb } from '../utils/product_components';
 import { parseBooleanFlag, parseStringArray } from '../utils/parser';
 
 export type ProductInput = {
@@ -38,7 +39,8 @@ type ProductRow = RowDataPacket & {
   readonly color: string | null;
   readonly model_path: string | null;
   readonly image_urls: string | null;
-  readonly components_json: string | null;
+  /** mysql2 may return string, Buffer, or already-parsed array for JSON columns */
+  readonly components_json: unknown;
   readonly real_width_m: number | null;
   readonly real_height_m: number | null;
   readonly real_depth_m: number | null;
@@ -80,39 +82,7 @@ const mapProduct = (row: ProductRowWithOrderCount): Product => {
   const createdAt = row.created_at ?? new Date();
   const orderCount = Number(row.order_count ?? 0);
   
-  const components = (() => {
-    if (!row.components_json || row.components_json.trim().length === 0) {
-      return [] as ProductSetComponent[];
-    }
-    try {
-      const parsed = JSON.parse(row.components_json);
-      if (!Array.isArray(parsed)) return [] as ProductSetComponent[];
-      return parsed
-        .filter((item) => item && typeof item === 'object')
-        .map((item) => {
-          const record = item as Record<string, unknown>;
-          return {
-            name: String(record.name ?? ''),
-            quantity: Number(record.quantity ?? 0),
-            widthM: Number(record.widthM ?? 0),
-            heightM: Number(record.heightM ?? 0),
-            depthM: Number(record.depthM ?? 0),
-            modelPath: record.modelPath != null ? String(record.modelPath) : undefined,
-            notes: record.notes != null ? String(record.notes) : undefined,
-          };
-        })
-        .filter(
-          (item) =>
-            item.name.trim().length > 0 &&
-            item.quantity > 0 &&
-            item.widthM > 0 &&
-            item.heightM > 0 &&
-            item.depthM > 0,
-        );
-    } catch {
-      return [] as ProductSetComponent[];
-    }
-  })();
+  const components = parseProductComponentsFromDb(row.components_json);
 
   return {
     id: row.id,

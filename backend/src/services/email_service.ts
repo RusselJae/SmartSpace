@@ -10,6 +10,27 @@ type UserRow = RowDataPacket & {
   readonly full_name: string;
 };
 
+/** Avoid breaking HTML email bodies when names contain <>&. */
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+/** Only allow http(s) logo URLs so `src` cannot be abused. */
+const sanitizeEmailLogoUrl = (raw: string): string => {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return u.toString();
+  } catch {
+    return '';
+  }
+};
+
 /**
  * Email service for sending order confirmation emails.
  * In production, integrate with a service like SendGrid, AWS SES, or Nodemailer.
@@ -382,87 +403,107 @@ export class EmailService {
     userName: string,
     verificationToken: string,
     verificationCode: string,
-    frontendUrl?: string,
+    _frontendUrl?: string,
   ): Promise<void> {
     try {
-      // Use frontend URL from config if not provided, fallback to localhost
-      const frontendBaseUrl = frontendUrl ?? config.frontend.url;
-      
-      // Construct verification URLs
-      // For mobile apps: use custom URL scheme (smartspace://)
-      // For web: use HTTP/HTTPS URL
-      // The email will contain both, with mobile scheme as primary
-      const mobileUrl = `smartspace://verify-email?token=${verificationToken}`;
-      const webUrl = `${frontendBaseUrl}/verify-email?token=${verificationToken}`;
-      // Universal link / hosted fallback (once deployed, FRONTEND_URL should be your real domain)
-      // This lets iOS/Android open the installed app if configured, otherwise it opens the web.
-      const universalUrl = webUrl;
+      // Custom scheme opens the installed app (Android/iOS) when the user taps the link.
+      // encodeURIComponent keeps tokens with + / = safe inside the query string.
+      const appVerifyUrl = `smartspace://verify-email?token=${encodeURIComponent(verificationToken)}`;
 
-      // Use the app link as the primary CTA.
-      const verificationUrl = mobileUrl;
+      const safeName = escapeHtml(userName);
+      const safeCode = escapeHtml(verificationCode);
+      const logoSrc = sanitizeEmailLogoUrl(config.emailBranding.logoUrl);
+      const logoBlock = logoSrc
+        ? `<img src="${escapeHtml(logoSrc)}" width="120" height="120" alt="Wood Home Furniture Trading" style="display:block;margin:0 auto 8px;border-radius:16px;max-width:120px;height:auto;border:0;" />`
+        : `<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto 12px;">
+            <tr><td style="width:72px;height:72px;background:#5D4037;border-radius:18px;text-align:center;vertical-align:middle;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">WH</td></tr>
+          </table>`;
 
-      // Email content with modern, clean design following Apple HIG principles
+      // Table-based layout: better rendering in Gmail/Outlook. Apple-inspired spacing and warm neutrals.
       const subject = 'Verify your Wood Home Furniture Trading account';
-      const htmlBody = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Verify Your Email</title>
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #8D6E63 0%, #5D4037 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 24px; font-weight: 600;">Welcome to Wood Home Furniture Trading!</h1>
-          </div>
-          <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 12px 12px;">
-            <p style="font-size: 16px; margin: 0 0 20px 0;">Hi ${userName},</p>
-            <p style="font-size: 16px; margin: 0 0 20px 0;">Thanks for signing up! To complete your registration and start using Wood Home Furniture Trading, please verify your email address.</p>
-            
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; border: 2px dashed #8D6E63;">
-              <p style="font-size: 14px; color: #666; margin: 0 0 10px 0; font-weight: 600;">Your verification code:</p>
-              <p style="font-size: 32px; font-weight: 700; color: #8D6E63; margin: 0; letter-spacing: 4px; font-family: 'Courier New', monospace;">${verificationCode}</p>
-              <p style="font-size: 12px; color: #999; margin: 10px 0 0 0;">Enter this code in the app to verify your email</p>
-            </div>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${verificationUrl}" 
-                 style="display: inline-block; background: linear-gradient(135deg, #8D6E63 0%, #5D4037 100%); color: white; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(141, 110, 99, 0.3);">
-                Open the app to verify
-              </a>
-            </div>
-
-            <div style="margin: 18px 0 0 0; text-align: center;">
-              <p style="font-size: 13px; color: #666; margin: 0 0 10px 0;">
-                If the button doesn’t open the app:
+      const htmlBody = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <title>Verify your email</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F2EDE8;-webkit-text-size-adjust:100%;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Your Wood Home verification code: ${safeCode}
+  </div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F2EDE8;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background-color:#FFFFFF;border-radius:20px;overflow:hidden;box-shadow:0 8px 32px rgba(93,64,55,0.12);border:1px solid rgba(93,64,55,0.08);">
+          <tr>
+            <td style="background:linear-gradient(145deg,#A1887F 0%,#6D4C41 48%,#5D4037 100%);padding:28px 24px 24px;text-align:center;">
+              ${logoBlock}
+              <h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:600;color:#FFFFFF;line-height:1.3;letter-spacing:-0.02em;">
+                Wood Home Furniture Trading
+              </h1>
+              <p style="margin:10px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;font-weight:500;color:rgba(255,255,255,0.92);">
+                Confirm your email to finish signing up
               </p>
-              <a href="${universalUrl}"
-                 style="display: inline-block; color: #8D6E63; text-decoration: underline; font-weight: 600; font-size: 13px; margin: 0 10px 6px 10px;">
-                Verify in browser
-              </a>
-            </div>
-            
-            <div style="margin: 14px 0 0 0; text-align: center;">
-              <p style="font-size: 12px; color: #999; margin: 0;">
-                Deployed app links will use <strong>${frontendBaseUrl}</strong> as the fallback domain.
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 28px 8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+              <p style="margin:0 0 16px;font-size:16px;line-height:1.55;color:#4E342E;">Hi ${safeName},</p>
+              <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#5D4037;">
+                Thanks for joining us. Use the code below in the app, or tap the button on the phone where Wood Home is installed to verify in one step.
               </p>
-            </div>
-            
-            <p style="font-size: 14px; color: #666; margin: 20px 0 0 0;">This verification code and link will expire in 24 hours.</p>
-            <p style="font-size: 14px; color: #666; margin: 10px 0 0 0;">If you didn't create an account with Wood Home Furniture Trading, you can safely ignore this email.</p>
-            
-            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center;">
-              <p style="font-size: 12px; color: #999; margin: 0;">Wood Home Furniture Trading</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `;
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FBF8F5;border-radius:14px;border:1px dashed #BCAAA4;">
+                <tr>
+                  <td style="padding:22px 20px;text-align:center;">
+                    <p style="margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8D6E63;">Verification code</p>
+                    <p style="margin:0;font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:28px;font-weight:700;color:#5D4037;letter-spacing:0.42em;white-space:nowrap;">${safeCode}</p>
+                    <p style="margin:12px 0 0;font-size:12px;color:#A1887F;line-height:1.4;">Enter this code on the verification screen in the app.</p>
+                  </td>
+                </tr>
+              </table>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:28px auto 0;">
+                <tr>
+                  <td align="center" style="border-radius:14px;background:linear-gradient(145deg,#8D6E63 0%,#5D4037 100%);">
+                    <a href="${appVerifyUrl}" style="display:inline-block;padding:16px 36px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:14px;">
+                      Open the app to verify
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:20px 0 0;text-align:center;font-size:12px;line-height:1.5;color:#A1887F;">
+                If the button does not respond, long-press and open in browser is not available for this link—use the code above or tap the link on your device:
+                <br /><br />
+                <a href="${appVerifyUrl}" style="color:#6D4C41;font-weight:600;word-break:break-all;">${escapeHtml(appVerifyUrl)}</a>
+              </p>
+              <p style="margin:24px 0 0;font-size:13px;line-height:1.55;color:#8D6E63;">
+                This code expires in 24 hours. If you did not create an account, you can ignore this message.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 28px 24px;text-align:center;">
+              <p style="margin:0;padding-top:20px;border-top:1px solid #EFEBE9;font-size:11px;color:#BCAAA4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                Wood Home Furniture Trading
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
       await sendEmail({
         to: userEmail,
         subject,
         html: htmlBody,
-        text: `Verify your Wood Home Furniture Trading account.\n\nYour code: ${verificationCode}`,
+        text:
+          `Verify your Wood Home Furniture Trading account.\n\n` +
+          `Your code: ${verificationCode}\n\n` +
+          `Open in the app (copy this on your phone if needed):\n${appVerifyUrl}\n`,
       });
 
       console.log(`✅ Successfully sent verification email to ${userEmail}`);

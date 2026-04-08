@@ -345,12 +345,11 @@ class _AdminShellState extends State<AdminShell> {
                       onOpenNotifications: () => _openNotificationsFromHeader(context),
                       notificationsAnchorKey: _notificationsAnchorKey,
                     ),
+                    // Instant panel swap — no cross-fade / slide from AnimatedSwitcher.
                     Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        child: _AdminContentWrapper(key: ValueKey(_index), child: page),
+                      child: _AdminContentWrapper(
+                        key: ValueKey(_index),
+                        child: page,
                       ),
                     ),
                   ],
@@ -379,9 +378,9 @@ class _AdminShellState extends State<AdminShell> {
               notificationsAnchorKey: _notificationsAnchorKey,
             ),
             Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                child: _AdminContentWrapper(key: ValueKey(_index), child: page),
+              child: _AdminContentWrapper(
+                key: ValueKey(_index),
+                child: page,
               ),
             ),
           ],

@@ -24,8 +24,8 @@ class ApiConfig {
         if (webUrl != null && webUrl.isNotEmpty) {
           return _normalizedBaseUrl(webUrl);
         }
-        // hard fallback for production web
-        return 'https://smartspace-xhuu.onrender.com/api';
+        // Hard fallback when index.html has no flutterConfig (production web = Railway).
+        return 'https://smartspace-production.up.railway.app/api';
     }
     
     // Try .env file (works for mobile/desktop, and web if .env is in assets)
@@ -92,7 +92,7 @@ class ApiConfig {
     // Check if any port is explicitly provided (e.g. :4000, :443, :8080).
     //
     // We only auto-add :4000 for local/dev style hosts. In production, your API
-    // will typically sit behind a reverse proxy (Render, Vercel, Cloud Run),
+    // will typically sit behind a reverse proxy (Railway, Vercel, Cloud Run),
     // and forcing :4000 breaks HTTPS deployments.
     final hasExplicitPort = RegExp(r':\d+').hasMatch(normalized);
     

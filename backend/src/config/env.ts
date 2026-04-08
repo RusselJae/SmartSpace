@@ -31,6 +31,12 @@ type EnvironmentConfig = {
     readonly apiKey: string;
     readonly from: string;
   };
+  /** Absolute URL to a logo image for HTML emails (HTTPS recommended). */
+  readonly emailBranding: {
+    readonly logoUrl: string;
+  };
+  /** Public origin of this API (no trailing slash), e.g. https://your-app.up.railway.app — used for absolute upload URLs. */
+  readonly publicApiBaseUrl: string;
   readonly frontend: {
     readonly url: string;
   };
@@ -81,7 +87,7 @@ export const config: EnvironmentConfig = {
     from: process.env.SMTP_FROM ?? 'Wood Home Furniture Trading <noreply@woodhomefurniture.com>',
   },
   resend: {
-    // Resend API key (recommended for Render Free web services)
+    // Resend API key (works well on Railway / small hosts without SMTP)
     // Keep this as an empty string when unset so the email sender can
     // cleanly no-op with a helpful log message.
     apiKey: process.env.RESEND_API_KEY ?? '',
@@ -95,6 +101,10 @@ export const config: EnvironmentConfig = {
       process.env.SMTP_FROM ??
       'Wood Home Furniture Trading <noreply@woodhomefurniture.com>',
   },
+  emailBranding: {
+    logoUrl: (process.env.EMAIL_LOGO_URL ?? '').trim(),
+  },
+  publicApiBaseUrl: (process.env.PUBLIC_API_BASE_URL ?? '').trim().replace(/\/+$/, ''),
   frontend: {
     url: process.env.FRONTEND_URL ?? 'http://localhost:3000',
   },

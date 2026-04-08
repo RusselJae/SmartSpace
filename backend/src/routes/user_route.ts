@@ -18,6 +18,7 @@ import {
 import { EmailService } from '../services/email_service';
 import { avatarsDir, ensureUploadsDirectories } from '../utils/uploads';
 import { generateId } from '../utils/id_generator';
+import { config } from '../config/env';
 
 export const userRouter = Router();
 
@@ -192,9 +193,13 @@ userRouter.post(
       if (file == null) {
         return res.status(400).json({ success: false, message: 'Avatar file is required' });
       }
-      const host = req.get('host') ?? 'localhost:4000';
-      const protocol = req.protocol;
-      const url = `${protocol}://${host}/uploads/avatars/${file.filename}`;
+      // Prefer PUBLIC_API_BASE_URL so stored avatar URLs always use the canonical
+      // public host (Railway, etc.) instead of an internal proxy hostname.
+      const origin =
+        config.publicApiBaseUrl.trim().length > 0
+          ? config.publicApiBaseUrl
+          : `${req.protocol}://${req.get('host') ?? 'localhost:4000'}`;
+      const url = `${origin}/uploads/avatars/${file.filename}`;
       await updateUser(req.params.id, { avatarUrl: url });
       res.json({ success: true, data: { url } });
     } catch (error) {

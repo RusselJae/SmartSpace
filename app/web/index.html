@@ -26,8 +26,8 @@
   <meta name="apple-mobile-web-app-title" content="Wood Home Furniture Trading - Admin">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="assets/images/logo2.png"/>
+  <!-- Favicon: file lives in web/ (Flutter does not bundle app/assets into web root). -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>Wood Home Furniture Trading - Admin</title>
   <link rel="manifest" href="manifest.json">
@@ -48,7 +48,7 @@
     // 
     // Example: http://192.168.1.100:4000/api
     window.flutterConfig = {
-      apiBaseUrl: 'https://smartspace-xhuu.onrender.com/api',
+      apiBaseUrl: 'https://smartspace-production.up.railway.app/api',
       apiTimeout: 10
     };
   </script>

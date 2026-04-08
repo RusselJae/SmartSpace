@@ -8,6 +8,8 @@ import { paymongoWebhookRouter } from './routes/paymongo_webhook_route';
 
 export const createApp = (): Application => {
   const app = express();
+  // So req.protocol / Host match the public URL behind Railway, Fly, Render, etc.
+  app.set('trust proxy', true);
   ensureUploadsDirectories();
 
   // PayMongo webhooks require raw body for HMAC verification — register before express.json()

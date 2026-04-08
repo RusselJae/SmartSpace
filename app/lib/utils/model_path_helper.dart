@@ -49,7 +49,12 @@ class ModelPathHelper {
     return path;
   }
 
-  /// When the API stored a full URL to localhost/LAN but the app uses another host (e.g. Render).
+  /// Hostnames that used to serve `/uploads/*` but are no longer the active API (DB may still store them).
+  static const Set<String> _legacyMediaHosts = {
+    'smartspace-xhuu.onrender.com',
+  };
+
+  /// When the API stored a full URL to localhost/LAN or an old deploy host but the app now talks to another origin.
   static String _rewriteAbsoluteMediaUrlIfNeeded(String raw) {
     if (!raw.startsWith('http://') && !raw.startsWith('https://')) return raw;
     final uri = Uri.tryParse(raw);
@@ -60,7 +65,13 @@ class ModelPathHelper {
     final mediaHost = uri.host.toLowerCase();
     final apiHost = apiUri.host.toLowerCase();
 
-    final bool mustRewrite = _isLoopbackHost(mediaHost) ||
+    final pathLower = uri.path.toLowerCase();
+    final bool legacyHostedUploads =
+        _legacyMediaHosts.contains(mediaHost) &&
+            (pathLower.contains('/uploads/') || pathLower.endsWith('/uploads'));
+
+    final bool mustRewrite = legacyHostedUploads ||
+        _isLoopbackHost(mediaHost) ||
         (_isPrivateIpv4Host(mediaHost) && mediaHost != apiHost);
 
     if (!mustRewrite) return raw;

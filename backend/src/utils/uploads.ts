@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 
 // Resolve uploads directory relative to project root, not dist folder.
-// On Render (or any host), set UPLOADS_ROOT to a persistent disk mount so uploads
-// survive deploys — e.g. UPLOADS_ROOT=/var/data/uploads (see Render "Persistent Disk").
+// On Railway / Render / any host, set UPLOADS_ROOT to a persistent volume mount
+// so uploads survive deploys — e.g. UPLOADS_ROOT=/data/uploads.
 const projectRoot = path.resolve(__dirname, '../../');
 const uploadsRoot =
   process.env.UPLOADS_ROOT != null && process.env.UPLOADS_ROOT.trim() !== ''

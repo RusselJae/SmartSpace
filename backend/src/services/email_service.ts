@@ -42,6 +42,32 @@ let cachedTransporter: nodemailer.Transporter | null = null;
 let cachedResend: Resend | null = null;
 
 /**
+ * Resend requires the `from` email's domain to be verified in the Resend
+ * dashboard. If you're using Gmail but haven't verified a custom domain
+ * yet (common on Render Free), we can safely use Resend's pre-verified
+ * sender domain instead.
+ *
+ * We preserve the display name from `config.email.from` so the email still
+ * looks like it's coming from your brand.
+ */
+const getResendFrom = (): string => {
+  const from = config.email.from ?? 'Wood Home Furniture Trading';
+  const displayName = (() => {
+    const match = from.match(/^(.*)<.*>$/);
+    if (match?.[1]) return match[1].trim().replace(/(^"|"$)/g, '');
+    return from.trim();
+  })();
+
+  return `${displayName} <onboarding@resend.dev>`;
+};
+
+const getResendReplyTo = (): string => {
+  // Keep reply-to on a verified Resend domain to avoid additional
+  // domain verification errors when you haven't added a custom domain yet.
+  return 'onboarding@resend.dev';
+};
+
+/**
  * Lazily initializes the Resend client.
  *
  * Why lazy init?
@@ -121,11 +147,12 @@ export class EmailService {
 
       // Resend send (HTTPS API). Unlike SMTP, this works reliably on Render Free.
       await resend.emails.send({
-        from: config.email.from,
+        from: getResendFrom(),
         to: email,
         subject,
         html: htmlBody,
         text: `Order Expired - Order #${orderId.substring(0, 8).toUpperCase()}`,
+        reply_to: getResendReplyTo(),
       });
 
       console.log(`📧 Sent expired-order notice to ${email} for order ${orderId}`);
@@ -201,11 +228,12 @@ export class EmailService {
       if (resend == null) return;
 
       await resend.emails.send({
-        from: config.email.from,
+        from: getResendFrom(),
         to: email,
         subject,
         html: htmlBody,
         text: `Order Confirmed - Order #${orderId.substring(0, 8).toUpperCase()}`,
+        reply_to: getResendReplyTo(),
       });
 
       // Keep a slim log trail so we can trace successful sends without dumping
@@ -291,11 +319,12 @@ export class EmailService {
       if (resend == null) return;
 
       await resend.emails.send({
-        from: config.email.from,
+        from: getResendFrom(),
         to: email,
         subject,
         html: htmlBody,
         text: `Payment Confirmed - Order #${orderId.substring(0, 8).toUpperCase()}`,
+        reply_to: getResendReplyTo(),
       });
 
       console.log(`📧 Sent payment confirmation to ${email} for order ${orderId}`);
@@ -402,11 +431,12 @@ export class EmailService {
 
       // Attempt to send the email via Resend (no SMTP required).
       await resend.emails.send({
-        from: config.email.from,
+        from: getResendFrom(),
         to: userEmail,
         subject,
         html: htmlBody,
         text: `Verify your Wood Home Furniture Trading account.\n\nYour code: ${verificationCode}`,
+        reply_to: getResendReplyTo(),
       });
 
       console.log(`✅ Successfully sent verification email to ${userEmail}`);

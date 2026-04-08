@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { RowDataPacket } from 'mysql2';
+import sgMail from '@sendgrid/mail';
 import { Resend } from 'resend';
 import { config } from '../config/env';
 import { getPool } from '../config/database';
@@ -40,6 +41,28 @@ const buildTransporter = (): nodemailer.Transporter | null => {
 
 let cachedTransporter: nodemailer.Transporter | null = null;
 let cachedResend: Resend | null = null;
+let sendGridInitialized = false;
+
+type EmailPayload = {
+  readonly to: string | string[];
+  readonly subject: string;
+  readonly html: string;
+  readonly text?: string;
+};
+
+const ensureSendGrid = (): boolean => {
+  if (sendGridInitialized) return Boolean(config.sendgrid.apiKey);
+  sendGridInitialized = true;
+  if (!config.sendgrid.apiKey) return false;
+
+  try {
+    sgMail.setApiKey(config.sendgrid.apiKey);
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to initialize SendGrid client:', error);
+    return false;
+  }
+};
 
 /**
  * Resend requires the `from` email's domain to be verified in the Resend
@@ -86,6 +109,38 @@ const getResendClient = (): Resend | null => {
     cachedResend = null;
     return null;
   }
+};
+
+const sendEmail = async (payload: EmailPayload): Promise<void> => {
+  // Prefer SendGrid when configured. This works without a custom domain
+  // as long as you verified a Single Sender in the SendGrid dashboard.
+  if (ensureSendGrid()) {
+    await sgMail.send({
+      to: payload.to,
+      from: config.sendgrid.from,
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text,
+      replyTo: config.sendgrid.from,
+    });
+    return;
+  }
+
+  // Resend fallback (kept for flexibility). Note: `resend.dev` is restricted.
+  const resend = getResendClient();
+  if (resend == null) {
+    console.warn('⚠️ Email delivery disabled: neither SendGrid nor Resend is configured.');
+    return;
+  }
+
+  await resend.emails.send({
+    from: getResendFrom(),
+    to: payload.to,
+    subject: payload.subject,
+    html: payload.html,
+    text: payload.text ?? '',
+    reply_to: getResendReplyTo(),
+  });
 };
 
 export class EmailService {
@@ -142,17 +197,11 @@ export class EmailService {
         </body>
         </html>
       `;
-      const resend = getResendClient();
-      if (resend == null) return;
-
-      // Resend send (HTTPS API). Unlike SMTP, this works reliably on Render Free.
-      await resend.emails.send({
-        from: getResendFrom(),
+      await sendEmail({
         to: email,
         subject,
         html: htmlBody,
         text: `Order Expired - Order #${orderId.substring(0, 8).toUpperCase()}`,
-        reply_to: getResendReplyTo(),
       });
 
       console.log(`📧 Sent expired-order notice to ${email} for order ${orderId}`);
@@ -224,16 +273,11 @@ export class EmailService {
         </body>
         </html>
       `;
-      const resend = getResendClient();
-      if (resend == null) return;
-
-      await resend.emails.send({
-        from: getResendFrom(),
+      await sendEmail({
         to: email,
         subject,
         html: htmlBody,
         text: `Order Confirmed - Order #${orderId.substring(0, 8).toUpperCase()}`,
-        reply_to: getResendReplyTo(),
       });
 
       // Keep a slim log trail so we can trace successful sends without dumping
@@ -315,16 +359,11 @@ export class EmailService {
         </body>
         </html>
       `;
-      const resend = getResendClient();
-      if (resend == null) return;
-
-      await resend.emails.send({
-        from: getResendFrom(),
+      await sendEmail({
         to: email,
         subject,
         html: htmlBody,
         text: `Payment Confirmed - Order #${orderId.substring(0, 8).toUpperCase()}`,
-        reply_to: getResendReplyTo(),
       });
 
       console.log(`📧 Sent payment confirmation to ${email} for order ${orderId}`);
@@ -419,24 +458,11 @@ export class EmailService {
         </body>
         </html>
       `;
-
-      const resend = getResendClient();
-      if (resend == null) {
-        console.error(
-          `⚠️ EMAIL VERIFICATION FAILED: Resend not configured. ` +
-            `Set RESEND_API_KEY. Email verification was NOT sent to: ${userEmail}`,
-        );
-        return;
-      }
-
-      // Attempt to send the email via Resend (no SMTP required).
-      await resend.emails.send({
-        from: getResendFrom(),
+      await sendEmail({
         to: userEmail,
         subject,
         html: htmlBody,
         text: `Verify your Wood Home Furniture Trading account.\n\nYour code: ${verificationCode}`,
-        reply_to: getResendReplyTo(),
       });
 
       console.log(`✅ Successfully sent verification email to ${userEmail}`);

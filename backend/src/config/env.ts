@@ -27,6 +27,10 @@ type EnvironmentConfig = {
   readonly resend: {
     readonly apiKey: string;
   };
+  readonly sendgrid: {
+    readonly apiKey: string;
+    readonly from: string;
+  };
   readonly frontend: {
     readonly url: string;
   };
@@ -81,6 +85,15 @@ export const config: EnvironmentConfig = {
     // Keep this as an empty string when unset so the email sender can
     // cleanly no-op with a helpful log message.
     apiKey: process.env.RESEND_API_KEY ?? '',
+  },
+  sendgrid: {
+    apiKey: process.env.SENDGRID_API_KEY ?? '',
+    // Use a dedicated SENDGRID_FROM when present; otherwise reuse SMTP_FROM
+    // so existing env setups keep working.
+    from:
+      process.env.SENDGRID_FROM ??
+      process.env.SMTP_FROM ??
+      'Wood Home Furniture Trading <noreply@woodhomefurniture.com>',
   },
   frontend: {
     url: process.env.FRONTEND_URL ?? 'http://localhost:3000',

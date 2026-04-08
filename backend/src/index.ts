@@ -20,20 +20,22 @@ const startServer = (): Server => {
 };
 
 const checkEmailConfiguration = (): void => {
-  // Resend is the email transport for Render Free (SMTP egress is usually blocked).
-  if (!config.resend.apiKey) {
+  // SendGrid (Single Sender Verification) works without a custom domain.
+  // Resend requires domain verification for most production sending.
+  if (!config.sendgrid.apiKey) {
     console.warn('');
     console.warn('⚠️  EMAIL SERVICE NOT CONFIGURED');
     console.warn('═══════════════════════════════════════════════════════════');
-    console.warn('Verification emails will NOT work until Resend is configured.');
+    console.warn('Verification emails will NOT work until SendGrid is configured.');
     console.warn('');
     console.warn('Add these to your backend environment:');
-    console.warn('  RESEND_API_KEY=... (from Resend dashboard)');
+    console.warn('  SENDGRID_API_KEY=... (from SendGrid dashboard)');
+    console.warn('  SENDGRID_FROM=Your App <you@gmail.com> (must be verified in SendGrid Sender Identity)');
     console.warn('═══════════════════════════════════════════════════════════');
     console.warn('');
   } else {
-    console.log('✅ Email service configured (Resend)');
-    console.log(`   From: ${config.email.from}`);
+    console.log('✅ Email service configured (SendGrid)');
+    console.log(`   From: ${config.sendgrid.from}`);
   }
 };
 

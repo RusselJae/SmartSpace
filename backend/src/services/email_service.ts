@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { RowDataPacket } from 'mysql2';
+import { Resend } from 'resend';
 import { config } from '../config/env';
 import { getPool } from '../config/database';
 
@@ -38,6 +39,28 @@ const buildTransporter = (): nodemailer.Transporter | null => {
 };
 
 let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedResend: Resend | null = null;
+
+/**
+ * Lazily initializes the Resend client.
+ *
+ * Why lazy init?
+ * - Render Free services often start with no email creds until env is set.
+ * - It also keeps startup fast when email is not needed.
+ */
+const getResendClient = (): Resend | null => {
+  if (cachedResend != null) return cachedResend;
+  if (!config.resend.apiKey) return null;
+
+  try {
+    cachedResend = new Resend(config.resend.apiKey);
+    return cachedResend;
+  } catch (error) {
+    console.error('❌ Failed to initialize Resend client:', error);
+    cachedResend = null;
+    return null;
+  }
+};
 
 export class EmailService {
   /**
@@ -93,20 +116,16 @@ export class EmailService {
         </body>
         </html>
       `;
+      const resend = getResendClient();
+      if (resend == null) return;
 
-      if (!cachedTransporter) {
-        cachedTransporter = buildTransporter();
-      }
-
-      if (!cachedTransporter) {
-        return;
-      }
-
-      await cachedTransporter.sendMail({
+      // Resend send (HTTPS API). Unlike SMTP, this works reliably on Render Free.
+      await resend.emails.send({
         from: config.email.from,
         to: email,
         subject,
         html: htmlBody,
+        text: `Order Expired - Order #${orderId.substring(0, 8).toUpperCase()}`,
       });
 
       console.log(`📧 Sent expired-order notice to ${email} for order ${orderId}`);
@@ -178,29 +197,15 @@ export class EmailService {
         </body>
         </html>
       `;
+      const resend = getResendClient();
+      if (resend == null) return;
 
-      // Lazily initialize the transporter to keep startup fast when email is
-      // not needed (e.g., local dev scripts). We create it here so that the
-      // first send attempts to build the connection, yet every subsequent send
-      // reuses the cached instance for efficiency.
-      if (!cachedTransporter) {
-        cachedTransporter = buildTransporter();
-      }
-
-      // Bail out if email remains disabled even after the build attempt. This
-      // situation only occurs when credentials are missing, so the earlier
-      // warning should already hint at the fix.
-      if (!cachedTransporter) {
-        return;
-      }
-
-      // Gmail requires either OAuth or an App Password (recommended). We assume
-      // an App Password is present and use STARTTLS (port 587) by default.
-      await cachedTransporter.sendMail({
+      await resend.emails.send({
         from: config.email.from,
         to: email,
         subject,
         html: htmlBody,
+        text: `Order Confirmed - Order #${orderId.substring(0, 8).toUpperCase()}`,
       });
 
       // Keep a slim log trail so we can trace successful sends without dumping
@@ -282,20 +287,15 @@ export class EmailService {
         </body>
         </html>
       `;
+      const resend = getResendClient();
+      if (resend == null) return;
 
-      if (!cachedTransporter) {
-        cachedTransporter = buildTransporter();
-      }
-
-      if (!cachedTransporter) {
-        return;
-      }
-
-      await cachedTransporter.sendMail({
+      await resend.emails.send({
         from: config.email.from,
         to: email,
         subject,
         html: htmlBody,
+        text: `Payment Confirmed - Order #${orderId.substring(0, 8).toUpperCase()}`,
       });
 
       console.log(`📧 Sent payment confirmation to ${email} for order ${orderId}`);
@@ -391,34 +391,22 @@ export class EmailService {
         </html>
       `;
 
-      // Lazily initialize the transporter
-      if (!cachedTransporter) {
-        cachedTransporter = buildTransporter();
-      }
-
-      // Bail out if email is disabled - log a clear error message
-      if (!cachedTransporter) {
-        const errorMsg = `⚠️ EMAIL VERIFICATION FAILED: SMTP credentials not configured. 
-Please set the following environment variables in your backend/.env file:
-- SMTP_HOST (e.g., smtp.gmail.com)
-- SMTP_PORT (e.g., 587)
-- SMTP_USERNAME (your email address)
-- SMTP_PASSWORD (your app password)
-- SMTP_FROM (e.g., SmartSpace AR <your_email@gmail.com>)
-
-For Gmail: Enable 2FA and generate an App Password at https://myaccount.google.com/apppasswords
-
-Email verification was NOT sent to: ${userEmail}`;
-        console.error(errorMsg);
+      const resend = getResendClient();
+      if (resend == null) {
+        console.error(
+          `⚠️ EMAIL VERIFICATION FAILED: Resend not configured. ` +
+            `Set RESEND_API_KEY. Email verification was NOT sent to: ${userEmail}`,
+        );
         return;
       }
 
-      // Attempt to send the email
-      await cachedTransporter.sendMail({
+      // Attempt to send the email via Resend (no SMTP required).
+      await resend.emails.send({
         from: config.email.from,
         to: userEmail,
         subject,
         html: htmlBody,
+        text: `Verify your Wood Home Furniture Trading account.\n\nYour code: ${verificationCode}`,
       });
 
       console.log(`✅ Successfully sent verification email to ${userEmail}`);

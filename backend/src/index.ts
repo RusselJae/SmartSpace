@@ -20,30 +20,19 @@ const startServer = (): Server => {
 };
 
 const checkEmailConfiguration = (): void => {
-  // Check if email is configured
-  if (!config.email.username || !config.email.password) {
+  // Resend is the email transport for Render Free (SMTP egress is usually blocked).
+  if (!config.resend.apiKey) {
     console.warn('');
     console.warn('⚠️  EMAIL SERVICE NOT CONFIGURED');
     console.warn('═══════════════════════════════════════════════════════════');
-    console.warn('Email verification will NOT work until SMTP is configured.');
+    console.warn('Verification emails will NOT work until Resend is configured.');
     console.warn('');
-    console.warn('Add these to your backend/.env file:');
-    console.warn('  SMTP_HOST=smtp.gmail.com');
-    console.warn('  SMTP_PORT=587');
-    console.warn('  SMTP_SECURE=false');
-    console.warn('  SMTP_USERNAME=your_email@gmail.com');
-    console.warn('  SMTP_PASSWORD=your_app_password');
-    console.warn('  SMTP_FROM=SmartSpace AR <your_email@gmail.com>');
-    console.warn('');
-    console.warn('For Gmail setup:');
-    console.warn('  1. Enable 2-Factor Authentication');
-    console.warn('  2. Generate App Password: https://myaccount.google.com/apppasswords');
-    console.warn('  3. Use the App Password (not your regular password)');
+    console.warn('Add these to your backend environment:');
+    console.warn('  RESEND_API_KEY=... (from Resend dashboard)');
     console.warn('═══════════════════════════════════════════════════════════');
     console.warn('');
   } else {
-    console.log('✅ Email service configured');
-    console.log(`   Host: ${config.email.host}:${config.email.port}`);
+    console.log('✅ Email service configured (Resend)');
     console.log(`   From: ${config.email.from}`);
   }
 };

@@ -747,7 +747,7 @@ class _AddressEditorSheetState extends State<_AddressEditorSheet> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: _inkTitle.withValues(alpha: 0.5),
+      color: Colors.black.withValues(alpha: 0.5),
       child: Center(
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 20),

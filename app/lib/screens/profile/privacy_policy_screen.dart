@@ -51,7 +51,7 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
     return CupertinoPageScaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       navigationBar: CupertinoNavigationBar(
-        backgroundColor: const Color(0xFFF4E6D4),
+        backgroundColor: Colors.white,
         border: const Border(
           bottom: BorderSide(
             color: Color(0x338D6E63),

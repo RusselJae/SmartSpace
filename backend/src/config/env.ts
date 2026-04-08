@@ -24,6 +24,9 @@ type EnvironmentConfig = {
     readonly password: string | undefined;
     readonly from: string;
   };
+  readonly resend: {
+    readonly apiKey: string;
+  };
   readonly frontend: {
     readonly url: string;
   };
@@ -72,6 +75,12 @@ export const config: EnvironmentConfig = {
     username: process.env.SMTP_USERNAME ?? process.env.SMTP_USER,
     password: process.env.SMTP_PASSWORD ?? process.env.SMTP_PASS,
     from: process.env.SMTP_FROM ?? 'Wood Home Furniture Trading <noreply@woodhomefurniture.com>',
+  },
+  resend: {
+    // Resend API key (recommended for Render Free web services)
+    // Keep this as an empty string when unset so the email sender can
+    // cleanly no-op with a helpful log message.
+    apiKey: process.env.RESEND_API_KEY ?? '',
   },
   frontend: {
     url: process.env.FRONTEND_URL ?? 'http://localhost:3000',

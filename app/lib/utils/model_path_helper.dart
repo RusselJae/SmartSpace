@@ -1,4 +1,5 @@
 import '../config/api_config.dart';
+import 'env_loader.dart';
 
 /// Helper utility to normalize model paths for ModelViewer.
 /// Handles both bundled assets and backend-served model URLs.
@@ -54,6 +55,73 @@ class ModelPathHelper {
     'smartspace-xhuu.onrender.com',
   };
 
+  /// DB rows from an old bug stored Supabase object keys as
+  /// `https://<api-host>/uploads/models/<objectKey>` (files are not on the API host).
+  /// If [SUPABASE_STORAGE_PUBLIC_BASE] is set in `.env` (full URL through the bucket segment, no trailing slash),
+  /// rewrite to the real Storage public URL: `{base}/{objectKey}`.
+  ///
+  /// Same for `/uploads/images/` when the remainder starts with the storage key prefix (default `smartspace`).
+  static String _remapMisstoredSupabaseUrlsOnApiHost(String raw) {
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) return raw;
+    final uri = Uri.tryParse(raw);
+    if (uri == null || !uri.hasAuthority) return raw;
+
+    final base = EnvLoader.get('SUPABASE_STORAGE_PUBLIC_BASE').trim();
+    if (base.isEmpty) return raw;
+
+    final keyPrefix = EnvLoader.get('SUPABASE_STORAGE_KEY_PREFIX', 'smartspace')
+        .trim()
+        .replaceAll(RegExp(r'^/+|/+$'), '');
+    if (keyPrefix.isEmpty) return raw;
+
+    var path = _fixUploadsPath(uri.path);
+    final apiUri = Uri.tryParse(ApiConfig.baseUrl);
+    final apiHost = apiUri != null && apiUri.hasAuthority ? apiUri.host.toLowerCase() : '';
+    final mediaHost = uri.host.toLowerCase();
+
+    // Same deploy as the app, or any Railway URL with the mistaken path shape.
+    final bool hostLooksLikeOurApi = apiHost.isNotEmpty && mediaHost == apiHost;
+    final bool hostLooksLikeRailway = mediaHost.endsWith('.railway.app');
+    if (!hostLooksLikeOurApi && !hostLooksLikeRailway) return raw;
+
+    final cleanBase = base.replaceAll(RegExp(r'/+$'), '');
+    final q = uri.hasQuery ? '?${uri.query}' : '';
+
+    for (final prefix in ['/uploads/models/', '/uploads/images/']) {
+      if (path.startsWith(prefix)) {
+        final remainder = path.substring(prefix.length);
+        if (remainder.startsWith('$keyPrefix/')) {
+          return '$cleanBase/$remainder$q';
+        }
+      }
+    }
+    return raw;
+  }
+
+  /// Like [_remapMisstoredSupabaseUrlsOnApiHost] but for DB values saved as relative `/uploads/models/...`.
+  static String _remapRelativeMisstoredSupabasePathIfConfigured(String raw) {
+    final base = EnvLoader.get('SUPABASE_STORAGE_PUBLIC_BASE').trim();
+    if (base.isEmpty) return raw;
+    final keyPrefix = EnvLoader.get('SUPABASE_STORAGE_KEY_PREFIX', 'smartspace')
+        .trim()
+        .replaceAll(RegExp(r'^/+|/+$'), '');
+    if (keyPrefix.isEmpty) return raw;
+
+    var path = raw.startsWith('/') ? raw : '/$raw';
+    path = _fixUploadsPath(path);
+    final cleanBase = base.replaceAll(RegExp(r'/+$'), '');
+
+    for (final prefix in ['/uploads/models/', '/uploads/images/']) {
+      if (path.startsWith(prefix)) {
+        final remainder = path.substring(prefix.length);
+        if (remainder.startsWith('$keyPrefix/')) {
+          return '$cleanBase/$remainder';
+        }
+      }
+    }
+    return raw;
+  }
+
   /// When the API stored a full URL to localhost/LAN or an old deploy host but the app now talks to another origin.
   static String _rewriteAbsoluteMediaUrlIfNeeded(String raw) {
     if (!raw.startsWith('http://') && !raw.startsWith('https://')) return raw;
@@ -102,7 +170,14 @@ class ModelPathHelper {
     }
 
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return _rewriteAbsoluteMediaUrlIfNeeded(raw);
+      final remapped = _remapMisstoredSupabaseUrlsOnApiHost(raw);
+      return _rewriteAbsoluteMediaUrlIfNeeded(remapped);
+    }
+
+    // Mis-stored Supabase keys as relative `/uploads/...` (no scheme) — jump straight to Storage.
+    final relativeRemapped = _remapRelativeMisstoredSupabasePathIfConfigured(raw);
+    if (relativeRemapped != raw) {
+      return relativeRemapped;
     }
 
     // If it's a backend uploads path (relative), prefix with API base host
@@ -146,7 +221,12 @@ class ModelPathHelper {
     var raw = value.trim().replaceAll('\\', '/');
     raw = _fixUploadsPath(raw);
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return _rewriteAbsoluteMediaUrlIfNeeded(raw);
+      final remapped = _remapMisstoredSupabaseUrlsOnApiHost(raw);
+      return _rewriteAbsoluteMediaUrlIfNeeded(remapped);
+    }
+    final relativeRemapped = _remapRelativeMisstoredSupabasePathIfConfigured(raw);
+    if (relativeRemapped != raw) {
+      return relativeRemapped;
     }
     if (raw.startsWith('/uploads') || raw.startsWith('uploads/')) {
       final base = _originFromApiBase();

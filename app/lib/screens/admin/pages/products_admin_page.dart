@@ -816,6 +816,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     
     // Add listener to format price as user types
     _price.addListener(_onPriceChanged);
+    // Rebuild when model path changes so Remove / suffix clear stay in sync with the field.
+    _modelPath.addListener(_onModelPathChanged);
+  }
+
+  void _onModelPathChanged() {
+    if (mounted) setState(() {});
   }
 
   /// Format price with commas (e.g., 25000 -> 25,000)
@@ -1336,6 +1342,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _realHeightM.dispose();
     _realDepthM.dispose();
     _modelBaseScale.dispose();
+    _modelPath.removeListener(_onModelPathChanged);
     _modelPath.dispose();
     for (final draft in _componentDrafts) {
       draft.dispose();
@@ -1582,9 +1589,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          if (_extractManagedModelFilePath(_modelPath.text) != null)
+                          if (_modelPath.text.trim().isNotEmpty)
                             OutlinedButton.icon(
                               onPressed: _uploadingModel ? null : _removeCurrentModel,
                               icon: const Icon(Icons.delete_outline, size: 18),
@@ -1593,8 +1603,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                               ),
                             ),
-                          if (_extractManagedModelFilePath(_modelPath.text) != null)
-                            const SizedBox(width: 8),
                           FilledButton.icon(
                             onPressed: _uploadingModel ? null : _pickAndUploadModel,
                             icon: _uploadingModel
@@ -1614,16 +1622,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  // Display current model path (editable text field)
-                  _buildField(
-                    _modelPath,
-                    'Model path (.glb or .gltf file)',
-                    keyboardType: TextInputType.text,
-                    errorText: _fieldErrors['modelPath'],
-                  ),
+                  // Editable URL/path; suffix + header Remove clear the field (and delete from storage when we can).
+                  _buildModelPathField(),
                   const SizedBox(height: 4),
                   Text(
-                    'Upload a .glb or .gltf file, or enter a path manually (e.g., assets/your_model.glb or /uploads/models/...)',
+                    'Upload a .glb or .gltf, or paste a full https URL to the file (e.g. from Supabase public bucket). '
+                    'Use Remove or the field ✕ to clear.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontStyle: FontStyle.italic,
                       color: Colors.grey[600],
@@ -1877,6 +1881,63 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                   width: 2,
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Model path row: same styling as [_buildField] plus inline clear for quick removal.
+  Widget _buildModelPathField() {
+    final errorText = _fieldErrors['modelPath'];
+    final hasError = errorText != null && errorText.isNotEmpty;
+    final borderColor = hasError ? CupertinoColors.systemRed : CupertinoColors.separator.withValues(alpha: 0.1);
+    final canClear = _modelPath.text.trim().isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _requiredLabel('Model path (.glb or .gltf file)'),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _modelPath,
+            keyboardType: TextInputType.url,
+            maxLines: 2,
+            decoration: InputDecoration(
+              errorText: errorText,
+              errorStyle: const TextStyle(color: CupertinoColors.systemRed, fontSize: 12),
+              filled: true,
+              fillColor: const Color(0xFFF8F8F8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: borderColor, width: hasError ? 1.5 : 1),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: hasError ? CupertinoColors.systemRed : const Color(0xFF8D6E63),
+                  width: 2,
+                ),
+              ),
+              suffixIcon: canClear
+                  ? IconButton(
+                      tooltip: 'Remove 3D model',
+                      onPressed: _uploadingModel ? null : _removeCurrentModel,
+                      icon: Icon(
+                        Icons.close_rounded,
+                        color: Colors.grey.shade700,
+                        size: 22,
+                      ),
+                    )
+                  : null,
             ),
           ),
         ],

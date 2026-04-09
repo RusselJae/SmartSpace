@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import '../utils/env_loader.dart';
 
 /// Small data class describing the result of a backend storage upload.
 class BackendUploadResult {
@@ -19,11 +20,65 @@ class BackendUploadResult {
   factory BackendUploadResult.fromJson(Map<String, dynamic> json) {
     final data = json['data'] as Map<String, dynamic>;
     return BackendUploadResult(
-      downloadUrl: data['downloadUrl'] as String,
-      fileName: data['fileName'] as String,
-      filePath: data['filePath'] as String,
+      downloadUrl: (data['downloadUrl'] as String?)?.trim() ?? '',
+      fileName: (data['fileName'] as String?)?.trim() ?? '',
+      filePath: (data['filePath'] as String?)?.trim() ?? '',
     );
   }
+}
+
+/// Public base for Supabase Storage objects (`.../storage/v1/object/public/<bucket>`), no trailing slash.
+String _supabasePublicObjectRoot() {
+  final explicit = EnvLoader.get('SUPABASE_STORAGE_PUBLIC_BASE').trim();
+  if (explicit.isNotEmpty) {
+    return explicit.replaceAll(RegExp(r'/+$'), '');
+  }
+  // Same pattern as backend: project URL + /storage/v1/object/public/<bucket>
+  final su = EnvLoader.get('SUPABASE_URL').trim();
+  final bucket = EnvLoader.get('SUPABASE_STORAGE_BUCKET', 'smartspace-uploads').trim();
+  if (su.isEmpty) return '';
+  final root = su.replaceAll(RegExp(r'/+$'), '');
+  return '$root/storage/v1/object/public/$bucket';
+}
+
+/// Turns API upload JSON into a browser-usable URL.
+///
+/// Supabase uploads use object keys like `smartspace/models/...`; the backend returns a full
+/// `https://*.supabase.co/...` [downloadUrl]. If anything still looks like `/uploads/models/<key>` or
+/// the download field is empty, we rebuild from [filePath] using Supabase env vars.
+String _resolvePublicDownloadUrl(String downloadUrl, String filePath) {
+  var raw = downloadUrl.trim().replaceFirst(RegExp(r'^\uFEFF'), '');
+  final fp = filePath.trim().replaceAll('\\', '/');
+
+  // Some proxies strip the URL; we still have the authoritative object key in [filePath].
+  if (raw.isEmpty && fp.isNotEmpty) {
+    raw = fp.startsWith('smartspace/images/')
+        ? '/uploads/images/$fp'
+        : '/uploads/models/$fp';
+  }
+
+  final parsed = Uri.tryParse(raw);
+  if (parsed != null &&
+      parsed.hasScheme &&
+      (parsed.scheme == 'http' || parsed.scheme == 'https')) {
+    return raw;
+  }
+
+  // Supabase object key from backend — never treat as a Railway `/uploads` path.
+  if (fp.startsWith('smartspace/')) {
+    final root = _supabasePublicObjectRoot();
+    if (root.isNotEmpty) {
+      return '$root/$fp';
+    }
+  }
+
+  final api = Uri.tryParse(ApiConfig.baseUrl);
+  if (api != null && api.hasAuthority) {
+    final rel = raw.isEmpty ? '/' : (raw.startsWith('/') ? raw : '/$raw');
+    return api.resolve(rel).toString();
+  }
+
+  return raw.isEmpty ? fp : raw;
 }
 
 /// Handles uploads of GLB/GLTF assets to the backend server.
@@ -78,15 +133,9 @@ class BackendStorageService {
     }
 
     final result = BackendUploadResult.fromJson(responseData);
-    
-    // Convert relative URL to absolute URL
-    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
-    final absoluteUrl = result.downloadUrl.startsWith('http')
-        ? result.downloadUrl
-        : '$baseUrl${result.downloadUrl}';
 
     return BackendUploadResult(
-      downloadUrl: absoluteUrl,
+      downloadUrl: _resolvePublicDownloadUrl(result.downloadUrl, result.filePath),
       fileName: result.fileName,
       filePath: result.filePath,
     );
@@ -136,15 +185,9 @@ class BackendStorageService {
     }
 
     final result = BackendUploadResult.fromJson(responseData);
-    
-    // Convert relative URL to absolute URL
-    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
-    final absoluteUrl = result.downloadUrl.startsWith('http')
-        ? result.downloadUrl
-        : '$baseUrl${result.downloadUrl}';
 
     return BackendUploadResult(
-      downloadUrl: absoluteUrl,
+      downloadUrl: _resolvePublicDownloadUrl(result.downloadUrl, result.filePath),
       fileName: result.fileName,
       filePath: result.filePath,
     );

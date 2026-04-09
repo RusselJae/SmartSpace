@@ -33,12 +33,25 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Custom scheme only (no domain / assetlinks.json). Use smartspace://verify-email?token=... -->
+            <!-- Custom scheme fallback when the app is opened from a non-HTTPS handler. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="smartspace" android:host="verify-email" />
+            </intent-filter>
+            <!--
+              HTTPS App Links: same URLs as signup email (PUBLIC_API_BASE_URL + /api/users/verify-email).
+              Requires /.well-known/assetlinks.json on that host (served by this repo's API when env is set).
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="@string/app_link_host"
+                    android:pathPrefix="/api/users/verify-email" />
             </intent-filter>
         </activity>
         <!-- Native AR editor Activity (launched from Flutter via MethodChannel).

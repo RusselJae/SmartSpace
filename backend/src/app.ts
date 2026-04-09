@@ -5,12 +5,16 @@ import { config } from './config/env';
 import { errorHandler } from './middleware/error_handler';
 import { ensureUploadsDirectories, uploadsRoot } from './utils/uploads';
 import { paymongoWebhookRouter } from './routes/paymongo_webhook_route';
+import { registerWellKnownRoutes } from './routes/well_known_route';
 
 export const createApp = (): Application => {
   const app = express();
   // So req.protocol / Host match the public URL behind Railway, Fly, Render, etc.
   app.set('trust proxy', true);
   ensureUploadsDirectories();
+
+  // Android App Links: /.well-known/assetlinks.json (must be on same host as email verification URLs).
+  registerWellKnownRoutes(app);
 
   // PayMongo webhooks require raw body for HMAC verification — register before express.json()
   app.use(

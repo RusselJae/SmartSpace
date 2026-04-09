@@ -406,9 +406,20 @@ export class EmailService {
     _frontendUrl?: string,
   ): Promise<void> {
     try {
-      // Custom scheme opens the installed app (Android/iOS) when the user taps the link.
-      // encodeURIComponent keeps tokens with + / = safe inside the query string.
+      // Custom scheme opens the installed app on a phone that has Wood Home installed.
+      // Most webmail clients block or ignore non-http(s) links, so the primary button must be https.
       const appVerifyUrl = `smartspace://verify-email?token=${encodeURIComponent(verificationToken)}`;
+
+      const apiOrigin =
+        config.publicApiBaseUrl.trim().length > 0
+          ? config.publicApiBaseUrl.trim()
+          : config.environment === 'development'
+            ? `http://localhost:${config.port}`
+            : '';
+      const browserVerifyUrl =
+        apiOrigin.length > 0
+          ? `${apiOrigin}/api/users/verify-email?token=${encodeURIComponent(verificationToken)}&ui=1`
+          : '';
 
       const safeName = escapeHtml(userName);
       const safeCode = escapeHtml(verificationCode);
@@ -453,7 +464,7 @@ export class EmailService {
             <td style="padding:28px 28px 8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
               <p style="margin:0 0 16px;font-size:16px;line-height:1.55;color:#4E342E;">Hi ${safeName},</p>
               <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#5D4037;">
-                Thanks for joining us. Use the code below in the app, or tap the button on the phone where Wood Home is installed to verify in one step.
+                Thanks for joining us. Use the code below in the app, or tap <strong>Verify email</strong> to confirm in your browser (works in Gmail and Outlook). On your phone with Wood Home installed, you can use <strong>Open in app</strong> instead.
               </p>
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FBF8F5;border-radius:14px;border:1px dashed #BCAAA4;">
                 <tr>
@@ -464,17 +475,31 @@ export class EmailService {
                   </td>
                 </tr>
               </table>
-              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:28px auto 0;">
+              ${
+                browserVerifyUrl
+                  ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:28px auto 0;">
                 <tr>
                   <td align="center" style="border-radius:14px;background:linear-gradient(145deg,#8D6E63 0%,#5D4037 100%);">
-                    <a href="${appVerifyUrl}" style="display:inline-block;padding:16px 36px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:14px;">
-                      Open the app to verify
+                    <a href="${browserVerifyUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:16px 36px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;font-weight:600;color:#FFFFFF;text-decoration:none;border-radius:14px;">
+                      Verify email
                     </a>
                   </td>
                 </tr>
               </table>
-              <p style="margin:20px 0 0;text-align:center;font-size:12px;line-height:1.5;color:#A1887F;">
-                If the button does not respond, long-press and open in browser is not available for this link—use the code above or tap the link on your device:
+              <p style="margin:14px 0 0;text-align:center;font-size:11px;line-height:1.45;color:#A1887F;">Or paste this link into your browser:<br /><a href="${browserVerifyUrl}" target="_blank" rel="noopener noreferrer" style="color:#6D4C41;font-weight:600;word-break:break-all;">${escapeHtml(browserVerifyUrl)}</a></p>`
+                  : `<p style="margin:28px 0 0;padding:16px;text-align:center;font-size:13px;line-height:1.5;color:#8D6E63;background:#FFF8E1;border-radius:12px;border:1px solid #FFE082;">The server is missing <strong>PUBLIC_API_BASE_URL</strong>, so a browser verify link cannot be generated. Use the code above or open the app link on your phone.</p>`
+              }
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:20px auto 0;">
+                <tr>
+                  <td align="center" style="border-radius:14px;background:#EFEBE9;border:1px solid #D7CCC8;">
+                    <a href="${appVerifyUrl}" style="display:inline-block;padding:14px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;font-weight:600;color:#5D4037;text-decoration:none;border-radius:14px;">
+                      Open in app (phone only)
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:16px 0 0;text-align:center;font-size:12px;line-height:1.5;color:#A1887F;">
+                The &quot;Open in app&quot; link only works if Wood Home is installed. If it does nothing in webmail, use <strong>Verify email</strong> or the code above.
                 <br /><br />
                 <a href="${appVerifyUrl}" style="color:#6D4C41;font-weight:600;word-break:break-all;">${escapeHtml(appVerifyUrl)}</a>
               </p>
@@ -503,7 +528,10 @@ export class EmailService {
         text:
           `Verify your Wood Home Furniture Trading account.\n\n` +
           `Your code: ${verificationCode}\n\n` +
-          `Open in the app (copy this on your phone if needed):\n${appVerifyUrl}\n`,
+          (browserVerifyUrl
+            ? `Verify in your browser (recommended in email):\n${browserVerifyUrl}\n\n`
+            : '') +
+          `Open in the Wood Home app (phone only):\n${appVerifyUrl}\n`,
       });
 
       console.log(`✅ Successfully sent verification email to ${userEmail}`);

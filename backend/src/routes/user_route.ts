@@ -20,6 +20,58 @@ import { avatarsDir, ensureUploadsDirectories } from '../utils/uploads';
 import { generateId } from '../utils/id_generator';
 import { config } from '../config/env';
 
+/** Escape text embedded in minimal HTML landing pages (verification errors, etc.). */
+function escapeHtmlVerificationPage(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Safe http(s) href for "continue to app" on the post-verify landing page. */
+function safeStorefrontHref(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return u.toString();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Browser-friendly page after the user taps "Verify" in email (Gmail/Outlook allow https links;
+ * custom schemes like smartspace:// are often inert in webmail).
+ */
+function buildVerifyEmailLandingHtml(ok: boolean, message: string): string {
+  const safeMessage = escapeHtmlVerificationPage(message);
+  const continueHref = safeStorefrontHref(config.frontend.url);
+  const continueBlock = continueHref
+    ? `<p style="margin:28px 0 0;"><a href="${escapeHtmlVerificationPage(continueHref)}" style="display:inline-block;padding:14px 28px;background:#5D4037;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;font-family:system-ui,sans-serif;">Continue to Wood Home</a></p>`
+    : '';
+  const title = ok ? 'Email verified' : 'Verification issue';
+  const accent = ok ? '#2E7D32' : '#C62828';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtmlVerificationPage(title)}</title>
+</head>
+<body style="margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f5f0eb;color:#3e2723;">
+  <div style="max-width:520px;margin:48px auto;padding:32px 28px;background:#fff;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.08);text-align:center;">
+    <h1 style="margin:0 0 12px;font-size:22px;color:${accent};">${escapeHtmlVerificationPage(title)}</h1>
+    <p style="margin:0;font-size:16px;line-height:1.55;color:#5d4037;">${safeMessage}</p>
+    ${continueBlock}
+    <p style="margin:32px 0 0;font-size:13px;color:#a1887f;">Wood Home Furniture Trading</p>
+  </div>
+</body>
+</html>`;
+}
+
 export const userRouter = Router();
 
 ensureUploadsDirectories();
@@ -217,27 +269,54 @@ userRouter.post(
 userRouter.get(
   '/verify-email',
   asyncHandler(async (req, res) => {
-    const token = req.query.token as string;
-    
-    if (!token) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Verification token is required' 
+    const token = (req.query.token as string | undefined) ?? '';
+    // Set by links in transactional email so webmail opens a real page (not JSON).
+    const emailLanding = req.query.ui === '1' || req.query.source === 'email';
+
+    if (!token.trim()) {
+      if (emailLanding) {
+        return res
+          .status(400)
+          .type('html')
+          .send(
+            buildVerifyEmailLandingHtml(
+              false,
+              'This verification link is missing a token. Request a new email from the app.',
+            ),
+          );
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Verification token is required',
       });
     }
 
     try {
       const user = await verifyUserEmail(token);
-      res.json({ 
-        success: true, 
+      if (emailLanding) {
+        return res
+          .status(200)
+          .type('html')
+          .send(
+            buildVerifyEmailLandingHtml(
+              true,
+              'You are all set. You can sign in on your phone or the website.',
+            ),
+          );
+      }
+      res.json({
+        success: true,
         message: 'Email verified successfully',
-        data: user 
+        data: user,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to verify email';
-      res.status(400).json({ 
-        success: false, 
-        message 
+      if (emailLanding) {
+        return res.status(400).type('html').send(buildVerifyEmailLandingHtml(false, message));
+      }
+      res.status(400).json({
+        success: false,
+        message,
       });
     }
   }),

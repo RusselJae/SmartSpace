@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Android App Links: must match the hostname in PUBLIC_API_BASE_URL (no https://, no path).
+      Example: smartspace-production.up.railway.app
+      If this does not match your API host, email links will open in the browser instead of the app
+      until you fix it and rebuild the APK.
+    -->
+    <string name="app_link_host" translatable="false">smartspace-production.up.railway.app</string>
+</resources>

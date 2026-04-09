@@ -40,6 +40,12 @@ type EnvironmentConfig = {
   readonly frontend: {
     readonly url: string;
   };
+  /** Used to serve `/.well-known/assetlinks.json` so Android App Links can open the APK from email. */
+  readonly androidAppLink: {
+    readonly packageName: string;
+    /** SHA-256 cert fingerprints (colon hex), e.g. from Play Console or `keytool -list -v`. */
+    readonly sha256CertFingerprints: readonly string[];
+  };
   readonly paymongo: {
     /** sk_test_... or sk_live_... — never commit real keys */
     readonly secretKey: string;
@@ -107,6 +113,13 @@ export const config: EnvironmentConfig = {
   publicApiBaseUrl: (process.env.PUBLIC_API_BASE_URL ?? '').trim().replace(/\/+$/, ''),
   frontend: {
     url: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+  },
+  androidAppLink: {
+    packageName: (process.env.ANDROID_APP_LINK_PACKAGE_NAME ?? 'com.example.smartspace_ar').trim(),
+    sha256CertFingerprints: (process.env.ANDROID_APP_LINK_SHA256_CERT_FINGERPRINTS ?? '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
   },
   paymongo: {
     secretKey: process.env.PAYMONGO_SECRET_KEY ?? '',

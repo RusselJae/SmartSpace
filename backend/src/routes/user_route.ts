@@ -19,6 +19,9 @@ import { EmailService } from '../services/email_service';
 import { avatarsDir, ensureUploadsDirectories } from '../utils/uploads';
 import { generateId } from '../utils/id_generator';
 import { config } from '../config/env';
+import { isCloudinaryUploadsEnabled, uploadImageBuffer } from '../services/cloudinary_service';
+import { isSupabaseStorageEnabled, uploadToSupabaseStorage } from '../services/supabase_storage_service';
+import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
 
 /** Escape text embedded in minimal HTML landing pages (verification errors, etc.). */
 function escapeHtmlVerificationPage(value: string): string {
@@ -76,7 +79,7 @@ export const userRouter = Router();
 
 ensureUploadsDirectories();
 
-const avatarStorage = multer.diskStorage({
+const avatarDiskStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, avatarsDir);
   },
@@ -87,7 +90,7 @@ const avatarStorage = multer.diskStorage({
 });
 
 const avatarUpload = multer({
-  storage: avatarStorage,
+  storage: shouldUseMemoryBufferUpload() ? multer.memoryStorage() : avatarDiskStorage,
   limits: { fileSize: 6 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     // Check mimetype first
@@ -245,13 +248,38 @@ userRouter.post(
       if (file == null) {
         return res.status(400).json({ success: false, message: 'Avatar file is required' });
       }
-      // Prefer PUBLIC_API_BASE_URL so stored avatar URLs always use the canonical
-      // public host (Railway, etc.) instead of an internal proxy hostname.
-      const origin =
-        config.publicApiBaseUrl.trim().length > 0
-          ? config.publicApiBaseUrl
-          : `${req.protocol}://${req.get('host') ?? 'localhost:4000'}`;
-      const url = `${origin}/uploads/avatars/${file.filename}`;
+
+      let url: string;
+      if (isSupabaseStorageEnabled()) {
+        const ext = path.extname(file.originalname) || '.jpg';
+        const fileName = `${generateId('avatar')}${ext}`;
+        const contentType =
+          file.mimetype && file.mimetype.startsWith('image/') ? file.mimetype : 'image/jpeg';
+        const { publicUrl } = await uploadToSupabaseStorage({
+          subKey: `avatars/${fileName}`,
+          buffer: file.buffer,
+          contentType,
+        });
+        url = publicUrl;
+      } else if (isCloudinaryUploadsEnabled()) {
+        const ext = path.extname(file.originalname) || '.jpg';
+        const fileName = `${generateId('avatar')}${ext}`;
+        const { secureUrl } = await uploadImageBuffer({
+          subFolder: 'avatars',
+          fileName,
+          buffer: file.buffer,
+        });
+        url = secureUrl;
+      } else {
+        // Prefer PUBLIC_API_BASE_URL so stored avatar URLs always use the canonical
+        // public host (Railway, etc.) instead of an internal proxy hostname.
+        const origin =
+          config.publicApiBaseUrl.trim().length > 0
+            ? config.publicApiBaseUrl
+            : `${req.protocol}://${req.get('host') ?? 'localhost:4000'}`;
+        url = `${origin}/uploads/avatars/${file.filename}`;
+      }
+
       await updateUser(req.params.id, { avatarUrl: url });
       res.json({ success: true, data: { url } });
     } catch (error) {

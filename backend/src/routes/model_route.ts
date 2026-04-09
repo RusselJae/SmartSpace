@@ -4,20 +4,31 @@ import path from 'path';
 import fs from 'fs';
 import { modelsDir } from '../utils/uploads';
 import { asyncHandler } from '../utils/async_handler';
+import {
+  isCloudinaryUploadsEnabled,
+  uploadRawBuffer,
+  tryDestroyIfCloudinary,
+} from '../services/cloudinary_service';
+import {
+  isSupabaseStorageEnabled,
+  uploadToSupabaseStorage,
+  tryDeleteSupabaseStorage,
+} from '../services/supabase_storage_service';
+import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
 
 export const modelRouter = Router();
 
-// Configure multer for model uploads
-const storage = multer.diskStorage({
+// Configure multer — memory when uploading to Supabase Storage or Cloudinary, disk otherwise.
+const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // Create product-specific folder if productHandle is provided
     const productHandle = (req.body.productHandle as string) || 'default';
-    const sanitizedHandle = productHandle
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '') || 'default';
-    
+    const sanitizedHandle =
+      productHandle
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'default';
+
     const productDir = path.join(modelsDir, sanitizedHandle);
     if (!fs.existsSync(productDir)) {
       fs.mkdirSync(productDir, { recursive: true });
@@ -25,23 +36,22 @@ const storage = multer.diskStorage({
     cb(null, productDir);
   },
   filename: (req, file, cb) => {
-    // Keep original filename but sanitize it
     const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext)
+    const name = path
+      .basename(file.originalname, ext)
       .replace(/[^a-zA-Z0-9-_]/g, '_')
-      .substring(0, 100); // Limit length
+      .substring(0, 100);
     const timestamp = Date.now();
     cb(null, `${name}_${timestamp}${ext}`);
   },
 });
 
 const upload = multer({
-  storage,
+  storage: shouldUseMemoryBufferUpload() ? multer.memoryStorage() : diskStorage,
   limits: {
     fileSize: 100 * 1024 * 1024, // 100MB max file size
   },
   fileFilter: (req, file, cb) => {
-    // Only allow GLB and GLTF files
     const allowedExts = ['.glb', '.gltf'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExts.includes(ext)) {
@@ -55,20 +65,9 @@ const upload = multer({
 /**
  * POST /api/models/upload
  * Upload a 3D model file
- * 
- * Body (multipart/form-data):
- * - file: The GLB/GLTF file
- * - productHandle: Optional product identifier for folder organization
- * 
- * Returns:
- * {
- *   success: true,
- *   data: {
- *     fileName: string,
- *     filePath: string,
- *     downloadUrl: string
- *   }
- * }
+ *
+ * data.filePath: disk-relative path, Cloudinary public_id, or Supabase object path
+ * data.downloadUrl: /uploads/... | Cloudinary URL | Supabase public URL
  */
 modelRouter.post(
   '/upload',
@@ -81,9 +80,62 @@ modelRouter.post(
       });
     }
 
-    // Construct the download URL
-    // The file is stored at: uploads/models/{productHandle}/{filename}
-    // It's served at: /uploads/models/{productHandle}/{filename}
+    const productHandle = (req.body.productHandle as string) || 'default';
+    const sanitizedHandle =
+      productHandle
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'default';
+
+    const ext = path.extname(req.file.originalname);
+    const name = path
+      .basename(req.file.originalname, ext)
+      .replace(/[^a-zA-Z0-9-_]/g, '_')
+      .substring(0, 100);
+    const timestamp = Date.now();
+    const fileName = `${name}_${timestamp}${ext}`;
+
+    if (isSupabaseStorageEnabled()) {
+      const contentType =
+        ext.toLowerCase() === '.glb'
+          ? 'model/gltf-binary'
+          : ext.toLowerCase() === '.gltf'
+            ? 'model/gltf+json'
+            : 'application/octet-stream';
+      const { publicUrl, objectKey } = await uploadToSupabaseStorage({
+        subKey: `models/${sanitizedHandle}/${fileName}`,
+        buffer: req.file.buffer,
+        contentType,
+      });
+      return res.json({
+        success: true,
+        data: {
+          fileName: req.file.originalname,
+          filePath: objectKey,
+          downloadUrl: publicUrl,
+        },
+      });
+    }
+
+    if (isCloudinaryUploadsEnabled()) {
+      const { secureUrl, publicId } = await uploadRawBuffer({
+        subFolder: `models/${sanitizedHandle}`,
+        fileName,
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype,
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          fileName: req.file.originalname,
+          filePath: publicId,
+          downloadUrl: secureUrl,
+        },
+      });
+    }
+
     const relativePath = path.relative(modelsDir, req.file.path);
     const downloadUrl = `/uploads/models/${relativePath.replace(/\\/g, '/')}`;
 
@@ -100,46 +152,63 @@ modelRouter.post(
 
 /**
  * DELETE /api/models/:filePath
- * Delete a model file
- * 
- * filePath should be URL-encoded path like: product-handle/filename.glb
  */
 modelRouter.delete(
   '/:filePath(*)',
   asyncHandler(async (req, res) => {
     const filePath = req.params.filePath;
+    const decoded = decodeURIComponent(filePath);
     const fullPath = path.join(modelsDir, filePath);
-
-    // Security check: ensure the path is within modelsDir
     const resolvedPath = path.resolve(fullPath);
     const resolvedModelsDir = path.resolve(modelsDir);
-    if (!resolvedPath.startsWith(resolvedModelsDir)) {
+    const isUnderModelsDir = resolvedPath.startsWith(resolvedModelsDir);
+
+    if (isUnderModelsDir && fs.existsSync(fullPath)) {
+      try {
+        fs.unlinkSync(fullPath);
+        return res.json({
+          success: true,
+          message: 'File deleted successfully',
+        });
+      } catch (error) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to delete file',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    if (!isUnderModelsDir && !isCloudinaryUploadsEnabled() && !isSupabaseStorageEnabled()) {
       return res.status(403).json({
         success: false,
         message: 'Invalid file path',
       });
     }
 
-    try {
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-        res.json({
+    if (isSupabaseStorageEnabled()) {
+      const ok = await tryDeleteSupabaseStorage(decoded);
+      if (ok) {
+        return res.json({
           success: true,
           message: 'File deleted successfully',
         });
-      } else {
-        res.status(404).json({
-          success: false,
-          message: 'File not found',
+      }
+    }
+
+    if (isCloudinaryUploadsEnabled()) {
+      const ok = await tryDestroyIfCloudinary(decoded, 'raw');
+      if (ok) {
+        return res.json({
+          success: true,
+          message: 'File deleted successfully',
         });
       }
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to delete file',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
     }
+
+    return res.status(404).json({
+      success: false,
+      message: 'File not found',
+    });
   }),
 );
-

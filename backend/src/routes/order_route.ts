@@ -7,6 +7,9 @@ import { z } from 'zod';
 import { getPool } from '../config/database';
 import { asyncHandler } from '../utils/async_handler';
 import { madeToOrderDir, validIdsDir } from '../utils/uploads';
+import { isCloudinaryUploadsEnabled, uploadImageBuffer } from '../services/cloudinary_service';
+import { isSupabaseStorageEnabled, uploadToSupabaseStorage } from '../services/supabase_storage_service';
+import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
 import {
   listOrders,
   createOrder,
@@ -36,7 +39,7 @@ const validIdStorage = multer.diskStorage({
 });
 
 const validIdUpload = multer({
-  storage: validIdStorage,
+  storage: shouldUseMemoryBufferUpload() ? multer.memoryStorage() : validIdStorage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -67,7 +70,7 @@ const mtoStorage = multer.diskStorage({
 });
 
 const mtoUpload = multer({
-  storage: mtoStorage,
+  storage: shouldUseMemoryBufferUpload() ? multer.memoryStorage() : mtoStorage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -467,8 +470,32 @@ orderRouter.post(
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
     const requestRef = req.params.requestRef;
-    const relative = path.relative(madeToOrderDir, req.file.path);
-    const downloadUrl = `/uploads/made-to-order/${relative.replace(/\\/g, '/')}`;
+    let downloadUrl: string;
+    const sanitized = requestRef.replace(/[^a-z0-9-_]/gi, '-');
+    const ext = path.extname(req.file.originalname);
+    const fileName = `mto_valid_${Date.now()}${ext}`;
+    if (isSupabaseStorageEnabled()) {
+      const contentType =
+        req.file.mimetype && req.file.mimetype.startsWith('image/')
+          ? req.file.mimetype
+          : 'application/octet-stream';
+      const { publicUrl } = await uploadToSupabaseStorage({
+        subKey: `made-to-order/${sanitized}/${fileName}`,
+        buffer: req.file.buffer,
+        contentType,
+      });
+      downloadUrl = publicUrl;
+    } else if (isCloudinaryUploadsEnabled()) {
+      const { secureUrl } = await uploadImageBuffer({
+        subFolder: `made-to-order/${sanitized}`,
+        fileName,
+        buffer: req.file.buffer,
+      });
+      downloadUrl = secureUrl;
+    } else {
+      const relative = path.relative(madeToOrderDir, req.file.path);
+      downloadUrl = `/uploads/made-to-order/${relative.replace(/\\/g, '/')}`;
+    }
     try {
       await ensureMadeToOrderRequestsTable();
       const pool = getPool();
@@ -501,10 +528,50 @@ orderRouter.post(
       return res.status(400).json({ success: false, message: 'No files uploaded' });
     }
     const requestRef = req.params.requestRef;
-    const downloadUrls = files.map((f) => {
-      const relative = path.relative(madeToOrderDir, f.path);
-      return `/uploads/made-to-order/${relative.replace(/\\/g, '/')}`;
-    });
+    const sanitizedRef = requestRef.replace(/[^a-z0-9-_]/gi, '-');
+    let downloadUrls: string[];
+    if (isSupabaseStorageEnabled()) {
+      downloadUrls = await Promise.all(
+        files.map(async (f) => {
+          const ext = path.extname(f.originalname);
+          const base = path
+            .basename(f.originalname, ext)
+            .replace(/[^a-zA-Z0-9-_]/g, '_')
+            .substring(0, 80);
+          const fileName = `${base}_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}${ext}`;
+          const contentType =
+            f.mimetype && f.mimetype.startsWith('image/') ? f.mimetype : 'application/octet-stream';
+          const { publicUrl } = await uploadToSupabaseStorage({
+            subKey: `made-to-order/${sanitizedRef}/references/${fileName}`,
+            buffer: f.buffer,
+            contentType,
+          });
+          return publicUrl;
+        }),
+      );
+    } else if (isCloudinaryUploadsEnabled()) {
+      downloadUrls = await Promise.all(
+        files.map(async (f) => {
+          const ext = path.extname(f.originalname);
+          const base = path
+            .basename(f.originalname, ext)
+            .replace(/[^a-zA-Z0-9-_]/g, '_')
+            .substring(0, 80);
+          const fileName = `${base}_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}${ext}`;
+          const { secureUrl } = await uploadImageBuffer({
+            subFolder: `made-to-order/${sanitizedRef}/references`,
+            fileName,
+            buffer: f.buffer,
+          });
+          return secureUrl;
+        }),
+      );
+    } else {
+      downloadUrls = files.map((f) => {
+        const relative = path.relative(madeToOrderDir, f.path);
+        return `/uploads/made-to-order/${relative.replace(/\\/g, '/')}`;
+      });
+    }
     try {
       await ensureMadeToOrderRequestsTable();
       const pool = getPool();
@@ -678,8 +745,32 @@ orderRouter.post(
     if (order.userId !== userId) {
       return res.status(403).json({ success: false, message: 'Forbidden' });
     }
-    const relative = path.relative(validIdsDir, req.file.path);
-    const downloadUrl = `/uploads/valid-ids/${relative.replace(/\\/g, '/')}`;
+    let downloadUrl: string;
+    const sanitized = orderId.replace(/[^a-z0-9-_]/gi, '-');
+    const ext = path.extname(req.file.originalname);
+    const fileName = `valid_id_${orderId.substring(0, 8)}_${Date.now()}${ext}`;
+    if (isSupabaseStorageEnabled()) {
+      const contentType =
+        req.file.mimetype && req.file.mimetype.startsWith('image/')
+          ? req.file.mimetype
+          : 'application/octet-stream';
+      const { publicUrl } = await uploadToSupabaseStorage({
+        subKey: `valid-ids/${sanitized}/${fileName}`,
+        buffer: req.file.buffer,
+        contentType,
+      });
+      downloadUrl = publicUrl;
+    } else if (isCloudinaryUploadsEnabled()) {
+      const { secureUrl } = await uploadImageBuffer({
+        subFolder: `valid-ids/${sanitized}`,
+        fileName,
+        buffer: req.file.buffer,
+      });
+      downloadUrl = secureUrl;
+    } else {
+      const relative = path.relative(validIdsDir, req.file.path);
+      downloadUrl = `/uploads/valid-ids/${relative.replace(/\\/g, '/')}`;
+    }
     await updateOrderValidIdProofUrl(orderId, downloadUrl);
     res.json({
       success: true,

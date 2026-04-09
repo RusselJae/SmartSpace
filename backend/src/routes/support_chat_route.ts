@@ -11,13 +11,20 @@ import {
   setConversationStatus,
   getOrCreateConversationForUser,
 } from '../services/support_chat_service';
+import {
+  isCloudinaryUploadsEnabled,
+  uploadImageBuffer,
+  uploadRawBuffer,
+} from '../services/cloudinary_service';
+import { isSupabaseStorageEnabled, uploadToSupabaseStorage } from '../services/supabase_storage_service';
+import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
 
 export const supportChatRouter = Router();
 
 // -----------------------------------------------------------------------------
 // Support chat attachment uploads
-// - Stores files under: uploads/support-chat/<conversationId>/
-// - Returns a relative download URL like: /uploads/support-chat/<id>/<filename>
+// - Local: uploads/support-chat/<conversationId>/ → /uploads/support-chat/...
+// - Supabase / Cloudinary: same path prefix under remote storage → https URL
 // -----------------------------------------------------------------------------
 
 const supportChatAttachmentStorage = multer.diskStorage({
@@ -42,7 +49,7 @@ const supportChatAttachmentStorage = multer.diskStorage({
 });
 
 const supportChatAttachmentUpload = multer({
-  storage: supportChatAttachmentStorage,
+  storage: shouldUseMemoryBufferUpload() ? multer.memoryStorage() : supportChatAttachmentStorage,
   limits: {
     fileSize: 15 * 1024 * 1024, // 15MB max attachment
   },
@@ -78,6 +85,64 @@ const supportChatAttachmentUpload = multer({
     );
   },
 });
+
+/** Build stored attachment URL (relative /uploads/..., Supabase, or Cloudinary https URL). */
+const buildSupportAttachmentUrl = async (
+  file: Express.Multer.File,
+  conversationId: string,
+): Promise<string> => {
+  const safeConversationId = conversationId.replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  const ext = path.extname(file.originalname) || '';
+  const base = path
+    .basename(file.originalname, ext)
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .substring(0, 80);
+  const timestamp = Date.now();
+  const rand = Math.floor(Math.random() * 1000000)
+    .toString()
+    .padStart(6, '0');
+  const fileName = `${base}_${timestamp}_${rand}${ext}`;
+  const subFolder = `support-chat/${safeConversationId}`;
+
+  const allowedImageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  const isImage = allowedImageExts.includes(ext.toLowerCase());
+
+  if (isSupabaseStorageEnabled()) {
+    const contentType =
+      isImage && file.mimetype && file.mimetype.startsWith('image/')
+        ? file.mimetype
+        : file.mimetype && file.mimetype.length > 0
+          ? file.mimetype
+          : 'application/octet-stream';
+    const { publicUrl } = await uploadToSupabaseStorage({
+      subKey: `${subFolder}/${fileName}`,
+      buffer: file.buffer,
+      contentType,
+    });
+    return publicUrl;
+  }
+
+  if (isCloudinaryUploadsEnabled()) {
+    const buffer = file.buffer;
+    if (isImage) {
+      const { secureUrl } = await uploadImageBuffer({
+        subFolder: subFolder,
+        fileName,
+        buffer,
+      });
+      return secureUrl;
+    }
+    const { secureUrl } = await uploadRawBuffer({
+      subFolder: subFolder,
+      fileName,
+      buffer,
+      mimeType: file.mimetype,
+    });
+    return secureUrl;
+  }
+
+  return `/uploads/support-chat/${safeConversationId}/${file.filename}`;
+};
 
 supportChatRouter.post(
   '/user/conversation',
@@ -150,7 +215,7 @@ supportChatRouter.post(
     }
 
     const conversationId = id;
-    const attachmentUrl = `/uploads/support-chat/${conversationId}/${req.file.filename}`;
+    const attachmentUrl = await buildSupportAttachmentUrl(req.file, conversationId);
     const fileExt = path.extname(req.file.originalname).toLowerCase();
     const attachmentType: 'image' | 'file' = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(fileExt)
       ? 'image'
@@ -236,7 +301,7 @@ supportChatRouter.post(
     }
 
     const conversationId = id;
-    const attachmentUrl = `/uploads/support-chat/${conversationId}/${req.file.filename}`;
+    const attachmentUrl = await buildSupportAttachmentUrl(req.file, conversationId);
     const fileExt = path.extname(req.file.originalname).toLowerCase();
     const attachmentType: 'image' | 'file' = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(fileExt)
       ? 'image'

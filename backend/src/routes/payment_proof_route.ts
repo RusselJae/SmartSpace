@@ -5,20 +5,22 @@ import fs from 'fs';
 import { paymentProofsDir } from '../utils/uploads';
 import { asyncHandler } from '../utils/async_handler';
 import { uploadPaymentProof } from '../services/order_service';
+import { isCloudinaryUploadsEnabled, uploadImageBuffer } from '../services/cloudinary_service';
+import { isSupabaseStorageEnabled, uploadToSupabaseStorage } from '../services/supabase_storage_service';
+import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
 
 export const paymentProofRouter = Router();
 
-// Configure multer for payment proof uploads
-const storage = multer.diskStorage({
+const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // Create order-specific folder for organization
     const orderId = (req.body.orderId as string) || 'default';
-    const sanitizedOrderId = orderId
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '') || 'default';
-    
+    const sanitizedOrderId =
+      orderId
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'default';
+
     const orderDir = path.join(paymentProofsDir, sanitizedOrderId);
     if (!fs.existsSync(orderDir)) {
       fs.mkdirSync(orderDir, { recursive: true });
@@ -26,7 +28,6 @@ const storage = multer.diskStorage({
     cb(null, orderDir);
   },
   filename: (req, file, cb) => {
-    // Generate filename with order ID and timestamp
     const orderId = (req.body.orderId as string) || 'unknown';
     const ext = path.extname(file.originalname);
     const timestamp = Date.now();
@@ -35,12 +36,11 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({
-  storage,
+  storage: shouldUseMemoryBufferUpload() ? multer.memoryStorage() : diskStorage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max file size
   },
   fileFilter: (req, file, cb) => {
-    // Only allow image files
     const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExts.includes(ext)) {
@@ -53,22 +53,6 @@ const upload = multer({
 
 /**
  * POST /api/payment-proofs/upload
- * Upload a payment proof image for an order
- * 
- * Body (multipart/form-data):
- * - file: The payment proof image (screenshot)
- * - orderId: The order ID this proof is for
- * 
- * Returns:
- * {
- *   success: true,
- *   data: {
- *     fileName: string,
- *     filePath: string,
- *     downloadUrl: string,
- *     orderId: string
- *   }
- * }
  */
 paymentProofRouter.post(
   '/upload',
@@ -89,41 +73,56 @@ paymentProofRouter.post(
       });
     }
 
-    // Construct the download URL
-    const relativePath = path.relative(paymentProofsDir, req.file.path);
-    const downloadUrl = `/uploads/payment-proofs/${relativePath.replace(/\\/g, '/')}`;
+    const sanitizedOrderId =
+      orderId
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'default';
 
-    // Update order with payment proof URL
+    let downloadUrl: string;
+    let relativePath: string;
+
+    const ext = path.extname(req.file.originalname);
+    const timestamp = Date.now();
+    const fileName = `proof_${orderId.substring(0, 8)}_${timestamp}${ext}`;
+
+    if (isSupabaseStorageEnabled()) {
+      const contentType =
+        req.file.mimetype && req.file.mimetype.startsWith('image/')
+          ? req.file.mimetype
+          : 'application/octet-stream';
+      const { publicUrl, objectKey } = await uploadToSupabaseStorage({
+        subKey: `payment-proofs/${sanitizedOrderId}/${fileName}`,
+        buffer: req.file.buffer,
+        contentType,
+      });
+      downloadUrl = publicUrl;
+      relativePath = objectKey;
+    } else if (isCloudinaryUploadsEnabled()) {
+      const { secureUrl, publicId } = await uploadImageBuffer({
+        subFolder: `payment-proofs/${sanitizedOrderId}`,
+        fileName,
+        buffer: req.file.buffer,
+      });
+
+      downloadUrl = secureUrl;
+      relativePath = publicId;
+    } else {
+      relativePath = path.relative(paymentProofsDir, req.file.path).replace(/\\/g, '/');
+      downloadUrl = `/uploads/payment-proofs/${relativePath}`;
+    }
+
     await uploadPaymentProof(orderId, downloadUrl);
 
     res.json({
       success: true,
       data: {
         fileName: req.file.originalname,
-        filePath: relativePath.replace(/\\/g, '/'),
+        filePath: relativePath,
         downloadUrl,
         orderId,
       },
     });
   }),
 );
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

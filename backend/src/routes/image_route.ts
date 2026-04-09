@@ -4,20 +4,30 @@ import path from 'path';
 import fs from 'fs';
 import { imagesDir } from '../utils/uploads';
 import { asyncHandler } from '../utils/async_handler';
+import {
+  isCloudinaryUploadsEnabled,
+  uploadImageBuffer,
+  tryDestroyIfCloudinary,
+} from '../services/cloudinary_service';
+import {
+  isSupabaseStorageEnabled,
+  uploadToSupabaseStorage,
+  tryDeleteSupabaseStorage,
+} from '../services/supabase_storage_service';
+import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
 
 export const imageRouter = Router();
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
+const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // Create product-specific folder if productHandle is provided
     const productHandle = (req.body.productHandle as string) || 'default';
-    const sanitizedHandle = productHandle
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '') || 'default';
-    
+    const sanitizedHandle =
+      productHandle
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'default';
+
     const productDir = path.join(imagesDir, sanitizedHandle);
     if (!fs.existsSync(productDir)) {
       fs.mkdirSync(productDir, { recursive: true });
@@ -25,23 +35,22 @@ const storage = multer.diskStorage({
     cb(null, productDir);
   },
   filename: (req, file, cb) => {
-    // Keep original filename but sanitize it
     const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext)
+    const name = path
+      .basename(file.originalname, ext)
       .replace(/[^a-zA-Z0-9-_]/g, '_')
-      .substring(0, 100); // Limit length
+      .substring(0, 100);
     const timestamp = Date.now();
     cb(null, `${name}_${timestamp}${ext}`);
   },
 });
 
 const upload = multer({
-  storage,
+  storage: shouldUseMemoryBufferUpload() ? multer.memoryStorage() : diskStorage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max file size for images
   },
   fileFilter: (req, file, cb) => {
-    // Only allow image files
     const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExts.includes(ext)) {
@@ -54,21 +63,6 @@ const upload = multer({
 
 /**
  * POST /api/images/upload
- * Upload a product image file
- * 
- * Body (multipart/form-data):
- * - file: The image file
- * - productHandle: Optional product identifier for folder organization
- * 
- * Returns:
- * {
- *   success: true,
- *   data: {
- *     fileName: string,
- *     filePath: string,
- *     downloadUrl: string
- *   }
- * }
  */
 imageRouter.post(
   '/upload',
@@ -81,9 +75,59 @@ imageRouter.post(
       });
     }
 
-    // Construct the download URL
-    // The file is stored at: uploads/images/{productHandle}/{filename}
-    // It's served at: /uploads/images/{productHandle}/{filename}
+    const productHandle = (req.body.productHandle as string) || 'default';
+    const sanitizedHandle =
+      productHandle
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'default';
+
+    const ext = path.extname(req.file.originalname);
+    const name = path
+      .basename(req.file.originalname, ext)
+      .replace(/[^a-zA-Z0-9-_]/g, '_')
+      .substring(0, 100);
+    const timestamp = Date.now();
+    const fileName = `${name}_${timestamp}${ext}`;
+
+    if (isSupabaseStorageEnabled()) {
+      const contentType =
+        req.file.mimetype && req.file.mimetype.startsWith('image/')
+          ? req.file.mimetype
+          : 'application/octet-stream';
+      const { publicUrl, objectKey } = await uploadToSupabaseStorage({
+        subKey: `images/${sanitizedHandle}/${fileName}`,
+        buffer: req.file.buffer,
+        contentType,
+      });
+      return res.json({
+        success: true,
+        data: {
+          fileName: req.file.originalname,
+          filePath: objectKey,
+          downloadUrl: publicUrl,
+        },
+      });
+    }
+
+    if (isCloudinaryUploadsEnabled()) {
+      const { secureUrl, publicId } = await uploadImageBuffer({
+        subFolder: `images/${sanitizedHandle}`,
+        fileName,
+        buffer: req.file.buffer,
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          fileName: req.file.originalname,
+          filePath: publicId,
+          downloadUrl: secureUrl,
+        },
+      });
+    }
+
     const relativePath = path.relative(imagesDir, req.file.path);
     const downloadUrl = `/uploads/images/${relativePath.replace(/\\/g, '/')}`;
 
@@ -100,46 +144,63 @@ imageRouter.post(
 
 /**
  * DELETE /api/images/:filePath
- * Delete an image file
- * 
- * filePath should be URL-encoded path like: product-handle/filename.jpg
  */
 imageRouter.delete(
   '/:filePath(*)',
   asyncHandler(async (req, res) => {
     const filePath = req.params.filePath;
+    const decoded = decodeURIComponent(filePath);
     const fullPath = path.join(imagesDir, filePath);
-
-    // Security check: ensure the path is within imagesDir
     const resolvedPath = path.resolve(fullPath);
     const resolvedImagesDir = path.resolve(imagesDir);
-    if (!resolvedPath.startsWith(resolvedImagesDir)) {
+    const isUnderImagesDir = resolvedPath.startsWith(resolvedImagesDir);
+
+    if (isUnderImagesDir && fs.existsSync(fullPath)) {
+      try {
+        fs.unlinkSync(fullPath);
+        return res.json({
+          success: true,
+          message: 'File deleted successfully',
+        });
+      } catch (error) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to delete file',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    if (!isUnderImagesDir && !isCloudinaryUploadsEnabled() && !isSupabaseStorageEnabled()) {
       return res.status(403).json({
         success: false,
         message: 'Invalid file path',
       });
     }
 
-    try {
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-        res.json({
+    if (isSupabaseStorageEnabled()) {
+      const ok = await tryDeleteSupabaseStorage(decoded);
+      if (ok) {
+        return res.json({
           success: true,
           message: 'File deleted successfully',
         });
-      } else {
-        res.status(404).json({
-          success: false,
-          message: 'File not found',
+      }
+    }
+
+    if (isCloudinaryUploadsEnabled()) {
+      const ok = await tryDestroyIfCloudinary(decoded, 'image');
+      if (ok) {
+        return res.json({
+          success: true,
+          message: 'File deleted successfully',
         });
       }
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to delete file',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
     }
+
+    return res.status(404).json({
+      success: false,
+      message: 'File not found',
+    });
   }),
 );
-

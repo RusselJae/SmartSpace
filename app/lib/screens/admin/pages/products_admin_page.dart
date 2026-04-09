@@ -537,7 +537,7 @@ class _ProductRow extends StatelessWidget {
                         )
                       : product.imageUrls.isNotEmpty
                           ? Image.network(
-                              product.imageUrls.first,
+                              ModelPathHelper.normalizeImageUrl(product.imageUrls.first),
                               fit: BoxFit.cover,
                               errorBuilder: (context, error, stackTrace) {
                                 // Fallback to icon if image fails to load
@@ -1158,9 +1158,14 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     });
   }
 
-  /// If [modelPath] points to a backend-managed upload (i.e. `/uploads/models/...`),
-  /// return the relative `product-handle/filename.glb` path expected by
-  /// `DELETE /api/models/:filePath`.
+  /// If [modelPath] points to a file this app uploaded via the backend, returns the
+  /// path segment expected by `DELETE /api/models/:filePath`:
+  /// - Local/disk uploads: `product-handle/file.glb` (relative under `modelsDir`)
+  /// - Supabase: full object key, e.g. `smartspace/models/handle/file.glb`
+  ///
+  /// We must **not** treat `https://api.../uploads/models/smartspace/...` as a disk path:
+  /// that shape was a bug (object key wrongly prefixed with `/uploads/models/`), but the
+  /// suffix is still the correct Supabase key for DELETE.
   String? _extractManagedModelFilePath(String modelPath) {
     final raw = modelPath.trim().replaceAll('\\', '/');
     if (raw.isEmpty) return null;
@@ -1174,6 +1179,38 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     if (raw.startsWith(prefixB)) {
       return raw.substring(prefixB.length);
     }
+
+    // Absolute URL: either API-served `/uploads/models/...` or Supabase public object URL.
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      final uri = Uri.tryParse(raw);
+      if (uri == null) return null;
+
+      // Same-origin uploads: .../uploads/models/<relative>
+      var path = uri.path;
+      if (path.startsWith('/api/uploads')) {
+        path = path.substring(4);
+      } else if (path.startsWith('api/uploads/')) {
+        path = '/${path.substring(4)}';
+      }
+      if (path.startsWith(prefixA)) {
+        return path.substring(prefixA.length);
+      }
+      if (path.startsWith(prefixB)) {
+        return path.substring(prefixB.length);
+      }
+
+      // Supabase: /storage/v1/object/public/<bucket>/<objectKey...>
+      final segs = uri.pathSegments;
+      if (segs.length >= 6 &&
+          segs[0] == 'storage' &&
+          segs[1] == 'v1' &&
+          segs[2] == 'object' &&
+          segs[3] == 'public') {
+        final objectKey = segs.sublist(5).join('/');
+        if (objectKey.isNotEmpty) return objectKey;
+      }
+    }
+
     return null;
   }
 
@@ -1240,12 +1277,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         bytes: file.bytes!,
       );
 
-      // Update the model path field with the relative path format
-      // The backend returns filePath as 'product-handle/file.glb' (relative to modelsDir)
-      // We prepend '/uploads/models/' so ModelPathHelper can normalize it to a full URL
-      // ModelPathHelper expects paths starting with '/uploads' or 'uploads/'
+      // Store the real public URL when the backend uses Supabase/Cloudinary (downloadUrl is
+      // already absolute). Using `/uploads/models/${filePath}` was wrong for object keys like
+      // `smartspace/models/...` — ModelPathHelper would point the viewer at the API host and 404.
+      // For disk-only backends, downloadUrl is still resolved to `origin/uploads/models/...`.
       setState(() {
-        _modelPath.text = '/uploads/models/${uploadResult.filePath}';
+        _modelPath.text = uploadResult.downloadUrl;
       });
 
       if (!mounted) return;
@@ -1687,7 +1724,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                               ),
                               clipBehavior: Clip.hardEdge,
                               child: Image.network(
-                                _imageUrls[index],
+                                ModelPathHelper.normalizeImageUrl(_imageUrls[index]),
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
                                   return Container(

@@ -4,7 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
@@ -19,6 +19,7 @@ import '../../services/cart_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
 import '../../utils/model_path_helper.dart';
+import '../../utils/phone_input_formatters.dart';
 import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
@@ -515,6 +516,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   label: 'Phone Number',
                   controller: phoneCtrl,
                   keyboardType: TextInputType.phone,
+                  inputFormatters: philippinesPhoneInputFormatters(),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -615,6 +617,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     required String label,
     required TextEditingController controller,
     TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
     bool required = false,
   }) {
     return Padding(
@@ -637,6 +640,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
           CupertinoTextField(
             controller: controller,
             keyboardType: keyboardType,
+            inputFormatters: inputFormatters,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: Colors.white,

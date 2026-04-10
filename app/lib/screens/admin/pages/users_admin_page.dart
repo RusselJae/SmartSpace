@@ -127,7 +127,7 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
   Future<void> _openSupportForUser(User user) async {
     try {
-      await _db.getOrCreateSupportConversation(user.id);
+      await _db.getOrCreateSupportConversation(user.id, email: user.email);
       AdminSupportInboxNavigationService.instance.pendingUserId = user.id;
       if (!mounted) return;
       Navigator.of(context).pushReplacementNamed(AdminRoutes.support);

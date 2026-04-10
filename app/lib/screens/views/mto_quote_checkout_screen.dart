@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -11,6 +12,7 @@ import '../../services/app_settings_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
+import '../../utils/phone_input_formatters.dart';
 import '../../widgets/toast.dart';
 
 /// After admin quotes, customer confirms shipping and creates the PayMongo order.
@@ -292,7 +294,12 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
                   const SizedBox(height: 14),
                   _field('Full name', nameCtrl),
                   const SizedBox(height: 10),
-                  _field('Phone', phoneCtrl, keyboard: TextInputType.phone),
+                  _field(
+                    'Phone',
+                    phoneCtrl,
+                    keyboard: TextInputType.phone,
+                    phoneDigitsMax11: true,
+                  ),
                   const SizedBox(height: 14),
                   Row(
                     children: [
@@ -478,7 +485,12 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
     );
   }
 
-  Widget _field(String label, TextEditingController c, {TextInputType? keyboard}) {
+  Widget _field(
+    String label,
+    TextEditingController c, {
+    TextInputType? keyboard,
+    bool phoneDigitsMax11 = false,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -490,6 +502,7 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
         CupertinoTextField(
           controller: c,
           keyboardType: keyboard,
+          inputFormatters: phoneDigitsMax11 ? philippinesPhoneInputFormatters() : null,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           style: GoogleFonts.poppins(fontSize: 14, color: Colors.black87),
           placeholder: label,

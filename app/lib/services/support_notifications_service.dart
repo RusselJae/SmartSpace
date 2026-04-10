@@ -39,7 +39,10 @@ class SupportNotificationsService {
 
       final db = MySQLDatabaseService();
       await db.initialize();
-      final conv = await db.getOrCreateSupportConversation(user.id);
+      final conv = await db.getOrCreateSupportConversation(
+        user.id,
+        email: user.email,
+      );
       final prefs = await SharedPreferences.getInstance();
       final lastReadAt = _getLastReadAt(prefs, userId: user.id, conversationId: conv.id);
       final lastAt = conv.lastMessageAt ?? conv.updatedAt;

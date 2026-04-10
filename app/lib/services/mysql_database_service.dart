@@ -852,22 +852,10 @@ class MySQLDatabaseService {
       'status': status,
       'shippingAddress': shippingAddress,
     };
-    try {
-      final data = await _sendRequest(method: 'POST', path: '/orders', body: payload);
-      final map = _asMap(data, 'order');
-      return OrderRecord.fromJson(map);
-    } catch (error) {
-      developer.log('❌ Failed to create order via API: $error');
-      developer.log('⚠️ Falling back to local order creation');
-      return _createLocalOrder(
-        userId: userId,
-        userName: userName,
-        productIds: productIds,
-        totalAmount: totalAmount,
-        status: status,
-        shippingAddress: shippingAddress,
-      );
-    }
+    // Never fall back to a local-only order id: PayMongo / valid-ID upload require a real DB row.
+    final data = await _sendRequest(method: 'POST', path: '/orders', body: payload);
+    final map = _asMap(data, 'order');
+    return OrderRecord.fromJson(map);
   }
 
   /// Creates a PayMongo Checkout Session on the server and returns the hosted [checkoutUrl].
@@ -1655,7 +1643,10 @@ class MySQLDatabaseService {
     await _sendRequest(method: 'DELETE', path: '/reviews/$reviewId');
   }
 
-  Future<SupportConversation> getOrCreateSupportConversation(String userId) async {
+  Future<SupportConversation> getOrCreateSupportConversation(
+    String userId, {
+    String? email,
+  }) async {
     if (!_useApi) {
       return SupportConversation(
         id: _generateId('sc'),
@@ -1668,7 +1659,10 @@ class MySQLDatabaseService {
     final data = await _sendRequest(
       method: 'POST',
       path: '/support/user/conversation',
-      body: {'userId': userId},
+      body: {
+        'userId': userId,
+        if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+      },
     );
     final map = _asMap(data, 'support conversation');
     return SupportConversation.fromJson(map);
@@ -1715,6 +1709,7 @@ class MySQLDatabaseService {
     required String conversationId,
     required String userId,
     required String body,
+    String? email,
   }) async {
     if (!_useApi) {
       return SupportMessage(
@@ -1732,6 +1727,7 @@ class MySQLDatabaseService {
       body: {
         'userId': userId,
         'body': body,
+        if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
       },
     );
     final map = _asMap(data, 'support message');
@@ -1749,6 +1745,7 @@ class MySQLDatabaseService {
     required Uint8List attachmentBytes,
     required String fileName,
     required String mimeType,
+    String? email,
   }) async {
     if (attachmentBytes.length > _maxSupportAttachmentBytes) {
       throw Exception('Attachment exceeds 30MB limit');
@@ -1774,6 +1771,9 @@ class MySQLDatabaseService {
     final request = http.MultipartRequest('POST', uri);
     request.fields['userId'] = userId;
     request.fields['body'] = body;
+    if (email != null && email.trim().isNotEmpty) {
+      request.fields['email'] = email.trim();
+    }
     // Kept for debugging/traceability; backend stores the file mimetype from multer.
     request.fields['mimeType'] = mimeType;
 

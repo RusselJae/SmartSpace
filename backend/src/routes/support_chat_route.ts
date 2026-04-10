@@ -10,6 +10,8 @@ import {
   listMessagesForConversation,
   setConversationStatus,
   getOrCreateConversationForUser,
+  getConversationById,
+  resolveCanonicalUserIdForSupport,
 } from '../services/support_chat_service';
 import {
   isCloudinaryUploadsEnabled,
@@ -147,7 +149,7 @@ const buildSupportAttachmentUrl = async (
 supportChatRouter.post(
   '/user/conversation',
   asyncHandler(async (req, res) => {
-    const { userId } = req.body as { userId?: string };
+    const { userId, email } = req.body as { userId?: string; email?: string };
 
     if (!userId) {
       return res.status(400).json({
@@ -156,7 +158,12 @@ supportChatRouter.post(
       });
     }
 
-    const conversation = await getOrCreateConversationForUser(userId);
+    const resolved = await resolveCanonicalUserIdForSupport(userId, email);
+    if (!resolved.ok) {
+      return res.status(400).json({ success: false, message: resolved.message });
+    }
+
+    const conversation = await getOrCreateConversationForUser(resolved.userId);
     res.json({ success: true, data: conversation });
   }),
 );
@@ -179,7 +186,7 @@ supportChatRouter.post(
   '/user/conversation/:id/messages',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { userId, body } = req.body as { userId?: string; body?: string };
+    const { userId, email, body } = req.body as { userId?: string; email?: string; body?: string };
 
     if (!userId) {
       return res.status(400).json({ success: false, message: 'userId is required' });
@@ -188,10 +195,22 @@ supportChatRouter.post(
       return res.status(400).json({ success: false, message: 'Message body is required' });
     }
 
+    const conv = await getConversationById(id);
+    if (!conv) {
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
+    }
+    const resolved = await resolveCanonicalUserIdForSupport(userId, email);
+    if (!resolved.ok) {
+      return res.status(400).json({ success: false, message: resolved.message });
+    }
+    if (conv.userId !== resolved.userId) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+
     const message = await createSupportMessage({
       conversationId: id,
       senderType: 'user',
-      senderUserId: userId,
+      senderUserId: resolved.userId,
       body,
     });
 
@@ -205,13 +224,25 @@ supportChatRouter.post(
   supportChatAttachmentUpload.single('attachment'),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { userId, body } = req.body as { userId?: string; body?: string };
+    const { userId, email, body } = req.body as { userId?: string; email?: string; body?: string };
 
     if (!userId) {
       return res.status(400).json({ success: false, message: 'userId is required' });
     }
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'attachment file is required' });
+    }
+
+    const conv = await getConversationById(id);
+    if (!conv) {
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
+    }
+    const resolved = await resolveCanonicalUserIdForSupport(userId, email);
+    if (!resolved.ok) {
+      return res.status(400).json({ success: false, message: resolved.message });
+    }
+    if (conv.userId !== resolved.userId) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 
     const conversationId = id;
@@ -224,7 +255,7 @@ supportChatRouter.post(
     const message = await createSupportMessage({
       conversationId,
       senderType: 'user',
-      senderUserId: userId,
+      senderUserId: resolved.userId,
       body: body ?? '',
       attachmentUrl,
       attachmentType,

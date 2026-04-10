@@ -2,6 +2,64 @@ import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
 import { generateId } from '../utils/id_generator';
 
+/** Result of mapping the app session user to a row in `users` (required for FK constraints). */
+export type SupportUserResolveResult =
+  | { readonly ok: true; readonly userId: string }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * The Flutter client may hold a stale `user.id` (e.g. after DB reset or env switch) while `email`
+ * still matches a real row. Resolve to the canonical `users.id` before inserting into
+ * `support_conversations` / `support_messages`.
+ */
+export const resolveCanonicalUserIdForSupport = async (
+  claimedUserId: string,
+  email?: string | null,
+): Promise<SupportUserResolveResult> => {
+  const pool = getPool();
+  const uid = (claimedUserId ?? '').trim();
+  const em = (email ?? '').trim().toLowerCase();
+
+  if (uid.length > 0) {
+    const [byId] = await pool.query<RowDataPacket[]>('SELECT id FROM users WHERE id = ? LIMIT 1', [
+      uid,
+    ]);
+    if (byId.length > 0) {
+      const id = String(byId[0].id);
+      if (em.length > 0) {
+        const [rowEm] = await pool.query<RowDataPacket[]>(
+          'SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1',
+          [em],
+        );
+        if (rowEm.length > 0 && String(rowEm[0].id) !== id) {
+          return {
+            ok: false,
+            message:
+              'Your saved session does not match this email. Sign out and sign in again so Support can open your account.',
+          };
+        }
+      }
+      return { ok: true, userId: id };
+    }
+  }
+
+  if (em.length > 0) {
+    const [byEmail] = await pool.query<RowDataPacket[]>(
+      'SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1',
+      [em],
+    );
+    if (byEmail.length > 0) {
+      return { ok: true, userId: String(byEmail[0].id) };
+    }
+  }
+
+  return {
+    ok: false,
+    message:
+      'This action needs a registered shopper account. Sign out and sign in with the email you used when you placed your order.',
+  };
+};
+
 export type SupportConversationStatus = 'open' | 'closed';
 export type SupportConversationLastSenderType = 'user' | 'admin';
 

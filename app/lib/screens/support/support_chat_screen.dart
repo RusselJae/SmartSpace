@@ -116,7 +116,10 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
       await _db.initialize();
       // Load FAQs from API in parallel with conversation
       final faqFuture = _db.getFaqs();
-      final conv = await _db.getOrCreateSupportConversation(user.id);
+      final conv = await _db.getOrCreateSupportConversation(
+        user.id,
+        email: user.email,
+      );
       final msgs = await _db.getSupportMessages(conversationId: conv.id, limit: 50);
       final faqs = await faqFuture;
       if (!mounted) return;
@@ -237,7 +240,9 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     if (_conversation == null || _auth.currentUser == null) return;
     if (text.isEmpty && _attachment == null) return;
 
-    final userId = _auth.currentUser!.id;
+    final user = _auth.currentUser!;
+    final userId = user.id;
+    final email = user.email;
     _input.clear();
 
     final attachment = _attachment;
@@ -249,11 +254,13 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
               conversationId: _conversation!.id,
               userId: userId,
               body: text,
+              email: email,
             )
           : await _db.sendSupportMessageAsUserWithAttachment(
               conversationId: _conversation!.id,
               userId: userId,
               body: text,
+              email: email,
               attachmentBytes: attachment.bytes!,
               fileName: attachment.name ?? 'attachment',
               mimeType: mimeTypeFromFileName(attachment.name, attachment.extension),

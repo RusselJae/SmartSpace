@@ -6,6 +6,7 @@ import 'package:image/image.dart' as img;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:path/path.dart' as path;
 
@@ -14,6 +15,7 @@ import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
+import '../../utils/phone_input_formatters.dart';
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
 
@@ -359,10 +361,15 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     );
   }
 
-  Widget _buildField(TextEditingController controller, {TextInputType? keyboardType}) {
+  Widget _buildField(
+    TextEditingController controller, {
+    TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
+  }) {
     return CupertinoTextField(
       controller: controller,
       keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: const Color(0xFFF7F7F7),
@@ -436,7 +443,11 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         _buildField(_emailController, keyboardType: TextInputType.emailAddress),
         const SizedBox(height: 12),
         _buildLabel('Phone Number'),
-        _buildField(_phoneController, keyboardType: TextInputType.phone),
+        _buildField(
+          _phoneController,
+          keyboardType: TextInputType.phone,
+          inputFormatters: philippinesPhoneInputFormatters(),
+        ),
         const SizedBox(height: 12),
         _buildLabel('Gender'),
         Wrap(

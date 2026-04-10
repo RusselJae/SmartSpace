@@ -13,6 +13,7 @@ import '../../utils/model_path_helper.dart';
 import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../checkout/order_summary_screen.dart';
+import '../views/made_to_order_request_screen.dart';
 import '../views/sign_in.dart';
 
 // Matches wishlist tile: resolve GLB URLs for web; peso formatting for cart rows/footer.
@@ -166,12 +167,100 @@ class _CartScreenState extends State<CartScreen> {
     });
   }
 
-  void _proceedToCheckout(BuildContext context) {
+  /// Minus at qty 1 would remove the line — confirm first (Apple-style alert).
+  Future<void> _onDecrementLine(BuildContext context, CartItem item) async {
+    if (item.quantity > 1) {
+      _cart.decrement(item.product.id);
+      return;
+    }
+    final remove = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Remove from cart?'),
+        content: Text(
+          'Remove "${item.product.name}" from your cart?',
+          style: GoogleFonts.poppins(fontSize: 14),
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (remove == true && context.mounted) {
+      _cart.remove(item.product.id);
+      _selectedProductIds.remove(item.product.id);
+      _knownProductIds.remove(item.product.id);
+      Toast.info(context, '${item.product.name} removed from cart');
+    }
+  }
+
+  /// Blocks checkout when selected items are out of stock or exceed available quantity.
+  Future<void> _showOutOfStockModal(
+    BuildContext context, {
+    required List<CartItem> problemItems,
+  }) async {
+    final names = problemItems.map((e) => e.product.name).join(', ');
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Not available right now'),
+        content: Text(
+          'These items have no stock or not enough quantity for your cart:\n\n$names\n\n'
+          'Request a made-to-order quote and we can build or source it for you.',
+          style: GoogleFonts.poppins(fontSize: 14),
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.of(context, rootNavigator: true).push(
+                CupertinoPageRoute<void>(
+                  builder: (_) => MadeToOrderRequestScreen(
+                    prefilledProductName: names.length > 120 ? '${names.substring(0, 117)}...' : names,
+                  ),
+                ),
+              );
+            },
+            child: const Text('Made to order'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _proceedToCheckout(BuildContext context) async {
     final selectedIds = _selectedProductIds.toSet();
     final selectedItems = _cart.items.where((item) => selectedIds.contains(item.product.id)).toList();
 
     if (selectedItems.isEmpty) {
       Toast.info(context, 'Select at least one product');
+      return;
+    }
+
+    final problemItems = <CartItem>[];
+    for (final item in selectedItems) {
+      final p = item.product;
+      final available = p.inventoryQty;
+      final inStock = p.inStock && available > 0;
+      if (!inStock || item.quantity > available) {
+        problemItems.add(item);
+      }
+    }
+    if (problemItems.isNotEmpty) {
+      await _showOutOfStockModal(context, problemItems: problemItems);
       return;
     }
 
@@ -190,6 +279,7 @@ class _CartScreenState extends State<CartScreen> {
     }
 
     // Use rootNavigator to hide tab bar when navigating to order summary
+    if (!context.mounted) return;
     Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(
         builder: (_) => OrderSummaryScreen(productIds: selectedIds.toList()),
@@ -290,9 +380,7 @@ class _CartScreenState extends State<CartScreen> {
                           onIncrement: () {
                             _cart.increment(item.product.id);
                           },
-                          onDecrement: () {
-                            _cart.decrement(item.product.id);
-                          },
+                          onDecrement: () => _onDecrementLine(context, item),
                           onRemove: () {
                             _cart.remove(item.product.id);
                             _selectedProductIds.remove(item.product.id);

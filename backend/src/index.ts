@@ -57,10 +57,15 @@ const initialize = async (): Promise<void> => {
     checkEmailConfiguration();
     
     startServer();
-    
-    // Auto-cancellation (expiration) is intentionally disabled.
-    // Orders are cancelled explicitly via PayMongo cancel return route.
-    
+
+    // PayMongo unpaid orders: reminder email + timed cancel (inventory release). See order_service.autoCancelUnpaidOrders.
+    try {
+      const { startAutoCancelScheduler } = await import('./jobs/auto_cancel_job');
+      startAutoCancelScheduler();
+    } catch (error) {
+      console.warn('⚠️ Could not start unpaid-order scheduler:', error);
+    }
+
     // Start cleanup scheduler for unverified user accounts
     try {
       const { startCleanupUnverifiedUsersScheduler } = await import('./jobs/cleanup_unverified_users_job');

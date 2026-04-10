@@ -1183,19 +1183,103 @@ export const confirmPayment = async (
   });
 };
 
+const parseEnvPositiveInt = (key: string, fallback: number): number => {
+  const raw = process.env[key];
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+};
+
+/** Optional column so we only send one “complete payment” email per order. */
+const ensureCheckoutReminderColumn = async (pool: Pool): Promise<boolean> => {
+  try {
+    await pool.query(
+      'ALTER TABLE orders ADD COLUMN checkout_reminder_sent_at TIMESTAMP NULL DEFAULT NULL',
+    );
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('Duplicate column') || msg.toLowerCase().includes('duplicate column name')) {
+      return true;
+    }
+    console.warn('ensureCheckoutReminderColumn:', msg);
+    return false;
+  }
+};
+
 /**
- * Auto-cancel orders that haven't received payment within 30 minutes
- * This should be called by a cron job or scheduled task
- * 
- * Cancels orders that:
- * - Status is 'pending' or 'pending_payment_verification'
- * - Payment status is 'pending' (no payment proof uploaded or confirmed)
- * - Created more than 30 minutes ago
+ * PayMongo lifecycle: order + inventory reservation happen at checkout (create order).
+ * - After [ORDER_PAYMENT_REMINDER_MINUTES], send one reminder email (if column exists).
+ * - After [ORDER_PAYMENT_HOLD_RELEASE_MINUTES], cancel unpaid orders and restore inventory.
+ *
+ * Cancel return URL still cancels immediately when the user closes PayMongo.
  */
 export const autoCancelUnpaidOrders = async (): Promise<number> => {
-  // Expiration flow intentionally disabled.
-  // Unpaid orders are now cancelled explicitly via PayMongo cancel return route.
-  return 0;
+  const pool = getPool();
+  const hasReminderCol = await ensureCheckoutReminderColumn(pool);
+
+  const reminderMin = parseEnvPositiveInt('ORDER_PAYMENT_REMINDER_MINUTES', 15);
+  const cancelMin = parseEnvPositiveInt('ORDER_PAYMENT_HOLD_RELEASE_MINUTES', 45);
+  if (cancelMin <= reminderMin) {
+    console.warn(
+      `ORDER_PAYMENT_HOLD_RELEASE_MINUTES (${cancelMin}) should be greater than ORDER_PAYMENT_REMINDER_MINUTES (${reminderMin})`,
+    );
+  }
+
+  if (hasReminderCol) {
+    try {
+      const [reminderRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id, user_id, total_amount FROM orders
+         WHERE payment_method = 'paymongo'
+           AND status = 'pending'
+           AND LOWER(COALESCE(payment_status, 'pending')) = 'pending'
+           AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) >= ?
+           AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) < ?
+           AND checkout_reminder_sent_at IS NULL`,
+        [reminderMin, cancelMin],
+      );
+      let sent = 0;
+      for (const row of reminderRows) {
+        const oid = row.id as string;
+        const uid = row.user_id as string;
+        const total = Number(row.total_amount);
+        await EmailService.sendPendingPaymentReminderEmail(uid, oid, total);
+        await pool.query(
+          `UPDATE orders SET checkout_reminder_sent_at = NOW(), updated_at = NOW() WHERE id = ?`,
+          [oid],
+        );
+        sent += 1;
+      }
+      if (sent > 0) {
+        console.log(`📧 Sent ${sent} checkout payment reminder(s)`);
+      }
+    } catch (e) {
+      console.warn('checkout reminder batch skipped:', e);
+    }
+  }
+
+  const [cancelRows] = await pool.query<RowDataPacket[]>(
+    `SELECT id FROM orders
+     WHERE payment_method = 'paymongo'
+       AND status = 'pending'
+       AND LOWER(COALESCE(payment_status, 'pending')) = 'pending'
+       AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) >= ?`,
+    [cancelMin],
+  );
+
+  let cancelled = 0;
+  for (const row of cancelRows) {
+    const oid = row.id as string;
+    try {
+      await updateOrderStatus(oid, 'cancelled');
+      await pool.query(`UPDATE orders SET payment_status = 'failed', updated_at = NOW() WHERE id = ?`, [oid]);
+      cancelled += 1;
+    } catch (e) {
+      console.error(`auto-cancel failed for ${oid}:`, e);
+    }
+  }
+  return cancelled;
 };
 
 

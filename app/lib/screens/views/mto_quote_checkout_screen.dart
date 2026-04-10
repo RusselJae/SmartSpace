@@ -28,7 +28,7 @@ class MtoQuoteCheckoutScreen extends StatefulWidget {
 class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
   static const Color _kWalnut = Color(0xFF5C4033);
   static const Color _kWalnutDeep = Color(0xFF3E2723);
-  static const Color _kWalnutSoftBg = Color(0xFFEFE8E3);
+  static const Color _kWalnutSoftBg = Color(0xFFF7F3EF);
 
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final AuthService _auth = AuthService();

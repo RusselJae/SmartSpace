@@ -190,6 +190,11 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
       Toast.error(context, 'Fill in name, phone, address line, and city');
       return;
     }
+    final phoneErr = philippinesMobileRequiredError(phone);
+    if (phoneErr != null) {
+      Toast.error(context, phoneErr);
+      return;
+    }
 
     final q = widget.request;
     final total = q.quotedTotal;
@@ -325,6 +330,11 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
                           onPressed: () {
                             if (nameCtrl.text.trim().isEmpty || phoneCtrl.text.trim().isEmpty) {
                               Toast.warning(context, 'Please enter your full name and phone number.');
+                              return;
+                            }
+                            final pErr = philippinesMobileRequiredError(phoneCtrl.text.trim());
+                            if (pErr != null) {
+                              Toast.warning(context, pErr);
                               return;
                             }
                             setState(() {

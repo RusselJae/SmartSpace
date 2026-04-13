@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:characters/characters.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -45,10 +46,21 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     {'q': 'How can I report a damaged item?', 'a': 'Please attach photos of the damaged item and packaging, and include your order ID so we can help you quickly.'},
   ];
 
+  /// Last 7 days: `SAT AT 11:00 PM`. Older: `March 31 AT 3:00 PM`.
   String _formatTimestamp(BuildContext context, DateTime dt) {
+    final local = dt.toLocal();
+    final now = DateTime.now();
+    final diff = now.difference(local);
     final loc = MaterialLocalizations.of(context);
-    final tod = TimeOfDay.fromDateTime(dt.toLocal());
-    return loc.formatTimeOfDay(tod, alwaysUse24HourFormat: false);
+    final tod = TimeOfDay.fromDateTime(local);
+    final timeStr = loc.formatTimeOfDay(tod, alwaysUse24HourFormat: false).toUpperCase();
+
+    if (diff <= const Duration(days: 7)) {
+      final day = DateFormat('EEE', 'en_US').format(local).toUpperCase();
+      return '$day AT $timeStr';
+    }
+    final monthDay = DateFormat('MMMM d', 'en_US').format(local);
+    return '$monthDay AT $timeStr';
   }
 
   Widget _buildAvatar({

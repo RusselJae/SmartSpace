@@ -18,6 +18,7 @@ import '../../services/wishlist_service.dart';
 import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../../utils/model_path_helper.dart';
+import '../../utils/dimension_format.dart';
 import 'made_to_order_request_screen.dart';
 import 'sign_in.dart';
 import '../checkout/order_summary_screen.dart';
@@ -632,9 +633,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Specs: category removed; height / length / depth merged into this list (no dimensions card).
   Widget _buildSpecificationsSection(Product product) {
-    final h = _formatMetersAsCm(product.realHeightMeters);
-    final len = _formatMetersAsCm(product.realDepthMeters);
-    final depth = _formatMetersAsCm(product.realWidthMeters);
+    final h = DimensionFormat.formatMetersAsInches(product.realHeightMeters);
+    final len = DimensionFormat.formatMetersAsInches(product.realDepthMeters);
+    final depth = DimensionFormat.formatMetersAsInches(product.realWidthMeters);
     final hasComponents = product.components.isNotEmpty;
     final lines = <String>[
       if (!hasComponents && h != '-') '- Height: $h',
@@ -642,11 +643,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       if (!hasComponents && depth != '-') '- Depth: $depth',
       if (hasComponents) '- Set includes:',
       if (hasComponents) ...product.components.map((component) {
-        final widthCm = _formatMetersAsCm(component.widthMeters);
-        final heightCm = _formatMetersAsCm(component.heightMeters);
-        final depthCm = _formatMetersAsCm(component.depthMeters);
+        final wIn = DimensionFormat.formatMetersAsInches(component.widthMeters);
+        final hIn = DimensionFormat.formatMetersAsInches(component.heightMeters);
+        final dIn = DimensionFormat.formatMetersAsInches(component.depthMeters);
         return '  - ${component.name} (x${component.quantity})'
-            ' - W: $widthCm, H: $heightCm, D: $depthCm';
+            ' - W: $wIn, H: $hIn, D: $dIn';
       }),
       '- Style: ${product.style}',
       '- Material: ${product.material}',
@@ -997,22 +998,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Pesos with thousands separators, e.g. ₱15,000.00
   String _formatPesoPrice(double amount) => '₱${_pesoPriceFormat.format(amount)}';
-
-  /// Formats meters -> centimeters and avoids ugly trailing zeros.
-  /// Returns an empty string if `meters` is null/invalid.
-  String _formatMetersAsCm(double? meters) {
-    if (meters == null || meters <= 0) return '-';
-
-    final cm = meters * 100;
-    final rounded = cm.round();
-    final diff = (cm - rounded).abs();
-
-    // If it's effectively an integer, show as `120 cm` instead of `120.0 cm`.
-    if (diff < 0.01) {
-      return '$rounded cm';
-    }
-    return '${cm.toStringAsFixed(1)} cm';
-  }
 
   /// Reviews list + aggregate rating in the header; composer CTA sits after the last (oldest) card.
   Widget _buildReviewsSection(Product product) {

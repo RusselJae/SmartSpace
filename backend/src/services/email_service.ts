@@ -364,15 +364,41 @@ ${isCOD ? `<p>Balance due on delivery.</p>` : ''}
       const safeName = escapeHtml(userName);
       const safeCode = escapeHtml(verificationCode);
 
-      const subject = 'Verify your Wood Home account';
-      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
-<body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#222;max-width:420px;margin:0;padding:16px;">
-<p>Hi ${safeName},</p>
-<p>Your code: <strong style="font-size:18px;letter-spacing:0.25em;">${safeCode}</strong></p>
-${browserVerifyUrl ? `<p><a href="${escapeHtml(browserVerifyUrl)}">Verify in browser</a></p>` : ''}
-<p><a href="${escapeHtml(appVerifyUrl)}">Open in app</a></p>
-<p style="font-size:13px;color:#555;">Expires in 24 hours.</p>
-<p>Wood Home Furniture Trading</p>
+      const subject = 'Your verification code — Wood Home';
+      const safeBrowser = browserVerifyUrl ? escapeHtml(browserVerifyUrl) : '';
+      const safeApp = escapeHtml(appVerifyUrl);
+      const browserButtonRow = browserVerifyUrl
+        ? `<tr><td align="center" style="padding:0 0 12px;">
+<a href="${safeBrowser}" style="display:inline-block;padding:14px 28px;background:#6D28D9;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;font-size:15px;font-family:system-ui,-apple-system,sans-serif;">Verify in browser</a>
+</td></tr>`
+        : '';
+      const htmlBody = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:24px 12px;background:#f4f4f5;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
+<table role="presentation" style="max-width:420px;width:100%;border-collapse:separate;border-spacing:0;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.07);" cellpadding="0" cellspacing="0" border="0">
+<tr><td style="background:#6D28D9;padding:22px 20px;text-align:center;border-radius:14px 14px 0 0;">
+<p style="margin:0;font-size:18px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;">Your verification code</p>
+</td></tr>
+<tr><td style="background:#ffffff;padding:24px 22px 20px;">
+<p style="margin:0 0 14px;color:#111827;font-size:15px;line-height:1.5;">Hi ${safeName},</p>
+<p style="margin:0 0 16px;color:#4b5563;font-size:14px;line-height:1.5;">Use this code to verify your email:</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#f3f4f6;border-radius:10px;padding:18px 12px;text-align:center;">
+<span style="font-size:26px;font-weight:700;letter-spacing:0.28em;color:#6D28D9;font-family:ui-monospace,Menlo,Consolas,monospace;">${safeCode}</span>
+</td></tr></table>
+<p style="margin:14px 0 0;color:#9ca3af;font-size:12px;line-height:1.45;">Valid 24 hours. Do not share this code.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:22px;">
+${browserButtonRow}
+<tr><td align="center" style="padding:0;">
+<a href="${safeApp}" style="display:inline-block;padding:14px 28px;background:#7c3aed;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;font-size:15px;font-family:system-ui,-apple-system,sans-serif;">Open Wood Home app</a>
+</td></tr>
+</table>
+</td></tr>
+<tr><td style="background:#f3f4f6;padding:14px 16px;text-align:center;border-radius:0 0 14px 14px;">
+<p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.4;">Wood Home Furniture Trading</p>
+</td></tr>
+</table>
+</td></tr></table>
 </body></html>`;
       await sendEmail({
         to: userEmail,
@@ -380,8 +406,8 @@ ${browserVerifyUrl ? `<p><a href="${escapeHtml(browserVerifyUrl)}">Verify in bro
         html: htmlBody,
         text:
           `Code: ${verificationCode}\n` +
-          (browserVerifyUrl ? `Browser: ${browserVerifyUrl}\n` : '') +
-          `App: ${appVerifyUrl}\n`,
+          (browserVerifyUrl ? `Verify (browser): ${browserVerifyUrl}\n` : '') +
+          `Open app: ${appVerifyUrl}\n`,
       });
 
       console.log(`✅ Successfully sent verification email to ${userEmail}`);

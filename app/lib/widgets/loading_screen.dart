@@ -11,6 +11,7 @@ class LoadingScreen extends StatefulWidget {
     super.key,
     this.onComplete,
     this.message,
+    this.footerHelper,
     this.nextRoute,
     this.nextBuilder,
   });
@@ -20,6 +21,9 @@ class LoadingScreen extends StatefulWidget {
 
   /// Optional line shown under the logo (e.g. "Signing out…") — not used on cold start.
   final String? message;
+
+  /// Always shown at the bottom while this screen runs (cold start uses [SplashScreen] instead).
+  final String? footerHelper;
 
   /// Optional route name to navigate to after loading
   final String? nextRoute;
@@ -117,29 +121,47 @@ class _LoadingScreenState extends State<LoadingScreen>
                   fit: StackFit.expand,
                   alignment: Alignment.center,
                   children: [
-                    // Logo stays visually centered in the remaining space.
                     Center(
                       child: AppBrandLogo(layoutShortestSide: shortest),
                     ),
-                    // Status copy anchored to the bottom (sign-out / welcome lines).
-                    if (widget.message != null)
-                      Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
-                          child: Text(
-                            widget.message!,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyLarge
-                                ?.copyWith(
-                                  color: kCaption.withValues(alpha: 0.75),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                          ),
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.message != null) ...[
+                              Text(
+                                widget.message!,
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyLarge
+                                    ?.copyWith(
+                                      color: kCaption.withValues(alpha: 0.75),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                            Text(
+                              widget.footerHelper ??
+                                  'Hang tight — we are finishing up in the background.',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: kCaption.withValues(alpha: 0.55),
+                                    fontWeight: FontWeight.w500,
+                                    height: 1.35,
+                                  ),
+                            ),
+                          ],
                         ),
                       ),
+                    ),
                   ],
                 ),
               );

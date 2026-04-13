@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
@@ -6,15 +5,16 @@ import 'package:flutter/material.dart';
 
 import 'app_brand_logo.dart';
 
-/// First-run branding only: shown on cold start before onboarding or home.
-/// Not used for login / logout / sign-out (those use [LoadingScreen]).
+/// Cold-start (and post-onboarding) branding: animated logo + bottom hint.
+/// The parent decides when to remove this widget; there is no internal timer.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({
     super.key,
-    required this.onComplete,
+    this.footerHint = 'Signing in and preparing the app…',
   });
 
-  final VoidCallback onComplete;
+  /// Short line above the progress feel (e.g. catalog / cache status).
+  final String footerHint;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -25,9 +25,6 @@ class _SplashScreenState extends State<SplashScreen>
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
-
-  /// Short beat so the mark reads as “splash”, not a loading gate.
-  static const Duration _displayDuration = Duration(milliseconds: 1800);
 
   @override
   void initState() {
@@ -50,11 +47,6 @@ class _SplashScreenState extends State<SplashScreen>
     );
 
     _controller.forward();
-
-    Timer(_displayDuration, () {
-      if (!mounted) return;
-      widget.onComplete();
-    });
   }
 
   @override
@@ -65,6 +57,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    const captionColor = Color(0xFF6D4C41);
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: ColoredBox(
@@ -87,8 +81,29 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   );
                 },
-                child: Center(
-                  child: AppBrandLogo(layoutShortestSide: shortest),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Center(
+                      child: AppBrandLogo(layoutShortestSide: shortest),
+                    ),
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(28, 0, 28, 32),
+                        child: Text(
+                          widget.footerHint,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.35,
+                            fontWeight: FontWeight.w500,
+                            color: captionColor.withValues(alpha: 0.72),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               );
             },

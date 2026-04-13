@@ -11,6 +11,7 @@ import '../widgets/admin_toolbar.dart';
 import '../../../services/backend_storage_service.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/model_path_helper.dart';
+import '../../../utils/dimension_format.dart';
 import '../../../widgets/cached_model_src_loader.dart';
 
 class ProductsAdminPage extends StatefulWidget {
@@ -802,9 +803,15 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _selectedStyle = product?.style.isNotEmpty == true ? product!.style : null;
     _selectedMaterial = product?.material.isNotEmpty == true ? product!.material : null;
     _selectedColor = product?.color.isNotEmpty == true ? product!.color : null;
-    _realWidthM = TextEditingController(text: product?.realWidthMeters?.toStringAsFixed(3) ?? '');
-    _realHeightM = TextEditingController(text: product?.realHeightMeters?.toStringAsFixed(3) ?? '');
-    _realDepthM = TextEditingController(text: product?.realDepthMeters?.toStringAsFixed(3) ?? '');
+    _realWidthM = TextEditingController(
+      text: DimensionFormat.metersToInchesFieldValue(product?.realWidthMeters),
+    );
+    _realHeightM = TextEditingController(
+      text: DimensionFormat.metersToInchesFieldValue(product?.realHeightMeters),
+    );
+    _realDepthM = TextEditingController(
+      text: DimensionFormat.metersToInchesFieldValue(product?.realDepthMeters),
+    );
     _modelBaseScale = TextEditingController(text: product?.modelBaseScale.toStringAsFixed(2) ?? '1.00');
     _modelPath = TextEditingController(text: product?.modelPath ?? '');
     _componentDrafts = (product?.components ?? const <ProductSetComponent>[])
@@ -947,7 +954,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                 border: Border.all(color: Colors.grey.shade300),
               ),
               child: Text(
-                'No set items added. Single-piece dimensions above will be used.',
+                'No set items added. Single-piece dimensions above (inches) will be used.',
                 style: TextStyle(color: Colors.grey.shade700),
               ),
             ),
@@ -1029,7 +1036,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                               controller: draft.widthM,
                               keyboardType: TextInputType.number,
                               decoration: const InputDecoration(
-                                labelText: 'Width (m)',
+                                labelText: 'Width (in)',
                                 filled: true,
                                 fillColor: Color(0xFFF8F8F8),
                               ),
@@ -1041,7 +1048,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                               controller: draft.heightM,
                               keyboardType: TextInputType.number,
                               decoration: const InputDecoration(
-                                labelText: 'Height (m)',
+                                labelText: 'Height (in)',
                                 filled: true,
                                 fillColor: Color(0xFFF8F8F8),
                               ),
@@ -1053,7 +1060,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                               controller: draft.depthM,
                               keyboardType: TextInputType.number,
                               decoration: const InputDecoration(
-                                labelText: 'Depth (m)',
+                                labelText: 'Depth (in)',
                                 filled: true,
                                 fillColor: Color(0xFFF8F8F8),
                               ),
@@ -1357,9 +1364,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
     final parsedPrice = _parsePrice(_price.text);
     final parsedInventoryQty = int.tryParse(_inventoryQty.text.trim());
-    final double? widthM = double.tryParse(_realWidthM.text.trim().replaceAll(',', '.'));
-    final double? heightM = double.tryParse(_realHeightM.text.trim().replaceAll(',', '.'));
-    final double? depthM = double.tryParse(_realDepthM.text.trim().replaceAll(',', '.'));
+    final double? widthM = DimensionFormat.inchesFieldToMeters(_realWidthM.text);
+    final double? heightM = DimensionFormat.inchesFieldToMeters(_realHeightM.text);
+    final double? depthM = DimensionFormat.inchesFieldToMeters(_realDepthM.text);
     final double baseScale =
         double.tryParse(_modelBaseScale.text.trim().replaceAll(',', '.')) ?? 1.0;
     final parsedComponents = <ProductSetComponent>[];
@@ -1371,9 +1378,15 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     if (_selectedStyle == null || _selectedStyle!.isEmpty) _fieldErrors['style'] = 'Choose a style';
     if (_selectedMaterial == null || _selectedMaterial!.isEmpty) _fieldErrors['material'] = 'Choose a material';
     if (_selectedColor == null || _selectedColor!.isEmpty) _fieldErrors['color'] = 'Choose a color';
-    if (widthM == null || widthM <= 0) _fieldErrors['width'] = 'Must be greater than 0';
-    if (heightM == null || heightM <= 0) _fieldErrors['height'] = 'Must be greater than 0';
-    if (depthM == null || depthM <= 0) _fieldErrors['depth'] = 'Must be greater than 0';
+    if (widthM == null || widthM <= 0) {
+      _fieldErrors['width'] = 'Enter width in inches (greater than 0)';
+    }
+    if (heightM == null || heightM <= 0) {
+      _fieldErrors['height'] = 'Enter height in inches (greater than 0)';
+    }
+    if (depthM == null || depthM <= 0) {
+      _fieldErrors['depth'] = 'Enter depth in inches (greater than 0)';
+    }
     if (baseScale <= 0) _fieldErrors['modelBaseScale'] = 'Must be greater than 0';
     if (_modelPath.text.trim().isEmpty) _fieldErrors['modelPath'] = 'Add a model path';
     for (final draft in _componentDrafts) {
@@ -1391,9 +1404,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       if (isRowCompletelyEmpty) continue;
 
       final quantity = int.tryParse(quantityText);
-      final width = double.tryParse(widthText.replaceAll(',', '.'));
-      final height = double.tryParse(heightText.replaceAll(',', '.'));
-      final depth = double.tryParse(depthText.replaceAll(',', '.'));
+      final width = DimensionFormat.inchesFieldToMeters(widthText);
+      final height = DimensionFormat.inchesFieldToMeters(heightText);
+      final depth = DimensionFormat.inchesFieldToMeters(depthText);
       if (name.isEmpty ||
           quantity == null ||
           quantity <= 0 ||
@@ -1404,7 +1417,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
           depth == null ||
           depth <= 0) {
         _fieldErrors['components'] =
-            'Each set item row needs name, quantity, width, height, and depth';
+            'Each set item needs name, quantity, and width/height/depth in inches';
         break;
       }
       parsedComponents.add(
@@ -1543,7 +1556,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           Expanded(
                             child: _buildField(
                               _realWidthM,
-                              'Width (m)',
+                              'Width (in)',
                               keyboardType: TextInputType.number,
                               errorText: _fieldErrors['width'],
                             ),
@@ -1552,7 +1565,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           Expanded(
                             child: _buildField(
                               _realHeightM,
-                              'Height (m)',
+                              'Height (in)',
                               keyboardType: TextInputType.number,
                               errorText: _fieldErrors['height'],
                             ),
@@ -1561,7 +1574,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           Expanded(
                             child: _buildField(
                               _realDepthM,
-                              'Depth (m)',
+                              'Depth (in)',
                               keyboardType: TextInputType.number,
                               errorText: _fieldErrors['depth'],
                             ),
@@ -2068,9 +2081,15 @@ class _SetComponentDraft {
     return _SetComponentDraft(
       name: TextEditingController(text: component.name),
       quantity: TextEditingController(text: component.quantity.toString()),
-      widthM: TextEditingController(text: component.widthMeters.toStringAsFixed(3)),
-      heightM: TextEditingController(text: component.heightMeters.toStringAsFixed(3)),
-      depthM: TextEditingController(text: component.depthMeters.toStringAsFixed(3)),
+      widthM: TextEditingController(
+        text: DimensionFormat.metersToInchesFieldValue(component.widthMeters),
+      ),
+      heightM: TextEditingController(
+        text: DimensionFormat.metersToInchesFieldValue(component.heightMeters),
+      ),
+      depthM: TextEditingController(
+        text: DimensionFormat.metersToInchesFieldValue(component.depthMeters),
+      ),
     );
   }
 

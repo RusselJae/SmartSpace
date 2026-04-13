@@ -513,7 +513,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   keyboardType: TextInputType.emailAddress,
                 ),
                 _buildSimpleSheetField(
-                  label: 'Phone Number',
+                  label: 'Phone (11 digits, 09…)',
                   controller: phoneCtrl,
                   keyboardType: TextInputType.phone,
                   inputFormatters: philippinesPhoneInputFormatters(),
@@ -540,6 +540,11 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                       child: CupertinoButton(
                         color: _kWalnut,
                         onPressed: () {
+                          final pErr = philippinesMobileRequiredError(phoneCtrl.text.trim());
+                          if (pErr != null) {
+                            Toast.warning(context, pErr);
+                            return;
+                          }
                           setState(() {
                             _nameController.text = nameCtrl.text.trim();
                             _emailController.text = emailCtrl.text.trim();
@@ -732,6 +737,12 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     if (_phoneController.text.trim().isEmpty) {
       setState(() => _loading = false);
       Toast.warning(context, 'Please add your phone number in your profile');
+      return;
+    }
+    final phoneFmt = philippinesMobileRequiredError(_phoneController.text.trim());
+    if (phoneFmt != null) {
+      setState(() => _loading = false);
+      Toast.warning(context, phoneFmt);
       return;
     }
 

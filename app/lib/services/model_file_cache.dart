@@ -12,4 +12,9 @@ class ModelFileCacheService {
   /// - Mobile & desktop http(s): `file:///...` after cache hit or download
   static Future<String> resolveForViewer(String normalizedSrc) =>
       platform.resolveModelSourceForViewer(normalizedSrc);
+
+  /// Ensures each URL is present in the on-device cache (parallel, deduped).
+  /// On web this is a no-op.
+  static Future<void> prefetchAll(Iterable<String> normalizedSrcs) =>
+      platform.prefetchModelSources(normalizedSrcs);
 }

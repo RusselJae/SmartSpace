@@ -15,7 +15,7 @@ import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
-import '../../utils/phone_input_formatters.dart';
+import '../../utils/phone_input_formatters.dart' show philippinesPhoneInputFormatters, philippinesMobileOptionalError;
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
 
@@ -254,6 +254,12 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
       _saving = true;
     });
 
+    final phoneErr = philippinesMobileOptionalError(_phoneController.text);
+    if (phoneErr != null) {
+      Toast.warning(context, phoneErr);
+      return;
+    }
+
     try {
       // Sync to server - upload avatar first if it was changed
       String? avatarPayload = _serverAvatarValue;
@@ -447,6 +453,16 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
           _phoneController,
           keyboardType: TextInputType.phone,
           inputFormatters: philippinesPhoneInputFormatters(),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            '11 digits, starting with 09 (e.g. 09123456789).',
+            style: GoogleFonts.poppins(
+              fontSize: 11,
+              color: _inkBody.withValues(alpha: 0.65),
+            ),
+          ),
         ),
         const SizedBox(height: 12),
         _buildLabel('Gender'),

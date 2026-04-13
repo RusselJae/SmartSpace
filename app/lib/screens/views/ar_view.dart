@@ -5,6 +5,7 @@ import 'package:model_viewer_plus/model_viewer_plus.dart';
 
 import '../../services/ar_support_service.dart';
 import '../../utils/model_path_helper.dart';
+import '../../utils/dimension_format.dart';
 import '../../widgets/cached_model_src_loader.dart';
 
 class ArViewScreen extends StatelessWidget {
@@ -578,7 +579,9 @@ class _DimensionReadout extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '${_formatMeters(dims.footprintSquareMeters)}²',
+                  DimensionFormat.formatSquareMetersAsSquareInches(
+                    dims.footprintSquareMeters,
+                  ),
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
@@ -594,8 +597,7 @@ class _DimensionReadout extends StatelessWidget {
                     (entry) => Expanded(
                       child: _DimensionChip(
                         label: entry.label,
-                        metricValue: _formatMeters(entry.meters),
-                        imperialValue: _formatImperial(entry.meters),
+                        sizeLabel: DimensionFormat.formatMetersAsInches(entry.meters),
                         realMeters: entry.realMeters,
                         percent: entry.percent,
                       ),
@@ -646,23 +648,6 @@ class _DimensionReadout extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static String _formatMeters(double meters) {
-    if (meters >= 1) {
-      return '${meters.toStringAsFixed(2)}m';
-    }
-    return '${(meters * 100).toStringAsFixed(1)}cm';
-  }
-
-  static String _formatImperial(double meters) {
-    final double inches = meters * 39.3701;
-    final int feet = (inches / 12).floor();
-    final double remainingInches = inches - (feet * 12);
-    if (feet <= 0) {
-      return '${remainingInches.toStringAsFixed(1)}in';
-    }
-    return '${feet}ft ${remainingInches.toStringAsFixed(0)}in';
   }
 
   Color _getSizeStatusColor(double? w, double? h, double? d) {
@@ -729,15 +714,13 @@ class _DimensionEntry {
 class _DimensionChip extends StatelessWidget {
   const _DimensionChip({
     required this.label,
-    required this.metricValue,
-    required this.imperialValue,
+    required this.sizeLabel,
     this.realMeters,
     this.percent,
   });
 
   final String label;
-  final String metricValue;
-  final String imperialValue;
+  final String sizeLabel;
   final double? realMeters;
   final double? percent;
 
@@ -764,7 +747,7 @@ class _DimensionChip extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                metricValue,
+                sizeLabel,
                 style: const TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
@@ -780,14 +763,6 @@ class _DimensionChip extends StatelessWidget {
                     color: percent! >= 95 && percent! <= 105
                         ? const Color(0xFF10B981)
                         : const Color(0xFFF59E0B),
-                  ),
-                )
-              else
-                Text(
-                  imperialValue,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF4B5563),
                   ),
                 ),
             ],

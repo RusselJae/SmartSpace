@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../services/onboarding_storage.dart';
-import '../shell/tab_shell.dart';
+import 'post_onboarding_warmup_screen.dart';
 
 /// =============================================================
 /// OnboardingFlow
@@ -32,7 +32,12 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   Future<void> _goToApp(BuildContext context) async {
     await OnboardingStorage.markComplete();
     if (!context.mounted) return;
-    Navigator.of(context).pushReplacementNamed(TabShell.route);
+    // Same branded splash again while models hit disk; then tabs (see [PostOnboardingWarmupScreen]).
+    Navigator.of(context).pushReplacement(
+      CupertinoPageRoute<void>(
+        builder: (_) => const PostOnboardingWarmupScreen(),
+      ),
+    );
   }
 
   void _handleNext() {

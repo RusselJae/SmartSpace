@@ -29,6 +29,7 @@ import 'services/native_ar_editor_service.dart';
 import 'config/database_config.dart';
 import 'services/auth_service.dart';
 import 'services/onboarding_storage.dart';
+import 'services/catalog_model_prefetch.dart';
 import 'widgets/splash_screen.dart';
 
 Future<void> main() async {
@@ -298,68 +299,73 @@ class _AppInitializer extends StatefulWidget {
 }
 
 class _AppInitializerState extends State<_AppInitializer> {
-  /// True until cold-start splash + auth check both finish.
-  bool _isBootstrapping = true;
+  /// Stays true until auth, DB, optional model warm-up, and a minimum brand
+  /// beat all complete — then onboarding or home is shown.
+  bool _bootstrapComplete = false;
   bool _showOnboarding = true;
-  bool _authCheckComplete = false;
-  bool _splashComplete = false;
 
   @override
   void initState() {
     super.initState();
     // Native AR screen can invoke Flutter navigation while the engine runs.
     NativeArEditorService.registerNativeCallbacks();
-    // Auth runs in parallel with the splash; we only advance when both are done.
-    _checkAuthState();
+    unawaited(_runColdStartBootstrap());
   }
 
-  Future<void> _checkAuthState() async {
+  /// Returning users: also fill the GLB disk cache so the catalog opens hot.
+  /// First-time users skip warm-up here and run it after onboarding instead.
+  Future<void> _runColdStartBootstrap() async {
+    final sw = Stopwatch()..start();
+    bool onboardingDone = false;
+    // When every model is already on disk, warm-up finishes in milliseconds; use a
+    // shorter minimum splash so daily opens do not feel stuck on the logo.
+    var prefetchWasQuick = false;
+
     try {
-      await AuthService().initializeSession();
-      final onboardingDone = await OnboardingStorage.isComplete();
-      if (mounted) {
-        setState(() {
-          // Do not tie onboarding to guest vs signed-in: a restored session used to
-          // skip the carousel entirely; we only skip after Get started has been tapped.
-          _showOnboarding = !onboardingDone;
-          _authCheckComplete = true;
-          if (_splashComplete) {
-            _isBootstrapping = false;
-          }
-        });
+      await Future.wait([
+        AuthService().initializeSession(),
+        MySQLDatabaseService().initialize(),
+      ]);
+      onboardingDone = await OnboardingStorage.isComplete();
+
+      // Only block the cold splash for downloads when we are headed straight home.
+      if (onboardingDone) {
+        final prefetchSw = Stopwatch()..start();
+        try {
+          await CatalogModelPrefetch.warmCacheForStorefront()
+              .timeout(const Duration(seconds: 90));
+        } catch (e) {
+          developer.log('⚠️ Model cache warm-up timed out or failed: $e');
+        }
+        prefetchSw.stop();
+        prefetchWasQuick = prefetchSw.elapsedMilliseconds < 500;
       }
     } catch (e) {
-      developer.log('⚠️ Failed to check auth state: $e');
-      if (mounted) {
-        setState(() {
-          _showOnboarding = true;
-          _authCheckComplete = true;
-          if (_splashComplete) {
-            _isBootstrapping = false;
-          }
-        });
-      }
+      developer.log('⚠️ Cold start bootstrap failed: $e');
+      onboardingDone = false;
     }
-  }
 
-  void _handleSplashComplete() {
-    if (mounted) {
-      setState(() {
-        _splashComplete = true;
-        if (_authCheckComplete) {
-          _isBootstrapping = false;
-        }
-      });
+    // First install / slow network: allow a longer beat. Cache-hot reopen: trim it.
+    final minBrand = onboardingDone && prefetchWasQuick
+        ? const Duration(milliseconds: 900)
+        : const Duration(milliseconds: 2100);
+    final rem = minBrand - sw.elapsed;
+    if (rem > Duration.zero) {
+      await Future.delayed(rem);
     }
+
+    if (!mounted) return;
+    setState(() {
+      _showOnboarding = !onboardingDone;
+      _bootstrapComplete = true;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isBootstrapping) {
-      // Cold start: branding splash → onboarding (until completed) or home.
-      // Login / logout use [LoadingScreen], not this widget.
-      return SplashScreen(
-        onComplete: _handleSplashComplete,
+    if (!_bootstrapComplete) {
+      return const SplashScreen(
+        footerHint: 'Signing in and loading your catalog…',
       );
     }
     return _showOnboarding ? const OnboardingFlow() : const TabShell();

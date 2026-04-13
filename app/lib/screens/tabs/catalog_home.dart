@@ -1085,10 +1085,9 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
             // Product image with overlay buttons - make image area clickable
             Stack(
               children: [
-                // Make the image area clickable by wrapping ModelViewer in GestureDetector
-                GestureDetector(
-                  onTap: widget.onTap,
-                  behavior: HitTestBehavior.opaque, // Make entire area tappable
+                // WebView would steal taps from the card; ignore pointer so the outer
+                // [CupertinoButton] receives the press and opens product detail.
+                IgnorePointer(
                   child: ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                     child: SizedBox(
@@ -1102,9 +1101,6 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
                           src: resolvedSrc,
                           alt: 'Preview of ${widget.product.name}',
                           ar: false,
-                          // Brighter, more even studio lighting.
-                          // `neutral` applies a balanced environment map, and
-                          // exposure boosts overall brightness without washing out.
                           environmentImage: 'neutral',
                           exposure: 1.35,
                           shadowIntensity: 0.18,
@@ -1171,52 +1167,44 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
               ],
             ),
             const SizedBox(height: 6),
-            // Product name - also clickable
-            GestureDetector(
-              onTap: widget.onTap,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Text(
-                  widget.product.name,
-                  style: GoogleFonts.poppins(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    color: _CatalogHomeState._kTextPrimary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                widget.product.name,
+                style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: _CatalogHomeState._kTextPrimary,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             const SizedBox(height: 3),
-            // Price and quantity - also clickable
-            GestureDetector(
-              onTap: widget.onTap,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '₱${_CatalogHomeState.formatPrice(widget.product.price)}',
-                      style: GoogleFonts.poppins(
-                        color: _CatalogHomeState._kBrown,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '₱${_CatalogHomeState.formatPrice(widget.product.price)}',
+                    style: GoogleFonts.poppins(
+                      color: _CatalogHomeState._kBrown,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
                     ),
-                    const SizedBox(height: 1),
-                    Text(
-                      'Qty: ${widget.product.inventoryQty}',
-                      style: GoogleFonts.poppins(
-                        fontSize: 10,
-                        color: _CatalogHomeState._kTextPrimary.withValues(alpha: 0.6),
-                        fontWeight: FontWeight.normal,
-                      ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    'Qty: ${widget.product.inventoryQty}',
+                    style: GoogleFonts.poppins(
+                      fontSize: 10,
+                      color: _CatalogHomeState._kTextPrimary.withValues(alpha: 0.6),
+                      fontWeight: FontWeight.normal,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ],

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../../services/ar_support_service.dart';
 import '../../utils/model_path_helper.dart';
+import '../../utils/dimension_format.dart';
 import '../../widgets/cached_model_src_loader.dart';
 import 'ar_view.dart'; // Import ArModelDimensions
 
@@ -836,7 +837,7 @@ class _SizeChip extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            _formatMeters(meters),
+            DimensionFormat.formatMetersAsInches(meters),
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -846,13 +847,6 @@ class _SizeChip extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static String _formatMeters(double meters) {
-    if (meters >= 1) {
-      return '${meters.toStringAsFixed(2)}m';
-    }
-    return '${(meters * 100).toStringAsFixed(1)}cm';
   }
 }
 
@@ -1105,13 +1099,6 @@ class _ArGuidanceOverlay extends StatelessWidget {
       ),
     );
   }
-
-  static String _formatMeters(double meters) {
-    if (meters >= 1) {
-      return '${meters.toStringAsFixed(2)}m';
-    }
-    return '${(meters * 100).toStringAsFixed(1)}cm';
-  }
 }
 
 /// Individual guidance section with icon, title, and description
@@ -1225,7 +1212,7 @@ class _GuidanceSizeChip extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            _formatMeters(meters),
+            DimensionFormat.formatMetersAsInches(meters),
             style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
@@ -1235,13 +1222,6 @@ class _GuidanceSizeChip extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static String _formatMeters(double meters) {
-    if (meters >= 1) {
-      return '${meters.toStringAsFixed(2)}m';
-    }
-    return '${(meters * 100).toStringAsFixed(1)}cm';
   }
 }
 

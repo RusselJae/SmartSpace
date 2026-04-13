@@ -61,6 +61,20 @@ Future<String> resolveModelSourceForViewer(String normalizedSrc) async {
   }
 }
 
+/// Pre-downloads every distinct remote model URL so the home grid does not
+/// each spin up its own serial fetch on first paint.
+Future<void> prefetchModelSources(Iterable<String> normalizedSrcs) async {
+  final unique = <String>{};
+  for (final s in normalizedSrcs) {
+    final t = s.trim();
+    if (t.isEmpty) continue;
+    if (!t.startsWith('http://') && !t.startsWith('https://')) continue;
+    unique.add(t);
+  }
+  if (unique.isEmpty) return;
+  await Future.wait(unique.map(resolveModelSourceForViewer));
+}
+
 Future<File> _download(String url, File target) async {
   final uri = Uri.parse(url);
   final response = await http.get(uri).timeout(const Duration(minutes: 5));

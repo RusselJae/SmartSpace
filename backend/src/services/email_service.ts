@@ -364,38 +364,52 @@ ${isCOD ? `<p>Balance due on delivery.</p>` : ''}
       const safeName = escapeHtml(userName);
       const safeCode = escapeHtml(verificationCode);
 
-      const subject = 'Your verification code — Wood Home';
-      const safeBrowser = browserVerifyUrl ? escapeHtml(browserVerifyUrl) : '';
-      const safeApp = escapeHtml(appVerifyUrl);
-      const browserButtonRow = browserVerifyUrl
-        ? `<tr><td align="center" style="padding:0 0 12px;">
-<a href="${safeBrowser}" style="display:inline-block;padding:14px 28px;background:#6D28D9;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;font-size:15px;font-family:system-ui,-apple-system,sans-serif;">Verify in browser</a>
-</td></tr>`
-        : '';
-      const htmlBody = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
-<body style="margin:0;padding:24px 12px;background:#f4f4f5;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
-<table role="presentation" style="max-width:420px;width:100%;border-collapse:separate;border-spacing:0;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.07);" cellpadding="0" cellspacing="0" border="0">
-<tr><td style="background:#6D28D9;padding:22px 20px;text-align:center;border-radius:14px 14px 0 0;">
-<p style="margin:0;font-size:18px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;">Your verification code</p>
-</td></tr>
-<tr><td style="background:#ffffff;padding:24px 22px 20px;">
-<p style="margin:0 0 14px;color:#111827;font-size:15px;line-height:1.5;">Hi ${safeName},</p>
-<p style="margin:0 0 16px;color:#4b5563;font-size:14px;line-height:1.5;">Use this code to verify your email:</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#f3f4f6;border-radius:10px;padding:18px 12px;text-align:center;">
-<span style="font-size:26px;font-weight:700;letter-spacing:0.28em;color:#6D28D9;font-family:ui-monospace,Menlo,Consolas,monospace;">${safeCode}</span>
-</td></tr></table>
-<p style="margin:14px 0 0;color:#9ca3af;font-size:12px;line-height:1.45;">Valid 24 hours. Do not share this code.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:22px;">
-${browserButtonRow}
+      const walnut = '#5C4033';
+      const walnutMid = '#6D4C41';
+      const subject = 'Verify your email — Wood Home';
+      const safeEmailAddr = escapeHtml(userEmail);
+      const hrefBrowser = browserVerifyUrl ? escapeHtml(browserVerifyUrl) : '';
+      const hrefApp = escapeHtml(appVerifyUrl);
+      const hrefFacebook = escapeHtml(config.brand.facebookUrl);
+      const browserCta = browserVerifyUrl
+        ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">
 <tr><td align="center" style="padding:0;">
-<a href="${safeApp}" style="display:inline-block;padding:14px 28px;background:#7c3aed;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;font-size:15px;font-family:system-ui,-apple-system,sans-serif;">Open Wood Home app</a>
+<a href="${hrefBrowser}" style="display:inline-block;padding:16px 32px;background:${walnut};color:#ffffff;text-decoration:none;border-radius:2px;font-weight:600;font-size:15px;font-family:Poppins,Helvetica,Arial,sans-serif;">Verify in browser</a>
+</td></tr></table>`
+        : '';
+      // SendGrid-style card: Poppins + walnut; no images; real <a href> for app, browser, and Facebook.
+      const htmlBody = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet"/>
+</head>
+<body style="margin:0;padding:32px 16px;background:#f5f5f5;font-family:Poppins,Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
+<tr><td align="center" style="padding:0 0 24px;">
+<p style="margin:0;font-size:20px;font-weight:700;color:${walnutMid};letter-spacing:-0.02em;">Wood Home</p>
+</td></tr>
+<tr><td style="background:#ffffff;border:1px solid #e5e5e5;padding:44px 40px 40px;">
+<p style="margin:0 0 8px;font-size:24px;font-weight:700;color:#1a1a1a;line-height:1.3;font-family:Poppins,Helvetica,Arial,sans-serif;">Let's verify your email</p>
+<p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:#333333;font-family:Poppins,Helvetica,Arial,sans-serif;">Hi ${safeName}, confirm <strong style="color:${walnut};font-weight:600;">${safeEmailAddr}</strong> with the code below.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#fafafa;border:1px solid #eeeeee;padding:20px 16px;text-align:center;">
+<span style="font-size:28px;font-weight:700;letter-spacing:0.25em;color:${walnut};font-family:'Courier New',Courier,monospace;">${safeCode}</span>
+</td></tr></table>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
+<tr><td align="center" style="padding:0;">
+<a href="${hrefApp}" style="display:inline-block;padding:16px 32px;background:${walnut};color:#ffffff;text-decoration:none;border-radius:2px;font-weight:600;font-size:15px;font-family:Poppins,Helvetica,Arial,sans-serif;">Open Wood Home app</a>
 </td></tr>
 </table>
+${browserCta}
 </td></tr>
-<tr><td style="background:#f3f4f6;padding:14px 16px;text-align:center;border-radius:0 0 14px 14px;">
-<p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.4;">Wood Home Furniture Trading</p>
+<tr><td align="center" style="padding:28px 16px 8px;">
+<p style="margin:0 0 6px;font-size:16px;font-weight:700;color:${walnutMid};font-family:Poppins,Helvetica,Arial,sans-serif;">Wood Home</p>
+<p style="margin:0 0 16px;font-size:13px;color:#888888;font-family:Poppins,Helvetica,Arial,sans-serif;">Furniture you can trust.</p>
+<p style="margin:0 0 12px;font-size:12px;color:#aaaaaa;line-height:1.5;font-family:Poppins,Helvetica,Arial,sans-serif;">© ${new Date().getFullYear()} Wood Home Furniture Trading</p>
+<p style="margin:0;font-size:13px;font-family:Poppins,Helvetica,Arial,sans-serif;">
+<a href="${hrefFacebook}" style="color:${walnutMid};font-weight:600;text-decoration:underline;">Facebook</a>
+</p>
 </td></tr>
 </table>
 </td></tr></table>

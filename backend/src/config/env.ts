@@ -46,6 +46,10 @@ type EnvironmentConfig = {
     /** SHA-256 cert fingerprints (colon hex), e.g. from Play Console or `keytool -list -v`. */
     readonly sha256CertFingerprints: readonly string[];
   };
+  /** Public Facebook page URL for email footers (verification, etc.). */
+  readonly brand: {
+    readonly facebookUrl: string;
+  };
   readonly paymongo: {
     /** sk_test_... or sk_live_... — never commit real keys */
     readonly secretKey: string;
@@ -120,6 +124,9 @@ export const config: EnvironmentConfig = {
       .split(/[\s,]+/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0),
+  },
+  brand: {
+    facebookUrl: (process.env.BRAND_FACEBOOK_URL ?? 'https://www.facebook.com').trim(),
   },
   paymongo: {
     secretKey: process.env.PAYMONGO_SECRET_KEY ?? '',

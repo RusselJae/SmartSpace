@@ -1,34 +1,28 @@
 import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'app_brand_logo.dart';
 
-/// Transitional loading after login, logout, sign-out, etc. Logo + optional message.
-/// Not used on cold start (see `SplashScreen`). Same 3-second duration as before.
+/// Shown after login, logout, or admin sign-out: logo + one short line (or animated “Loading…”).
+/// No extra footer copy — cold start uses [SplashScreen] instead.
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({
     super.key,
     this.onComplete,
     this.message,
-    this.footerHelper,
     this.nextRoute,
     this.nextBuilder,
   });
 
-  /// Callback when loading completes (after 3 seconds)
   final VoidCallback? onComplete;
 
-  /// Optional line shown under the logo (e.g. "Signing out…") — not used on cold start.
+  /// e.g. “Welcome back!”, “Signing out…” — when null, shows animated Loading…
   final String? message;
 
-  /// Always shown at the bottom while this screen runs (cold start uses [SplashScreen] instead).
-  final String? footerHelper;
-
-  /// Optional route name to navigate to after loading
   final String? nextRoute;
-
-  /// Optional widget builder for next screen
   final WidgetBuilder? nextBuilder;
 
   @override
@@ -36,38 +30,42 @@ class LoadingScreen extends StatefulWidget {
 }
 
 class _LoadingScreenState extends State<LoadingScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
+    with TickerProviderStateMixin {
+  late AnimationController _introController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
+  late AnimationController _captionPulseController;
+  late Animation<double> _captionOpacity;
 
   @override
   void initState() {
     super.initState();
 
-    _controller = AnimationController(
+    _introController = AnimationController(
       duration: const Duration(milliseconds: 900),
       vsync: this,
     );
 
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutCubic,
-      ),
+      CurvedAnimation(parent: _introController, curve: Curves.easeOutCubic),
     );
 
     _slideAnimation = Tween<Offset>(
       begin: const Offset(0, 0.04),
       end: Offset.zero,
     ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutCubic,
-      ),
+      CurvedAnimation(parent: _introController, curve: Curves.easeOutCubic),
     );
 
-    _controller.forward();
+    _captionPulseController = AnimationController(
+      duration: const Duration(milliseconds: 1100),
+      vsync: this,
+    )..repeat(reverse: true);
+    _captionOpacity = Tween<double>(begin: 0.52, end: 1.0).animate(
+      CurvedAnimation(parent: _captionPulseController, curve: Curves.easeInOut),
+    );
+
+    _introController.forward();
 
     Timer(const Duration(seconds: 3), () {
       if (!mounted) return;
@@ -87,7 +85,8 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   @override
   void dispose() {
-    _controller.dispose();
+    _introController.dispose();
+    _captionPulseController.dispose();
     super.dispose();
   }
 
@@ -107,7 +106,7 @@ class _LoadingScreenState extends State<LoadingScreen>
                   : constraints.maxHeight;
 
               return AnimatedBuilder(
-                animation: _controller,
+                animation: _introController,
                 builder: (context, child) {
                   return FadeTransition(
                     opacity: _fadeAnimation,
@@ -127,38 +126,32 @@ class _LoadingScreenState extends State<LoadingScreen>
                     Align(
                       alignment: Alignment.bottomCenter,
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (widget.message != null) ...[
-                              Text(
-                                widget.message!,
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyLarge
-                                    ?.copyWith(
-                                      color: kCaption.withValues(alpha: 0.75),
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                              ),
-                              const SizedBox(height: 10),
-                            ],
-                            Text(
-                              widget.footerHelper ??
-                                  'Hang tight — we are finishing up in the background.',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    color: kCaption.withValues(alpha: 0.55),
-                                    fontWeight: FontWeight.w500,
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 36),
+                        child: AnimatedBuilder(
+                          animation: _captionPulseController,
+                          builder: (context, child) => Opacity(
+                            opacity: _captionOpacity.value,
+                            child: child,
+                          ),
+                          child: widget.message != null
+                              ? Text(
+                                  widget.message!,
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: kCaption.withValues(alpha: 0.88),
                                     height: 1.35,
                                   ),
-                            ),
-                          ],
+                                )
+                              : _AnimatedLoadingCaption(
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: kCaption.withValues(alpha: 0.88),
+                                    height: 1.35,
+                                  ),
+                                ),
                         ),
                       ),
                     ),
@@ -169,6 +162,46 @@ class _LoadingScreenState extends State<LoadingScreen>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// “Loading” with animated ellipsis (wait state when [LoadingScreen.message] is null).
+class _AnimatedLoadingCaption extends StatefulWidget {
+  const _AnimatedLoadingCaption({required this.style});
+
+  final TextStyle style;
+
+  @override
+  State<_AnimatedLoadingCaption> createState() => _AnimatedLoadingCaptionState();
+}
+
+class _AnimatedLoadingCaptionState extends State<_AnimatedLoadingCaption> {
+  static const _frames = ['Loading', 'Loading.', 'Loading..', 'Loading...'];
+  int _i = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 420), (_) {
+      if (!mounted) return;
+      setState(() => _i = (_i + 1) % _frames.length);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _frames[_i],
+      textAlign: TextAlign.center,
+      style: widget.style,
     );
   }
 }

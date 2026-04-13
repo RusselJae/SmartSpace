@@ -23,6 +23,8 @@ import 'screens/profile/security_privacy_screen.dart';
 import 'screens/profile/change_password_screen.dart';
 import 'utils/env_loader.dart';
 import 'utils/deep_link_handler.dart';
+import 'utils/paymongo_return_deep_link.dart';
+import 'screens/checkout/success_screen.dart';
 import 'app_nav.dart';
 import 'services/mysql_database_service.dart';
 import 'services/native_ar_editor_service.dart';
@@ -136,6 +138,42 @@ class _WoodHomeFurnitureAppState extends State<WoodHomeFurnitureApp> {
     }
     _lastHandledLink = url;
     _lastHandledAt = now;
+
+    final paymongo = PaymongoReturnDeepLink.tryParseUri(uri);
+    if (paymongo != null) {
+      unawaited(
+        runWhenNavigatorReady((nav) {
+          if (paymongo.isSuccess) {
+            nav.push(
+              CupertinoPageRoute<void>(
+                builder: (_) {
+                  final oid = paymongo.orderId;
+                  final short = oid != null && oid.isNotEmpty
+                      ? (oid.length > 8 ? oid.substring(0, 8) : oid).toUpperCase()
+                      : null;
+                  return SuccessScreen(
+                    subtitle: short != null
+                        ? 'Payment received. Order #$short will update in Orders.'
+                        : 'Payment received. Check Orders for your latest status.',
+                  );
+                },
+              ),
+            );
+          } else {
+            nav.push(
+              CupertinoPageRoute<void>(
+                builder: (_) => const SuccessScreen(
+                  paymentCancelled: true,
+                  subtitle:
+                      'You can try checkout again from your cart or the Orders tab.',
+                ),
+              ),
+            );
+          }
+        }),
+      );
+      return;
+    }
 
     final token = DeepLinkHandler.extractVerificationToken(url);
     if (token == null) return;

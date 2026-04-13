@@ -24,7 +24,6 @@ import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
 import 'models.dart';
-import 'success_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Walnut-forward palette (warm wood tone — Apple HIG: legible contrast, calm CTAs).
@@ -336,20 +335,6 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       if (!mounted) return;
       Toast.warning(context, 'Could not pick image: $e');
     }
-  }
-
-  String _successSubtitle() {
-    if (_paymentPlan == CheckoutPaymentPlan.full) {
-      return 'PayMongo checkout should open in your browser. Your order updates when payment '
-          'clears (usually seconds).';
-    }
-    if (_orderOption == CheckoutOrderOption.hulugan) {
-      return 'First PayMongo charge is your ${_huluganDownPercent.toStringAsFixed(0)}% down payment. '
-          'Balance includes ${_huluganInterestPercent.toStringAsFixed(1)}% on the financed '
-          'amount. Estimated delivery is set 10–12 days after your order is confirmed.';
-    }
-    return 'First payment is your lay-away down payment. Your ${_policyTermMonths}-month 0% window starts '
-        'when that payment clears. Delivery ships after you’re fully paid.';
   }
 
   /// Short policy copy that tracks Lay-away vs Hulugan vs full pay.
@@ -956,18 +941,15 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
             context,
             'Could not open browser — complete payment from Orders when ready.',
           );
-        } else if (mounted) {
-          Toast.info(context, 'Complete payment in the browser window.');
+          return;
         }
+        if (mounted) {
+          Toast.info(context, 'Complete payment in the browser. You’ll return to the app when done.');
+        }
+        // Let PayMongo come to the foreground first; thank-you shows after “return to merchant” deep link.
+        await Future<void>.delayed(const Duration(milliseconds: 450));
         if (!mounted) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          CupertinoPageRoute(
-            builder: (_) => SuccessScreen(
-              subtitle: _successSubtitle(),
-            ),
-          ),
-          (route) => route.isFirst,
-        );
+        Navigator.of(context).popUntil((route) => route.isFirst);
       } catch (e) {
         if (!mounted) return;
         Toast.error(context, 'PayMongo checkout failed: $e');

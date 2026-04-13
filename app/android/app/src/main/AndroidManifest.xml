@@ -40,6 +40,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="smartspace" android:host="verify-email" />
             </intent-filter>
+            <!-- PayMongo "return to merchant" opens the app after browser checkout. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="smartspace" android:host="paymongo-return" />
+            </intent-filter>
             <!--
               HTTPS App Links: same URLs as signup email (PUBLIC_API_BASE_URL + /api/users/verify-email).
               Requires /.well-known/assetlinks.json on that host (served by this repo's API when env is set).

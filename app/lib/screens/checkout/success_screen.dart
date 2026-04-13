@@ -3,16 +3,20 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../shell/tab_shell.dart';
 
-/// Order confirmation
+/// Order confirmation (thank-you or PayMongo cancel).
 class SuccessScreen extends StatelessWidget {
   const SuccessScreen({
     super.key,
     /// When set (e.g. PayMongo test flow), replaces the default body copy.
     this.subtitle,
+    /// After PayMongo cancel redirect — neutral screen (not “Thank you”).
+    this.paymentCancelled = false,
   });
 
   /// Optional second line under the title (e.g. PayMongo instructions).
   final String? subtitle;
+
+  final bool paymentCancelled;
 
   @override
   Widget build(BuildContext context) {
@@ -43,23 +47,32 @@ class SuccessScreen extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Green checkmark in an iOS-friendly size.
                     Icon(
-                      CupertinoIcons.check_mark_circled,
+                      paymentCancelled
+                          ? CupertinoIcons.xmark_circle
+                          : CupertinoIcons.check_mark_circled,
                       size: 82,
-                      color: CupertinoColors.activeGreen,
+                      color: paymentCancelled
+                          ? const Color(0xFFC62828)
+                          : CupertinoColors.activeGreen,
                     ),
                     const SizedBox(height: 10),
 
-                    // Handwritten-style title to mirror the screenshot.
                     Text(
-                      'Thank You!',
-                      style: GoogleFonts.dancingScript(
-                        fontSize: 44,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black,
-                        decoration: TextDecoration.none,
-                      ),
+                      paymentCancelled ? 'Checkout cancelled' : 'Thank You!',
+                      style: paymentCancelled
+                          ? GoogleFonts.poppins(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black87,
+                              decoration: TextDecoration.none,
+                            )
+                          : GoogleFonts.dancingScript(
+                              fontSize: 44,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black,
+                              decoration: TextDecoration.none,
+                            ),
                       textAlign: TextAlign.center,
                     ),
 

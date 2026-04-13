@@ -49,6 +49,8 @@ type EnvironmentConfig = {
   /** Public Facebook page URL for email footers (verification, etc.). */
   readonly brand: {
     readonly facebookUrl: string;
+    /** Optional PNG/SVG URL for Facebook icon in HTML emails (https only). */
+    readonly facebookIconUrl: string;
   };
   readonly paymongo: {
     /** sk_test_... or sk_live_... — never commit real keys */
@@ -127,6 +129,10 @@ export const config: EnvironmentConfig = {
   },
   brand: {
     facebookUrl: (process.env.BRAND_FACEBOOK_URL ?? 'https://www.facebook.com').trim(),
+    facebookIconUrl: (
+      process.env.BRAND_FACEBOOK_ICON_URL ??
+      'https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Facebook_icon.svg/48px-Facebook_icon.svg.png'
+    ).trim(),
   },
   paymongo: {
     secretKey: process.env.PAYMONGO_SECRET_KEY ?? '',

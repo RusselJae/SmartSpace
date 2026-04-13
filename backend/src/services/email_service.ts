@@ -18,6 +18,19 @@ const escapeHtml = (value: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+/** Only allow http(s) image URLs in HTML `src` (prevents javascript: etc.). */
+const safeEmailImageUrl = (raw: string): string => {
+  const t = raw.trim();
+  if (!t) return '';
+  try {
+    const u = new URL(t);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return u.toString();
+  } catch {
+    return '';
+  }
+};
+
 /**
  * Email service for sending order confirmation emails.
  * In production, integrate with a service like SendGrid, AWS SES, or Nodemailer.
@@ -371,45 +384,54 @@ ${isCOD ? `<p>Balance due on delivery.</p>` : ''}
       const hrefBrowser = browserVerifyUrl ? escapeHtml(browserVerifyUrl) : '';
       const hrefApp = escapeHtml(appVerifyUrl);
       const hrefFacebook = escapeHtml(config.brand.facebookUrl);
+      const logoSrc = safeEmailImageUrl(config.emailBranding.logoUrl);
+      const fbIconSrc = safeEmailImageUrl(config.brand.facebookIconUrl);
+      const logoBlock = logoSrc
+        ? `<img src="${escapeHtml(logoSrc)}" alt="Wood Home" width="140" style="display:block;margin:0 auto 12px;max-width:160px;width:100%;height:auto;border:0;"/>`
+        : `<p style="margin:0 0 8px;font-size:20px;font-weight:700;color:${walnutMid};letter-spacing:-0.02em;font-family:Poppins,Helvetica,Arial,sans-serif;">Wood Home</p>`;
+      const fbFooterBlock =
+        fbIconSrc.length > 0
+          ? `<a href="${hrefFacebook}" style="display:inline-block;text-decoration:none;color:${walnutMid};font-family:Poppins,Helvetica,Arial,sans-serif;">
+<img src="${escapeHtml(fbIconSrc)}" alt="Facebook" width="36" height="36" style="display:block;margin:0 auto 8px;border:0;"/>
+<span style="font-size:14px;font-weight:600;text-decoration:underline;">Facebook</span>
+</a>`
+          : `<a href="${hrefFacebook}" style="color:${walnutMid};font-weight:600;text-decoration:underline;font-size:14px;font-family:Poppins,Helvetica,Arial,sans-serif;">Facebook</a>`;
+      const btnBase = `display:block;width:100%;max-width:300px;margin:0 auto;box-sizing:border-box;text-align:center;padding:16px 24px;background:${walnut};color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;font-size:15px;font-family:Poppins,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;`;
       const browserCta = browserVerifyUrl
-        ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">
-<tr><td align="center" style="padding:0;">
-<a href="${hrefBrowser}" style="display:inline-block;padding:16px 32px;background:${walnut};color:#ffffff;text-decoration:none;border-radius:2px;font-weight:600;font-size:15px;font-family:Poppins,Helvetica,Arial,sans-serif;">Verify in browser</a>
+        ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:12px 0 0;">
+<tr><td align="center" style="padding:0 8px;">
+<a href="${hrefBrowser}" style="${btnBase}">Verify in browser</a>
 </td></tr></table>`
         : '';
-      // SendGrid-style card: Poppins + walnut; no images; real <a href> for app, browser, and Facebook.
       const htmlBody = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="x-apple-disable-message-reformatting"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet"/>
 </head>
-<body style="margin:0;padding:32px 16px;background:#f5f5f5;font-family:Poppins,Helvetica,Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
-<tr><td align="center" style="padding:0 0 24px;">
-<p style="margin:0;font-size:20px;font-weight:700;color:${walnutMid};letter-spacing:-0.02em;">Wood Home</p>
-</td></tr>
-<tr><td style="background:#ffffff;border:1px solid #e5e5e5;padding:44px 40px 40px;">
-<p style="margin:0 0 8px;font-size:24px;font-weight:700;color:#1a1a1a;line-height:1.3;font-family:Poppins,Helvetica,Arial,sans-serif;">Let's verify your email</p>
-<p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:#333333;font-family:Poppins,Helvetica,Arial,sans-serif;">Hi ${safeName}, confirm <strong style="color:${walnut};font-weight:600;">${safeEmailAddr}</strong> with the code below.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#fafafa;border:1px solid #eeeeee;padding:20px 16px;text-align:center;">
-<span style="font-size:28px;font-weight:700;letter-spacing:0.25em;color:${walnut};font-family:'Courier New',Courier,monospace;">${safeCode}</span>
+<body style="margin:0;padding:0;background:#f0f0f0;font-family:Poppins,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0f0f0;"><tr><td align="center" style="padding:20px 12px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:400px;width:100%;">
+<tr><td align="center" style="padding:0 0 16px;">${logoBlock}</td></tr>
+<tr><td style="background:#ffffff;border:1px solid #e8e8e8;border-radius:14px;padding:28px 22px 26px;">
+<p style="margin:0 0 10px;font-size:22px;font-weight:700;color:#1a1a1a;line-height:1.25;font-family:Poppins,Helvetica,Arial,sans-serif;">Let's verify your email</p>
+<p style="margin:0 0 20px;font-size:15px;line-height:1.5;color:#333333;font-family:Poppins,Helvetica,Arial,sans-serif;">Hi ${safeName}, confirm <strong style="color:${walnut};font-weight:600;">${safeEmailAddr}</strong> with the code below.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#f7f7f7;border:1px solid #eeeeee;border-radius:10px;padding:18px 12px;text-align:center;">
+<span style="font-size:24px;font-weight:700;letter-spacing:0.22em;color:${walnut};font-family:'Courier New',Courier,monospace;">${safeCode}</span>
 </td></tr></table>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
-<tr><td align="center" style="padding:0;">
-<a href="${hrefApp}" style="display:inline-block;padding:16px 32px;background:${walnut};color:#ffffff;text-decoration:none;border-radius:2px;font-weight:600;font-size:15px;font-family:Poppins,Helvetica,Arial,sans-serif;">Open Wood Home app</a>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:22px;">
+<tr><td align="center" style="padding:0 8px;">
+<a href="${hrefApp}" style="${btnBase}">Open Wood Home app</a>
 </td></tr>
 </table>
 ${browserCta}
 </td></tr>
-<tr><td align="center" style="padding:28px 16px 8px;">
-<p style="margin:0 0 6px;font-size:16px;font-weight:700;color:${walnutMid};font-family:Poppins,Helvetica,Arial,sans-serif;">Wood Home</p>
-<p style="margin:0 0 16px;font-size:13px;color:#888888;font-family:Poppins,Helvetica,Arial,sans-serif;">Furniture you can trust.</p>
-<p style="margin:0 0 12px;font-size:12px;color:#aaaaaa;line-height:1.5;font-family:Poppins,Helvetica,Arial,sans-serif;">© ${new Date().getFullYear()} Wood Home Furniture Trading</p>
-<p style="margin:0;font-size:13px;font-family:Poppins,Helvetica,Arial,sans-serif;">
-<a href="${hrefFacebook}" style="color:${walnutMid};font-weight:600;text-decoration:underline;">Facebook</a>
-</p>
+<tr><td align="center" style="padding:22px 12px 8px;">
+<p style="margin:0 0 4px;font-size:15px;font-weight:700;color:${walnutMid};font-family:Poppins,Helvetica,Arial,sans-serif;">Wood Home</p>
+<p style="margin:0 0 14px;font-size:12px;color:#888888;font-family:Poppins,Helvetica,Arial,sans-serif;">Furniture you can trust.</p>
+<p style="margin:0 0 14px;font-size:11px;color:#aaaaaa;line-height:1.45;font-family:Poppins,Helvetica,Arial,sans-serif;">© ${new Date().getFullYear()} Wood Home Furniture Trading</p>
+<p style="margin:0;text-align:center;line-height:1.4;">${fbFooterBlock}</p>
 </td></tr>
 </table>
 </td></tr></table>

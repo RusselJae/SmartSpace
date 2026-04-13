@@ -241,6 +241,8 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
     required VoidCallback onTap,
     Color? textColor,
     int? badgeCount,
+    /// Customer support unread: walnut gradient instead of flat red (HIG-aligned accent).
+    bool gradientUnreadBadge = false,
   }) {
     return Center(
       child: CupertinoButton(
@@ -286,9 +288,19 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.all(Radius.circular(999)),
+                        decoration: BoxDecoration(
+                          borderRadius: const BorderRadius.all(Radius.circular(999)),
+                          gradient: gradientUnreadBadge
+                              ? const LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    Color(0xFF8D6E63),
+                                    Color(0xFF5D4037),
+                                  ],
+                                )
+                              : null,
+                          color: gradientUnreadBadge ? null : Colors.red,
                         ),
                         child: Text(
                           (badgeCount ?? 0) > 99 ? '99+' : '${badgeCount ?? 0}',
@@ -403,6 +415,7 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
           icon: CupertinoIcons.chat_bubble_2,
           title: 'Support Chat',
           badgeCount: supportUnread,
+          gradientUnreadBadge: true,
           onTap: () => Navigator.of(context, rootNavigator: true)
               .push(CupertinoPageRoute(builder: (_) => const SupportChatScreen())),
         ),

@@ -115,6 +115,65 @@ userRouter.get(
   }),
 );
 
+/**
+ * Email verification (GET) must be registered **before** `/:id`, otherwise Express
+ * treats `verify-email` as a user id and returns 404 from findUserById.
+ */
+userRouter.get(
+  '/verify-email',
+  asyncHandler(async (req, res) => {
+    const token = (req.query.token as string | undefined) ?? '';
+    const emailLanding = req.query.ui === '1' || req.query.source === 'email';
+
+    if (!token.trim()) {
+      if (emailLanding) {
+        return res
+          .status(400)
+          .type('html')
+          .send(
+            buildVerifyEmailLandingHtml(
+              false,
+              'This verification link is missing a token. Request a new email from the app.',
+            ),
+          );
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Verification token is required',
+      });
+    }
+
+    try {
+      const user = await verifyUserEmail(token);
+      if (emailLanding) {
+        return res
+          .status(200)
+          .type('html')
+          .send(
+            buildVerifyEmailLandingHtml(
+              true,
+              'You are all set. You can sign in on your phone or the website.',
+            ),
+          );
+      }
+      res.json({
+        success: true,
+        message: 'Email verified successfully',
+        data: user,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to verify email';
+      if (emailLanding) {
+        return res.status(400).type('html').send(buildVerifyEmailLandingHtml(false, message));
+      }
+      res.status(400).json({
+        success: false,
+        message,
+      });
+    }
+  }),
+);
+
 userRouter.get(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -285,67 +344,6 @@ userRouter.post(
     } catch (error) {
       console.error('Avatar upload error:', error);
       res.status(500).json({ success: false, message: error instanceof Error ? error.message : 'Failed to upload avatar' });
-    }
-  }),
-);
-
-/**
- * Email verification endpoint.
- * Users click the verification link in their email, which calls this endpoint.
- * Verifies the token and marks the user's email as verified.
- */
-userRouter.get(
-  '/verify-email',
-  asyncHandler(async (req, res) => {
-    const token = (req.query.token as string | undefined) ?? '';
-    // Set by links in transactional email so webmail opens a real page (not JSON).
-    const emailLanding = req.query.ui === '1' || req.query.source === 'email';
-
-    if (!token.trim()) {
-      if (emailLanding) {
-        return res
-          .status(400)
-          .type('html')
-          .send(
-            buildVerifyEmailLandingHtml(
-              false,
-              'This verification link is missing a token. Request a new email from the app.',
-            ),
-          );
-      }
-      return res.status(400).json({
-        success: false,
-        message: 'Verification token is required',
-      });
-    }
-
-    try {
-      const user = await verifyUserEmail(token);
-      if (emailLanding) {
-        return res
-          .status(200)
-          .type('html')
-          .send(
-            buildVerifyEmailLandingHtml(
-              true,
-              'You are all set. You can sign in on your phone or the website.',
-            ),
-          );
-      }
-      res.json({
-        success: true,
-        message: 'Email verified successfully',
-        data: user,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to verify email';
-      if (emailLanding) {
-        return res.status(400).type('html').send(buildVerifyEmailLandingHtml(false, message));
-      }
-      res.status(400).json({
-        success: false,
-        message,
-      });
     }
   }),
 );

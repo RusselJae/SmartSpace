@@ -93,9 +93,14 @@ class _TabShellState extends State<TabShell> {
         top: -5,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          // Walnut gradient (customer profile tab) — matches sidebar support badge; admin inbox stays red.
           decoration: const BoxDecoration(
-            color: Colors.red,
             borderRadius: BorderRadius.all(Radius.circular(999)),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF8D6E63), Color(0xFF5D4037)],
+            ),
           ),
           constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
           child: Text(

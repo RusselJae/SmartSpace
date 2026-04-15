@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/address_entry.dart';
 import '../models/admin.dart';
+import '../models/admin_activity_log.dart';
 import '../models/cart_item.dart';
 import '../models/order_record.dart';
 import '../models/made_to_order_request.dart';
@@ -19,6 +20,8 @@ import '../models/faq.dart';
 import '../models/support_conversation.dart';
 import '../models/support_message.dart';
 import '../models/user.dart';
+import 'admin_auth_service.dart';
+import '../models/customer_notification.dart';
 
 /// Service that now talks to the Node.js API and falls back to mock data if needed.
 class MySQLDatabaseService {
@@ -301,6 +304,7 @@ class MySQLDatabaseService {
     int? inventoryQty,
     required bool inStock,
     bool isArchived = false,
+    String? adminId,
     // Note: isPopular and isNewArrival are now calculated automatically by the backend
   }) {
     return {
@@ -321,6 +325,7 @@ class MySQLDatabaseService {
       if (inventoryQty != null) 'inventoryQty': inventoryQty,
       'inStock': inStock,
       'isArchived': isArchived,
+      if (adminId != null && adminId.isNotEmpty) 'adminId': adminId,
     };
   }
 
@@ -437,6 +442,9 @@ class MySQLDatabaseService {
     // - isNewArrival: Products created within the last week
     // - isPopular: Products with orders
   }) async {
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId;
     if (!_useApi) {
       developer.log('⚠️ Creating product in MOCK MODE - data will NOT be saved to database!');
       developer.log('💡 Make sure your backend is running at ${ApiConfig.baseUrl}');
@@ -487,6 +495,7 @@ class MySQLDatabaseService {
       imageUrls: imageUrls,
       inventoryQty: inventoryQty,
       inStock: inStock,
+      adminId: adminId,
     );
     final data = await _sendRequest(method: 'POST', path: '/products', body: payload);
     final map = _asMap(data, 'product');
@@ -494,6 +503,9 @@ class MySQLDatabaseService {
   }
 
   Future<Product?> updateProduct(Product product) async {
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId;
     if (!_useApi) {
       final index = _mockProducts.indexWhere((item) => item.id == product.id);
       if (index != -1) {
@@ -520,6 +532,7 @@ class MySQLDatabaseService {
       inventoryQty: product.inventoryQty,
       inStock: product.inStock,
       isArchived: product.isArchived,
+      adminId: adminId,
     );
     final data = await _sendRequest(method: 'PUT', path: '/products/${product.id}', body: payload);
     final map = _asMap(data, 'product');
@@ -527,11 +540,17 @@ class MySQLDatabaseService {
   }
 
   Future<void> deleteProduct(String id) async {
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId;
     if (!_useApi) {
       _mockProducts.removeWhere((product) => product.id == id);
       return;
     }
-    await _sendRequest(method: 'DELETE', path: '/products/$id');
+    final path = adminId != null && adminId.isNotEmpty
+        ? '/products/$id?adminId=${Uri.encodeComponent(adminId)}'
+        : '/products/$id';
+    await _sendRequest(method: 'DELETE', path: path);
   }
 
   Future<List<User>> getAllUsers() async {
@@ -818,10 +837,16 @@ class MySQLDatabaseService {
       }
       return;
     }
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId;
     await _sendRequest(
       method: 'PATCH',
       path: '/orders/$orderId/status',
-      body: {'status': status},
+      body: {
+        'status': status,
+        if (adminId != null && adminId.isNotEmpty) 'adminId': adminId,
+      },
     );
   }
 
@@ -2020,12 +2045,21 @@ class MySQLDatabaseService {
   /// Fetches legal page content by key ('terms' or 'privacy').
   /// Returns null when not set or API unavailable (client should use default).
   Future<String?> getLegalContent(String key) async {
+    final payload = await getLegalContentPayload(key);
+    return payload?.content;
+  }
+
+  Future<LegalContentPayload?> getLegalContentPayload(String key) async {
     if (!_useApi) return null;
     if (key != 'terms' && key != 'privacy') return null;
     try {
       final data = await _sendRequest(method: 'GET', path: '/content/legal/$key');
       final map = _asMap(data, 'legal content');
-      return map['content'] as String?;
+      return LegalContentPayload(
+        content: map['content'] as String?,
+        version: (map['version'] as num?)?.toInt() ?? 1,
+        updatedAt: DateTime.tryParse(map['updatedAt']?.toString() ?? ''),
+      );
     } catch (_) {
       return null;
     }
@@ -2047,6 +2081,88 @@ class MySQLDatabaseService {
     );
     final map = _asMap(data, 'legal content');
     return map['content'] as String?;
+  }
+
+  Future<List<CustomerNotification>> getUserNotifications(
+    String userId, {
+    int limit = 50,
+  }) async {
+    if (!_useApi) return const [];
+    final data = await _sendRequest(
+      method: 'GET',
+      path: '/user-notifications/$userId?limit=$limit',
+    );
+    final list = _asMapList(data, 'user notifications');
+    return list.map(CustomerNotification.fromJson).toList(growable: false);
+  }
+
+  Future<void> markUserNotificationRead(String userId, {String? notificationId}) async {
+    if (!_useApi) return;
+    await _sendRequest(
+      method: 'POST',
+      path: '/user-notifications/$userId/read',
+      body: {
+        if (notificationId != null && notificationId.trim().isNotEmpty)
+          'notificationId': notificationId.trim(),
+      },
+    );
+  }
+
+  Future<void> registerUserDeviceToken({
+    required String userId,
+    required String token,
+    required String platform,
+  }) async {
+    if (!_useApi) return;
+    await _sendRequest(
+      method: 'POST',
+      path: '/user-notifications/$userId/device-token',
+      body: {'token': token, 'platform': platform},
+    );
+  }
+
+  Future<void> sendAdminBroadcastNotification({
+    required String adminId,
+    required String type,
+    required String title,
+    required String body,
+  }) async {
+    if (!_useApi) return;
+    await _sendRequest(
+      method: 'POST',
+      path: '/user-notifications/admin/broadcast',
+      body: {
+        'adminId': adminId,
+        'type': type,
+        'title': title,
+        'body': body,
+      },
+    );
+  }
+
+  Future<List<AdminActivityLog>> getAdminActivityLogs({
+    int limit = 40,
+    String? adminId,
+    String? action,
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    if (!_useApi) return const [];
+    final query = <String>[
+      'limit=$limit',
+      if (adminId != null && adminId.trim().isNotEmpty)
+        'adminId=${Uri.encodeComponent(adminId.trim())}',
+      if (action != null && action.trim().isNotEmpty)
+        'action=${Uri.encodeComponent(action.trim())}',
+      if (from != null) 'from=${Uri.encodeComponent(from.toIso8601String())}',
+      if (to != null) 'to=${Uri.encodeComponent(to.toIso8601String())}',
+    ].join('&');
+    final data = await _sendRequest(
+      method: 'GET',
+      path: '/admins/activity-logs?$query',
+    );
+    final list = _asMapList(data, 'admin activity logs');
+    return list.map(AdminActivityLog.fromJson).toList(growable: false);
   }
 
   String _suggestUsername(String fullName, String email) {
@@ -2310,5 +2426,17 @@ class MySQLDatabaseService {
     final map = _asMap(data, 'admin');
     return Admin.fromJson(map);
   }
+}
+
+class LegalContentPayload {
+  const LegalContentPayload({
+    required this.content,
+    required this.version,
+    required this.updatedAt,
+  });
+
+  final String? content;
+  final int version;
+  final DateTime? updatedAt;
 }
 

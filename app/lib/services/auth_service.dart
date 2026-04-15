@@ -60,6 +60,7 @@ class AuthService {
     required String email,
     required String fullName,
     required String password,
+    required int termsVersionAccepted,
     String? phoneNumber,
     String? username,
     DateTime? dateOfBirth,
@@ -72,6 +73,7 @@ class AuthService {
         'email': email,
         'fullName': fullName,
         'password': password,
+        'termsVersionAccepted': termsVersionAccepted,
         if (phoneNumber != null) 'phoneNumber': phoneNumber,
         if (username != null && username.trim().isNotEmpty) 'username': username.trim(),
         if (dateOfBirth != null) 'dateOfBirth': dateOfBirth.toIso8601String(),
@@ -357,6 +359,33 @@ class AuthService {
       developer.log('❌ Failed to resend verification email: $e');
       rethrow;
     }
+  }
+
+  Future<User> acceptLatestTerms(int version) async {
+    final userId = _currentUser?.id;
+    if (userId == null) {
+      throw Exception('You must be signed in.');
+    }
+    final uri = Uri.parse('${ApiConfig.baseUrl}/users/$userId/legal-acceptance');
+    final response = await _client
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'termsVersionAccepted': version}),
+        )
+        .timeout(ApiConfig.timeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to save terms acceptance');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final data = decoded['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw Exception('Invalid terms acceptance response');
+    }
+    final user = User.fromJson(data);
+    _currentUser = user;
+    await _persistUser(user);
+    return user;
   }
 }
 

@@ -6,6 +6,7 @@ import {
   isValidLegalKey,
   type LegalContentKey,
 } from '../services/legal_content_service';
+import { logAdminActivity } from '../services/admin_activity_log_service';
 
 export const legalContentRouter = Router();
 
@@ -26,8 +27,8 @@ legalContentRouter.get(
       });
     }
 
-    const content = await getLegalContent(key as LegalContentKey);
-    res.json({ success: true, data: { content } });
+    const payload = await getLegalContent(key as LegalContentKey);
+    res.json({ success: true, data: payload });
   }),
 );
 
@@ -57,6 +58,13 @@ legalContentRouter.patch(
 
     await updateLegalContent(key as LegalContentKey, String(content));
     const updated = await getLegalContent(key as LegalContentKey);
-    res.json({ success: true, data: { content: updated } });
+    await logAdminActivity({
+      adminId,
+      action: 'legal_content_updated',
+      entityType: 'legal_content',
+      entityId: key,
+      details: { version: String(updated.version) },
+    });
+    res.json({ success: true, data: updated });
   }),
 );

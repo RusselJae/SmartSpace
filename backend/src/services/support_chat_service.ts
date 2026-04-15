@@ -1,6 +1,8 @@
 import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
 import { generateId } from '../utils/id_generator';
+import { EmailService } from './email_service';
+import { createNotificationForUser } from './user_notification_service';
 
 /** Result of mapping the app session user to a row in `users` (required for FK constraints). */
 export type SupportUserResolveResult =
@@ -407,6 +409,34 @@ export const createSupportMessage = async (input: CreateSupportMessageInput): Pr
     `,
     [preview, input.senderType, input.conversationId],
   );
+
+  if (input.senderType === 'user') {
+    EmailService.sendAdminEventEmail({
+      title: 'New customer support message',
+      message: 'A customer sent a message in the support inbox.',
+      details: [
+        { label: 'Conversation ID', value: input.conversationId },
+        { label: 'User ID', value: input.senderUserId ?? 'unknown' },
+        { label: 'Preview', value: preview.slice(0, 120) },
+      ],
+    }).catch((error) => {
+      console.error('Failed to send admin support alert email:', error);
+    });
+  }
+  if (input.senderType === 'admin') {
+    const conversation = await getConversationById(input.conversationId);
+    if (conversation != null) {
+      createNotificationForUser({
+        userId: conversation.userId,
+        type: 'admin_message',
+        title: 'Admin replied to your message',
+        body: preview.length > 0 ? preview : 'Open Support Chat to read the latest reply.',
+        data: { conversationId: input.conversationId },
+      }).catch((error) => {
+        console.error('Failed to create user admin-message notification:', error);
+      });
+    }
+  }
 
   const [rows] = await pool.query<SupportMessageRow[]>(
     'SELECT * FROM support_messages WHERE id = ?',

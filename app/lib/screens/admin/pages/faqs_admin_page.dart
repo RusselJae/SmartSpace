@@ -27,6 +27,25 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
   bool _loading = true;
   String? _error;
 
+  static const List<(String, String)> _fallbackFaqs = <(String, String)>[
+    (
+      'How long does made-to-order production take?',
+      'Standard lead time is around 6-7 weeks depending on materials and production queue.',
+    ),
+    (
+      'What are the payment options?',
+      'You can place a down payment, then settle the balance on delivery. Installment options may also be available.',
+    ),
+    (
+      'Can I cancel a custom order?',
+      'Custom made-to-order cancellations are generally non-refundable once production has started.',
+    ),
+    (
+      'How do I request support for an order?',
+      'Use the in-app support inbox and include your Order ID so the admin team can assist quickly.',
+    ),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -216,43 +235,48 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
           child: _loading
               ? const Center(child: CircularProgressIndicator())
               : _faqs.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.help_outline,
-                            size: 64,
-                            color: Colors.grey[400],
+                  ? ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFFBF7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE7DCD0)),
                           ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No FAQs yet',
-                            style: GoogleFonts.poppins(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey[700],
+                          child: Text(
+                            'Showing built-in FAQs. Add entries to override with your own admin-managed FAQ list.',
+                            style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        for (final entry in _fallbackFaqs)
+                          Card(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(
+                                color: CupertinoColors.separator.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              title: Text(
+                                entry.$1,
+                                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14),
+                              ),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Text(
+                                  entry.$2,
+                                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[700]),
+                                ),
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Add FAQs to help users in the support chat',
-                            style: GoogleFonts.poppins(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          FilledButton.icon(
-                            onPressed: _createFaq,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add first FAQ'),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFF8D6E63),
-                            ),
-                          ),
-                        ],
-                      ),
+                      ],
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),

@@ -4,8 +4,13 @@ class AdminRoutes {
 
   static const String legacyShell = '/admin';
 
+  /// Primary dashboard URL (Overview + Sales Reports + User Behavior).
+  static const String dashboard = '/admin/dashboard';
+
+  /// Legacy / bookmark-friendly aliases for the same shell tab.
   static const String overview = '/admin/overview';
   static const String salesReports = '/admin/sales-reports';
+  static const String userBehavior = '/admin/user-behavior';
   static const String products = '/admin/products';
   static const String orders = '/admin/orders';
   static const String reviews = '/admin/reviews';
@@ -14,12 +19,12 @@ class AdminRoutes {
   static const String support = '/admin/support';
   static const String faqs = '/admin/faqs';
   static const String legal = '/admin/legal';
+  static const String activityLogs = '/admin/activity-logs';
   static const String settings = '/admin/settings';
 
   /// Order matches [_AdminShellState] `_destinations` indices.
   static const List<String> pathsByIndex = <String>[
-    overview,
-    salesReports,
+    dashboard,
     products,
     orders,
     reviews,
@@ -28,6 +33,7 @@ class AdminRoutes {
     support,
     faqs,
     legal,
+    activityLogs,
     settings,
   ];
 
@@ -49,13 +55,41 @@ class AdminRoutes {
   static int indexForRouteName(String? name) {
     if (name == null || name.isEmpty) return 0;
     final p = normalizePath(name);
-    if (p == legacyShell) return 0;
+    if (p == legacyShell ||
+        p == overview ||
+        p == dashboard ||
+        p == salesReports ||
+        p == userBehavior) {
+      return 0;
+    }
     final i = pathsByIndex.indexOf(p);
     return i < 0 ? 0 : i;
   }
 
+  /// Sub-tab inside [AdminDashboardContainerPage] when shell index is `0`.
+  /// 0 Overview, 1 Sales Reports, 2 User Behavior.
+  static int dashboardTabForRouteName(String? name) {
+    final p = normalizePath(name ?? '');
+    if (p == salesReports) return 1;
+    if (p == userBehavior) return 2;
+    return 0;
+  }
+
   static String pathForIndex(int index) {
-    if (index < 0 || index >= pathsByIndex.length) return overview;
+    if (index < 0 || index >= pathsByIndex.length) return dashboard;
     return pathsByIndex[index];
+  }
+
+  /// Paths accepted after login / hash restore (includes dashboard aliases).
+  static bool isKnownShellPath(String? name) {
+    final p = normalizePath(name ?? '');
+    if (p == legacyShell ||
+        p == dashboard ||
+        p == overview ||
+        p == salesReports ||
+        p == userBehavior) {
+      return true;
+    }
+    return pathsByIndex.contains(p);
   }
 }

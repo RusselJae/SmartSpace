@@ -4,6 +4,7 @@ import { Product, ProductSetComponent } from '../models/product';
 import { generateId } from '../utils/id_generator';
 import { parseProductComponentsFromDb } from '../utils/product_components';
 import { parseBooleanFlag, parseStringArray } from '../utils/parser';
+import { createNotificationForAllUsers } from './user_notification_service';
 
 export type ProductInput = {
   readonly name: string;
@@ -242,7 +243,16 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
   );
 
   // Fetch the created product to return it with calculated fields
-  return (await findProductById(productId)) as Product;
+  const product = (await findProductById(productId)) as Product;
+  createNotificationForAllUsers({
+    type: 'new_arrival',
+    title: 'New arrival just dropped',
+    body: `${product.name} is now available in the catalog.`,
+    data: { productId: product.id },
+  }).catch((error) => {
+    console.error('Failed to broadcast new arrival notification:', error);
+  });
+  return product;
 };
 
 export const updateProduct = async (id: string, input: ProductInput): Promise<Product> => {

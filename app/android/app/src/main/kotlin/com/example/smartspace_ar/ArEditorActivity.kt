@@ -178,6 +178,7 @@ class ArEditorActivity : ComponentActivity() {
     private var hiddenActionsBar: FrameLayout? = null
     private var overlaysVisible: Boolean = true
     private var overlaysEyeButton: ImageButton? = null
+    private var tipsHintButton: ImageButton? = null
 
     /** Short AR how‑to; hidden as soon as the model is anchored in the scene. */
     private var arTipsBanner: TextView? = null
@@ -305,6 +306,25 @@ class ArEditorActivity : ComponentActivity() {
             }
         }
 
+        // Hide AR plane/point visual guides (white dots/mesh style overlays)
+        // so users see a cleaner camera feed. We do this via reflection to
+        // stay compatible across SceneView minor API variations.
+        try {
+            val planeRenderer =
+                arSceneView.javaClass.methods
+                    .firstOrNull { it.name == "getPlaneRenderer" && it.parameterCount == 0 }
+                    ?.invoke(arSceneView)
+            if (planeRenderer != null) {
+                planeRenderer.javaClass.methods
+                    .firstOrNull { it.name == "setEnabled" && it.parameterCount == 1 }
+                    ?.invoke(planeRenderer, false)
+                planeRenderer.javaClass.methods
+                    .firstOrNull { it.name == "setVisible" && it.parameterCount == 1 }
+                    ?.invoke(planeRenderer, false)
+            }
+        } catch (_: Throwable) {
+        }
+
         // Indoor ARCore scenes often read a little flat; nudge Filament's main directional
         // slightly brighter while keeping HDR estimation enabled above.
         arSceneView.post {
@@ -339,6 +359,8 @@ class ArEditorActivity : ComponentActivity() {
 
         // Center-top AR usage tips (dismissed once the model is placed).
         attachArTipsBanner(rootLayout)
+        // Top-left hint icon to re-open usage instructions on demand.
+        attachTipsHintButton(rootLayout)
 
         // One-button toggle: hide/show BOTH overlays together.
         attachOverlaysEyeToggleButton(rootLayout)
@@ -544,6 +566,15 @@ class ArEditorActivity : ComponentActivity() {
         overlayContent?.addView(scaleRow)
         overlayContent?.addView(sizeTitleRow)
         overlayContent?.addView(sizeRow)
+        // Small perception helper so users understand why true-scale can feel smaller on phone AR.
+        val perceivedSizeHint = TextView(this).apply {
+            text = "True scale. Step closer for real-size feel."
+            setTextColor(0xFFCCCCCC.toInt())
+            textSize = 11f
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 6, 0, 4)
+        }
+        overlayContent?.addView(perceivedSizeHint)
 
         // Helper to build a quantity‑style +/- control row for a single axis.
         fun createAxisRow(
@@ -799,6 +830,13 @@ class ArEditorActivity : ComponentActivity() {
                     v.layoutParams = lp
                 }
             }
+            tipsHintButton?.let { v ->
+                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                    lp.topMargin = insetTop + dp(8)
+                    lp.marginStart = insetStart + dp(16)
+                    v.layoutParams = lp
+                }
+            }
             arTipsBanner?.let { v ->
                 (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
                     lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -890,6 +928,39 @@ class ArEditorActivity : ComponentActivity() {
         arTipsRotateHandler?.postDelayed(rotate, 5000L)
     }
 
+    private fun attachTipsHintButton(root: FrameLayout) {
+        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
+        val button = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_info_details)
+            setBackgroundColor(0x00000000)
+            setPadding(dpToPx(10), dpToPx(10), dpToPx(10), dpToPx(10))
+            contentDescription = "AR usage instructions"
+            setOnClickListener { showArUsageDialog() }
+        }
+        tipsHintButton = button
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            marginStart = dpToPx(16)
+            topMargin = dpToPx(16)
+        }
+        root.addView(button, lp)
+    }
+
+    private fun showArUsageDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("How to use AR")
+            .setMessage(
+                "1) Point camera at a flat surface.\n\n" +
+                    "2) Drag model to move it, pinch to scale.\n\n" +
+                    "3) Use two fingers to rotate the model."
+            )
+            .setPositiveButton("Got it", null)
+            .show()
+    }
+
     private fun dismissArTipsBanner() {
         arTipsRotateRunnable?.let { arTipsRotateHandler?.removeCallbacks(it) }
         arTipsRotateHandler = null
@@ -917,13 +988,16 @@ class ArEditorActivity : ComponentActivity() {
     private fun attachVariantCarouselPlaceholder(root: FrameLayout) {
         fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
         if (variantProducts.isEmpty()) return
+        val isLandscape =
+            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-        val thumbSizePx = dpToPx(60)
+        // Slightly smaller in landscape so it does not feel oversized on wide screens.
+        val thumbSizePx = dpToPx(if (isLandscape) 52 else 60)
         val thumbInsetPx = dpToPx(4)
-        val itemGapPx = dpToPx(14)
+        val itemGapPx = dpToPx(if (isLandscape) 12 else 14)
 
         // Fixed height so the overlay above it can reserve space.
-        igVariantCarouselHeightPx = dpToPx(100)
+        igVariantCarouselHeightPx = dpToPx(if (isLandscape) 88 else 100)
         // Five "slots": center three read as full circles; left/right peek ~half width.
         // Total width == 4 circle widths + 4 gaps (geometry: half + full + full + full + half).
         val viewportW = thumbSizePx * 4 + itemGapPx * 4

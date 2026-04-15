@@ -20,6 +20,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   final TextEditingController password = TextEditingController();
   bool isLoading = false;
   bool _checkingSession = true;
+  bool _showPasswordHelp = false;
+  static const Color _kDeepWalnut = Color(0xFF3E2723);
+  static const String _kRightPanelBgAsset = 'assets/images/bg3.jpg';
 
   @override
   void initState() {
@@ -63,179 +66,217 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         builder: (context) => Scaffold(
           backgroundColor: AdminPalette.sand,
           body: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Logo and branding — same asset as in-app admin chrome.
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
-                        child: Container(
-                          width: 80,
-                          height: 80,
-                          decoration: BoxDecoration(
-                            boxShadow: [
-                              BoxShadow(
-                                color: AdminPalette.brown.withValues(alpha: 0.22),
-                                blurRadius: 20,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: Image.asset(
-                            'assets/images/logo.jpg',
-                            width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) => Container(
-                              color: AdminPalette.brown,
-                              alignment: Alignment.center,
-                              child: const Icon(
-                                Icons.storefront_rounded,
-                                color: Colors.white,
-                                size: 40,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                      Text(
-                        'Wood Home Furniture Trading',
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: AdminPalette.textPrimary,
-                              letterSpacing: -0.5,
-                            ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Admin Console',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: Colors.grey[600],
-                              fontWeight: FontWeight.w500,
-                            ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 48),
-                      // Login card
-                      Card(
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          side: BorderSide(
-                            color: Colors.grey.withValues(alpha: 0.1),
-                            width: 1,
-                          ),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                'Welcome back',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineSmall
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                      color: AdminPalette.textPrimary,
-                                    ),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Sign in to manage your workspace',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Colors.grey[600],
-                                    ),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 32),
-                              _InputField(
-                                controller: email,
-                                label: 'Email address',
-                                icon: Icons.email_outlined,
-                              ),
-                              const SizedBox(height: 16),
-                              _InputField(
-                                controller: password,
-                                label: 'Password',
-                                obscureText: true,
-                                icon: Icons.lock_outline,
-                              ),
-                              const SizedBox(height: 24),
-                              FilledButton(
-                                onPressed: isLoading ? null : _login,
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: AdminPalette.brown,
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  elevation: 0,
-                                ),
-                                child: isLoading
-                                    ? const SizedBox(
-                                        height: 20,
-                                        width: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Text(
-                                        'Sign In',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      // Sign up link
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(context).pushNamed('/admin/signup');
-                        },
-                        child: RichText(
-                          text: TextSpan(
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: Colors.grey[600],
-                                ),
-                            children: [
-                              const TextSpan(text: "Don't have an account? "),
-                              TextSpan(
-                                text: 'Sign up',
-                                style: TextStyle(
-                                  color: AdminPalette.brown,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final bool isWide = constraints.maxWidth >= 980;
+
+                final Widget logoPanel = Container(
+                  decoration: const BoxDecoration(
+                    image: DecorationImage(
+                      image: AssetImage(_kRightPanelBgAsset),
+                      fit: BoxFit.cover,
+                      alignment: Alignment.center,
+                    ),
                   ),
-                ),
-              ),
+                );
+
+                final Widget formPanel = Container(
+                  color: Colors.white,
+                  alignment: Alignment.center,
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(24, 24, 24, isWide ? 24 : 32),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 620),
+                      child: _buildLoginCard(context),
+                    ),
+                  ),
+                );
+
+                if (isWide) {
+                  return Row(
+                    children: [
+                      Expanded(flex: 7, child: formPanel),
+                      Expanded(flex: 3, child: logoPanel),
+                    ],
+                  );
+                }
+
+                // Small screens: keep it simple and readable—logo on white, then form on walnut.
+                return Column(
+                  children: [
+                    SizedBox(height: 220, child: logoPanel),
+                    Expanded(child: formPanel),
+                  ],
+                );
+              },
             ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildLoginCard(BuildContext context) {
+    // Reference-style: a clean "sheet" with crisp rectangular corners.
+    // The left panel is already white, so we keep the sheet very subtle.
+    return Center(
+      child: SizedBox(
+        width: 520,
+        height: 640,
+        child: Card(
+          elevation: 0,
+          shadowColor: Colors.transparent,
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.zero,
+            side: BorderSide(color: Colors.black.withValues(alpha: 0.06), width: 1),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 44, vertical: 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.max,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Semantics(
+                  label: 'Brand logo',
+                  child: _LogoMark(size: 140),
+                ),
+                const SizedBox(height: 26),
+                Text(
+                  'Sign in',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: AdminPalette.textPrimary,
+                        letterSpacing: -0.4,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Use your admin credentials.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 34),
+                SizedBox(
+                  width: 420,
+                  child: _InputField(
+                    controller: email,
+                    label: 'Email',
+                    icon: Icons.email_outlined,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: 420,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _InputField(
+                        controller: password,
+                        label: 'Password',
+                        obscureText: true,
+                        icon: Icons.lock_outline,
+                      ),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _showPasswordHelp ? null : _showForgotPasswordDialog,
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.grey[800],
+                            textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                            shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            minimumSize: const Size(0, 0),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('Forgot password?'),
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      FilledButton(
+                        onPressed: isLoading ? null : _login,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _kDeepWalnut,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+                          elevation: 0,
+                        ),
+                        child: isLoading
+                            ? SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white.withValues(alpha: 0.9),
+                                ),
+                              )
+                            : const Text(
+                                'Login',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  'Admin access only.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w600,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'If you don’t have credentials, ask your administrator.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[600],
+                        height: 1.3,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    setState(() => _showPasswordHelp = true);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Forgot your password?'),
+            content: const Text(
+              'Password resets for admin accounts are handled by an administrator.\n\n'
+              'Reach out to your team admin and ask them to reset your access.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _showPasswordHelp = false);
+    }
   }
 
   Future<void> _login() async {
@@ -326,25 +367,58 @@ class _InputFieldState extends State<_InputField> {
         filled: true,
         fillColor: Colors.white,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.zero,
           borderSide: BorderSide(
             color: Colors.grey.withValues(alpha: 0.2),
           ),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.zero,
           borderSide: BorderSide(
             color: Colors.grey.withValues(alpha: 0.2),
           ),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.zero,
           borderSide: const BorderSide(
             color: AdminPalette.brown,
             width: 2,
           ),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      ),
+    );
+  }
+}
+
+class _LogoMark extends StatelessWidget {
+  const _LogoMark({required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    // Keep the brand mark simple: no extra copy, no gradients, no clutter.
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.18),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Image.asset(
+          'assets/images/logo.jpg',
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              color: AdminPalette.brown,
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.storefront_rounded,
+                color: Colors.white,
+                size: size * 0.35,
+              ),
+            );
+          },
+        ),
       ),
     );
   }

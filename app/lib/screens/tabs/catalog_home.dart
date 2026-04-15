@@ -952,7 +952,7 @@ class _CategoryTile extends StatelessWidget {
               style: GoogleFonts.poppins(
                 color: Colors.black,
                 fontWeight: FontWeight.w500,
-                fontSize: 12,
+                fontSize: 13,
                 decoration: TextDecoration.none,
               ),
               maxLines: 2,
@@ -974,7 +974,8 @@ class _HorizontalProductCard extends StatefulWidget {
   State<_HorizontalProductCard> createState() => _HorizontalProductCardState();
 }
 
-class _HorizontalProductCardState extends State<_HorizontalProductCard> {
+class _HorizontalProductCardState extends State<_HorizontalProductCard>
+    with AutomaticKeepAliveClientMixin<_HorizontalProductCard> {
   final WishlistService _wishlist = WishlistService();
   final CartService _cart = CartService();
   final AuthService _auth = AuthService();
@@ -1047,6 +1048,7 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final isWishlisted = _wishlist.isWishlisted(widget.product.id);
     
     // Wrap entire card in CupertinoButton so the whole card is clickable
@@ -1212,6 +1214,9 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard> {
       ),
     );
   }
+
+  @override
+  bool get wantKeepAlive => true;
 }
 
 /// Sliver header that renders the floating search-results panel for
@@ -1394,7 +1399,7 @@ class _CatalogKeywordHeaderDelegate extends SliverPersistentHeaderDelegate {
                 child: Text(
                   category,
                   style: GoogleFonts.poppins(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: walnut,
                     decoration: TextDecoration.none,

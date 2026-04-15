@@ -2,15 +2,15 @@ import 'package:flutter/material.dart';
 
 import 'admin_routes.dart';
 import 'admin_theme.dart';
-import 'pages/admin_dashboard_page.dart';
+import 'pages/admin_dashboard_container_page.dart';
 import 'pages/admins_admin_page.dart';
 import 'pages/admin_profile_page.dart';
 import 'pages/orders_admin_page.dart';
 import 'pages/products_admin_page.dart';
 import 'pages/reviews_admin_page.dart';
-import 'pages/sales_reports_admin_page.dart';
 import 'pages/faqs_admin_page.dart';
 import 'pages/legal_content_admin_page.dart';
+import 'pages/admin_activity_logs_page.dart';
 import 'pages/settings_admin_page.dart';
 import 'pages/support_inbox_admin_page.dart';
 import 'pages/users_admin_page.dart';
@@ -20,18 +20,33 @@ import '../../widgets/loading_screen.dart';
 
 /// Builds [routes] entries for [MaterialApp]: one named route per admin tab plus legacy `/admin`.
 Map<String, WidgetBuilder> buildAdminShellRoutes() {
+  AdminShell shell(int index, {int dashboardTab = 0}) {
+    return AdminShell(initialIndex: index, initialDashboardTab: dashboardTab);
+  }
+
   return <String, WidgetBuilder>{
-    AdminRoutes.legacyShell: (_) => const AdminShell(initialIndex: 0),
-    for (var i = 0; i < AdminRoutes.tabCount; i++)
-      AdminRoutes.pathsByIndex[i]: (_) => AdminShell(initialIndex: i),
+    AdminRoutes.legacyShell: (_) => shell(0, dashboardTab: 0),
+    AdminRoutes.dashboard: (_) => shell(0, dashboardTab: 0),
+    AdminRoutes.overview: (_) => shell(0, dashboardTab: 0),
+    AdminRoutes.salesReports: (_) => shell(0, dashboardTab: 1),
+    AdminRoutes.userBehavior: (_) => shell(0, dashboardTab: 2),
+    for (var i = 1; i < AdminRoutes.tabCount; i++)
+      AdminRoutes.pathsByIndex[i]: (_) => shell(i, dashboardTab: 0),
   };
 }
 
 class AdminShell extends StatefulWidget {
-  const AdminShell({super.key, this.initialIndex = 0});
+  const AdminShell({
+    super.key,
+    this.initialIndex = 0,
+    this.initialDashboardTab = 0,
+  });
 
   /// Which sidebar / bottom-nav tab is selected when this shell is shown.
   final int initialIndex;
+
+  /// When [initialIndex] is `0` (Dashboard), which sub-tab to show first.
+  final int initialDashboardTab;
 
   static const String route = '/admin';
 
@@ -39,10 +54,15 @@ class AdminShell extends StatefulWidget {
   State<AdminShell> createState() => _AdminShellState();
 }
 
-typedef _AdminViewBuilder = Widget Function(VoidCallback goToReviews, VoidCallback goToOrders);
+typedef _AdminViewBuilder =
+    Widget Function(VoidCallback goToReviews, VoidCallback goToOrders);
 
 class _AdminDestination {
-  const _AdminDestination({required this.label, required this.icon, required this.builder});
+  const _AdminDestination({
+    required this.label,
+    required this.icon,
+    required this.builder,
+  });
 
   final String label;
   final IconData icon;
@@ -50,15 +70,26 @@ class _AdminDestination {
 }
 
 class _AdminShellState extends State<AdminShell> {
+  /// Labels for Dashboard sub-tabs (header subtitle when shell index is Dashboard).
+  static const List<String> _dashboardSubTabLabels = <String>[
+    'Overview',
+    'Sales Reports',
+    'User Behavior',
+  ];
+
   late int _index;
+
+  /// Synced with [AdminDashboardContainerPage] tab bar; driven by route + user swipes/taps.
+  late int _dashboardSubTabIndex;
   bool _authChecked = false;
-  final AdminNotificationsService _notifications = AdminNotificationsService.instance;
+  final AdminNotificationsService _notifications =
+      AdminNotificationsService.instance;
   final GlobalKey _notificationsAnchorKey = GlobalKey();
 
   Future<void> _openSupportInboxFromHeader() async {
     await _notifications.markAllSupportRead();
     if (!mounted) return;
-    _selectTab(7);
+    _selectTab(6);
   }
 
   Future<void> _openNotificationsFromHeader(BuildContext context) async {
@@ -68,7 +99,9 @@ class _AdminShellState extends State<AdminShell> {
   }
 
   void _showNotificationsFloatingPanel(BuildContext context) {
-    final box = _notificationsAnchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final box =
+        _notificationsAnchorKey.currentContext?.findRenderObject()
+            as RenderBox?;
     final screenSize = MediaQuery.sizeOf(context);
     const double panelWidth = 360;
     const double panelHeight = 420;
@@ -177,8 +210,8 @@ class _AdminShellState extends State<AdminShell> {
                         child: Text(
                           AdminProfilePage.title,
                           style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ],
@@ -201,17 +234,9 @@ class _AdminShellState extends State<AdminShell> {
 
   late final List<_AdminDestination> _destinations = [
     _AdminDestination(
-      label: 'Overview',
-      icon: Icons.auto_graph_outlined,
-      builder: (goToReviews, goToOrders) => AdminDashboardPage(
-        onOpenReviews: goToReviews,
-        onOpenOrders: goToOrders,
-      ),
-    ),
-    _AdminDestination(
-      label: 'Sales Reports',
-      icon: Icons.query_stats_outlined,
-      builder: (_, __) => const SalesReportsAdminPage(),
+      label: 'Dashboard',
+      icon: Icons.dashboard_outlined,
+      builder: (_, __) => const SizedBox.shrink(),
     ),
     _AdminDestination(
       label: 'Products',
@@ -254,6 +279,11 @@ class _AdminShellState extends State<AdminShell> {
       builder: (_, __) => const LegalContentAdminPage(),
     ),
     _AdminDestination(
+      label: 'Activity Logs',
+      icon: Icons.history_rounded,
+      builder: (_, __) => const AdminActivityLogsPage(),
+    ),
+    _AdminDestination(
       label: 'Settings',
       icon: Icons.settings_outlined,
       builder: (_, __) => const SettingsAdminPage(),
@@ -266,7 +296,38 @@ class _AdminShellState extends State<AdminShell> {
     // Align tab with the named route (e.g. `/admin/orders`) set by [buildAdminShellRoutes].
     final max = _destinations.length - 1;
     _index = widget.initialIndex.clamp(0, max);
+    _dashboardSubTabIndex = _index == 0
+        ? widget.initialDashboardTab.clamp(0, 2)
+        : 0;
     _verifyAdminSession();
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final max = _destinations.length - 1;
+    final prevShellIndex = oldWidget.initialIndex.clamp(0, max);
+    final nextShellIndex = widget.initialIndex.clamp(0, max);
+
+    // Switching main rail tab (e.g. Products → Dashboard): honor the new route’s dashboard sub-tab.
+    if (nextShellIndex != prevShellIndex) {
+      setState(() {
+        _index = nextShellIndex;
+        _dashboardSubTabIndex = widget.initialIndex == 0
+            ? widget.initialDashboardTab.clamp(0, 2)
+            : 0;
+      });
+      return;
+    }
+
+    // Same shell tab but deep link / route args changed (e.g. /admin/dashboard → /admin/user-behavior).
+    if (widget.initialIndex == 0 &&
+        oldWidget.initialDashboardTab != widget.initialDashboardTab) {
+      final nextSub = widget.initialDashboardTab.clamp(0, 2);
+      if (_dashboardSubTabIndex != nextSub) {
+        setState(() => _dashboardSubTabIndex = nextSub);
+      }
+    }
   }
 
   Future<void> _verifyAdminSession() async {
@@ -292,24 +353,34 @@ class _AdminShellState extends State<AdminShell> {
     if (!_authChecked) {
       return Theme(
         data: buildAdminTheme(),
-        child: const Scaffold(
-          body: Center(child: CircularProgressIndicator()),
-        ),
+        child: const Scaffold(body: Center(child: CircularProgressIndicator())),
       );
     }
     final bool wide = MediaQuery.of(context).size.width >= 1100;
-    final Widget currentPage = _destinations[_index].builder(
-      () => _selectTab(4), // Go to Reviews
-      () => _selectTab(3), // Go to Orders
-    );
+    final Widget currentPage = _index == 0
+        ? AdminDashboardContainerPage(
+            initialSubTab: widget.initialDashboardTab.clamp(0, 2),
+            onOpenOrders: () => _selectTab(2),
+            onOpenReviews: () => _selectTab(3),
+            onDashboardSubTabChanged: (i) {
+              final next = i.clamp(0, 2);
+              if (_dashboardSubTabIndex != next) {
+                setState(() => _dashboardSubTabIndex = next);
+              }
+            },
+          )
+        : _destinations[_index].builder(
+            () => _selectTab(3),
+            () => _selectTab(2),
+          );
 
     return Theme(
       data: buildAdminTheme(),
       child: DecoratedBox(
-        decoration: const BoxDecoration(
-          color: Color(0xFFE7EBF0),
-        ),
-        child: wide ? _buildWideLayout(currentPage) : _buildCompactLayout(currentPage),
+        decoration: const BoxDecoration(color: Color(0xFFE7EBF0)),
+        child: wide
+            ? _buildWideLayout(currentPage)
+            : _buildCompactLayout(currentPage),
       ),
     );
   }
@@ -338,11 +409,18 @@ class _AdminShellState extends State<AdminShell> {
                   children: [
                     _AdminHeader(
                       title: _destinations[_index].label,
+                      subtitle: _index == 0
+                          ? _dashboardSubTabLabels[_dashboardSubTabIndex.clamp(
+                              0,
+                              2,
+                            )]
+                          : null,
                       notifications: _notifications,
                       onOpenSupport: _openSupportInboxFromHeader,
                       onOpenSettings: () => _selectTab(10),
                       onOpenProfile: () => _showProfileModal(context),
-                      onOpenNotifications: () => _openNotificationsFromHeader(context),
+                      onOpenNotifications: () =>
+                          _openNotificationsFromHeader(context),
                       notificationsAnchorKey: _notificationsAnchorKey,
                     ),
                     // Instant panel swap — no cross-fade / slide from AnimatedSwitcher.
@@ -370,6 +448,9 @@ class _AdminShellState extends State<AdminShell> {
           children: [
             _AdminHeader(
               title: _destinations[_index].label,
+              subtitle: _index == 0
+                  ? _dashboardSubTabLabels[_dashboardSubTabIndex.clamp(0, 2)]
+                  : null,
               notifications: _notifications,
               onOpenSupport: _openSupportInboxFromHeader,
               onOpenSettings: () => _selectTab(10),
@@ -378,10 +459,7 @@ class _AdminShellState extends State<AdminShell> {
               notificationsAnchorKey: _notificationsAnchorKey,
             ),
             Expanded(
-              child: _AdminContentWrapper(
-                key: ValueKey(_index),
-                child: page,
-              ),
+              child: _AdminContentWrapper(key: ValueKey(_index), child: page),
             ),
           ],
         ),
@@ -478,7 +556,10 @@ class _SideRail extends StatelessWidget {
                         color: Colors.black,
                         borderRadius: BorderRadius.circular(14),
                       ),
-                      child: const Icon(Icons.view_in_ar_rounded, color: Colors.white),
+                      child: const Icon(
+                        Icons.view_in_ar_rounded,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
@@ -490,19 +571,16 @@ class _SideRail extends StatelessWidget {
                     children: [
                       Text(
                         'Wood Home Furniture Trading',
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
+                        style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w700),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
                         'Admin console',
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.copyWith(color: Colors.grey[600]),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[600],
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -526,14 +604,19 @@ class _SideRail extends StatelessWidget {
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeOut,
                     decoration: BoxDecoration(
-                      color: active ? const Color(0xFF111827) : const Color(0xFFF3F4F6),
+                      color: active
+                          ? const Color(0xFF111827)
+                          : const Color(0xFFF3F4F6),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(20),
                       onTap: () => onSelect(entry.index),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         child: Row(
                           children: [
                             Icon(
@@ -543,9 +626,14 @@ class _SideRail extends StatelessWidget {
                             const SizedBox(width: 12),
                             Text(
                               entry.destination.label,
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: active ? Colors.white : Colors.grey[800],
-                                    fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    color: active
+                                        ? Colors.white
+                                        : Colors.grey[800],
+                                    fontWeight: active
+                                        ? FontWeight.w600
+                                        : FontWeight.w500,
                                   ),
                             ),
                           ],
@@ -566,6 +654,7 @@ class _SideRail extends StatelessWidget {
 class _AdminHeader extends StatefulWidget {
   const _AdminHeader({
     required this.title,
+    this.subtitle,
     required this.notifications,
     required this.onOpenSupport,
     required this.onOpenNotifications,
@@ -575,6 +664,9 @@ class _AdminHeader extends StatefulWidget {
   });
 
   final String title;
+
+  /// Shown under [title] when non-null (e.g. Dashboard → active sub-tab per Apple HIG hierarchy).
+  final String? subtitle;
   final AdminNotificationsService notifications;
   final VoidCallback onOpenSupport;
   final VoidCallback onOpenNotifications;
@@ -611,7 +703,8 @@ class _AdminHeaderState extends State<_AdminHeader> {
         .toList();
     if (parts.isEmpty) return 'A';
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-    return (parts.first.substring(0, 1) + parts.last.substring(0, 1)).toUpperCase();
+    return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
+        .toUpperCase();
   }
 
   @override
@@ -638,7 +731,11 @@ class _AdminHeaderState extends State<_AdminHeader> {
                       color: AdminPalette.brown,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 26),
+                    child: const Icon(
+                      Icons.storefront_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
                   ),
                 ),
               ),
@@ -646,11 +743,27 @@ class _AdminHeaderState extends State<_AdminHeader> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Wood Home Furniture Trading / ${widget.title}', style: Theme.of(context).textTheme.labelLarge),
+                  Text(
+                    'Wood Home Furniture Trading / ${widget.title}',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
                   Text(
                     widget.title,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
+                  if (widget.subtitle != null &&
+                      widget.subtitle!.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.subtitle!,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AdminPalette.accent,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ],
               ),
               const Spacer(),
@@ -671,11 +784,19 @@ class _AdminHeaderState extends State<_AdminHeader> {
                             right: -4,
                             top: -4,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 1,
+                              ),
+                              constraints: const BoxConstraints(
+                                minWidth: 18,
+                                minHeight: 18,
+                              ),
                               decoration: const BoxDecoration(
                                 color: Colors.red,
-                                borderRadius: BorderRadius.all(Radius.circular(999)),
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(999),
+                                ),
                               ),
                               alignment: Alignment.center,
                               child: Text(
@@ -710,10 +831,15 @@ class _AdminHeaderState extends State<_AdminHeader> {
                             right: -2,
                             top: -2,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: const BoxDecoration(
                                 color: Colors.red,
-                                borderRadius: BorderRadius.all(Radius.circular(999)),
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(999),
+                                ),
                               ),
                               child: Text(
                                 count > 99 ? '99+' : '$count',
@@ -739,7 +865,10 @@ class _AdminHeaderState extends State<_AdminHeader> {
                 child: CircleAvatar(
                   backgroundColor: AdminPalette.brown,
                   radius: 18,
-                  child: Text(_initials, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                  child: Text(
+                    _initials,
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
                 ),
                 itemBuilder: (BuildContext context) => [
                   PopupMenuItem<String>(
@@ -748,7 +877,10 @@ class _AdminHeaderState extends State<_AdminHeader> {
                       children: [
                         const Icon(Icons.person_outline, size: 20),
                         const SizedBox(width: 12),
-                        Text('Profile Information', style: Theme.of(context).textTheme.bodyMedium),
+                        Text(
+                          'Profile Information',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
                       ],
                     ),
                   ),
@@ -758,7 +890,10 @@ class _AdminHeaderState extends State<_AdminHeader> {
                       children: [
                         const Icon(Icons.settings_outlined, size: 20),
                         const SizedBox(width: 12),
-                        Text('Settings', style: Theme.of(context).textTheme.bodyMedium),
+                        Text(
+                          'Settings',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
                       ],
                     ),
                   ),
@@ -768,7 +903,10 @@ class _AdminHeaderState extends State<_AdminHeader> {
                       children: [
                         const Icon(Icons.logout, size: 20),
                         const SizedBox(width: 12),
-                        Text('Logout', style: Theme.of(context).textTheme.bodyMedium),
+                        Text(
+                          'Logout',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
                       ],
                     ),
                   ),
@@ -801,7 +939,6 @@ class _AdminHeaderState extends State<_AdminHeader> {
   }
 }
 
-
 class _InlineNotificationsPanel extends StatelessWidget {
   const _InlineNotificationsPanel({required this.service, this.onClose});
 
@@ -810,31 +947,143 @@ class _InlineNotificationsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    String relativeDay(DateTime when) {
+      final now = DateTime.now();
+      final startOfToday = DateTime(now.year, now.month, now.day);
+      final startOfTarget = DateTime(when.year, when.month, when.day);
+      final diff = startOfToday.difference(startOfTarget).inDays;
+      if (diff <= 0) return 'Today';
+      if (diff == 1) return 'Yesterday';
+      if (diff < 7) return 'Last 7 Days';
+      return 'Older';
+    }
+
+    String shortDate(DateTime when) {
+      const months = <String>[
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      final hour = when.hour % 12 == 0 ? 12 : when.hour % 12;
+      final minute = when.minute.toString().padLeft(2, '0');
+      final suffix = when.hour >= 12 ? 'PM' : 'AM';
+      return '${months[when.month - 1]} ${when.day}, $hour:$minute $suffix';
+    }
+
+    IconData iconForType(String type) {
+      switch (type) {
+        case 'support':
+          return Icons.chat_bubble_outline_rounded;
+        case 'system':
+          return Icons.account_tree_outlined;
+        case 'inventory':
+          return Icons.inventory_2_outlined;
+        default:
+          return Icons.notifications_none_rounded;
+      }
+    }
+
     return ValueListenableBuilder<AdminNotificationSnapshot>(
       valueListenable: service.snapshot,
       builder: (context, snap, _) {
+        final grouped = <String, List<AdminNotificationItem>>{};
+        for (final item in snap.items) {
+          final key = relativeDay(item.createdAt);
+          grouped.putIfAbsent(key, () => <AdminNotificationItem>[]).add(item);
+        }
+        const sectionOrder = <String>[
+          'Today',
+          'Yesterday',
+          'Last 7 Days',
+          'Older',
+        ];
+
         return DecoratedBox(
-          decoration: const BoxDecoration(color: Colors.white),
+          decoration: const BoxDecoration(color: Color(0xFFF7F7F8)),
           child: Column(
             children: [
               Container(
-                padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 10),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border(bottom: BorderSide(color: Colors.grey.shade200, width: 1)),
+                  color: const Color(0xFFF7F7F8),
+                  border: Border(
+                    bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+                  ),
                 ),
                 child: Row(
                   children: [
-                    Text(
-                      'Notifications',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black87,
-                          ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFE5E7EB)),
+                      ),
+                      child: Text(
+                        'All Notification',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF111827),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () async {
+                        await service.clearAllNotifications();
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 4,
+                        ),
+                        child: Text(
+                          'Mark All As Read',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: const Color(0xFF3B82F6),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () async {
+                        await service.clearAllNotifications();
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 4,
+                        ),
+                        child: Text(
+                          'Clear All',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: const Color(0xFFEF4444),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
                     ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.refresh, size: 20),
+                      icon: const Icon(Icons.refresh, size: 18),
                       onPressed: service.refresh,
                       tooltip: 'Refresh',
                       visualDensity: VisualDensity.compact,
@@ -856,51 +1105,138 @@ class _InlineNotificationsPanel extends StatelessWidget {
                         child: Center(
                           child: Text(
                             'All quiet.',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: Colors.grey[600],
-                                ),
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: Colors.grey[600]),
                           ),
                         ),
                       )
                     : ListView.separated(
                         padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: snap.items.length,
+                        itemCount: sectionOrder.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 4),
                         itemBuilder: (context, index) {
-                          final item = snap.items[index];
-                          const color = Color(0xFFF97316);
+                          final section = sectionOrder[index];
+                          final items =
+                              grouped[section] ??
+                              const <AdminNotificationItem>[];
+                          if (items.isEmpty) return const SizedBox.shrink();
+
                           return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            child: Row(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 4,
+                            ),
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  width: 36,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: color.withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(10),
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    left: 4,
+                                    bottom: 8,
                                   ),
-                                  child: const Icon(Icons.inventory_2_outlined, color: color, size: 20),
+                                  child: Text(
+                                    section,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: const Color(0xFF6B7280),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                  ),
                                 ),
-                                const SizedBox(width: 12),
-                                Expanded(
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0xFFE5E7EB),
+                                    ),
+                                  ),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        item.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        item.subtitle,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                                      ),
+                                      for (
+                                        var i = 0;
+                                        i < items.length;
+                                        i++
+                                      ) ...[
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 8,
+                                          ),
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.center,
+                                            children: [
+                                              Container(
+                                                width: 40,
+                                                height: 40,
+                                                decoration: const BoxDecoration(
+                                                  color: Color(0xFFDCDCFB),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: Icon(
+                                                  iconForType(items[i].type),
+                                                  color: const Color(
+                                                    0xFF3730A3,
+                                                  ),
+                                                  size: 20,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      items[i].title,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                        fontSize: 15,
+                                                        color: Color(
+                                                          0xFF111827,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 2),
+                                                    Text(
+                                                      items[i].subtitle,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                        fontSize: 14,
+                                                        color: Color(
+                                                          0xFF6B7280,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                shortDate(items[i].createdAt),
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Color(0xFF6B7280),
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        if (i != items.length - 1)
+                                          const Divider(
+                                            height: 1,
+                                            thickness: 1,
+                                            color: Color(0xFFF1F5F9),
+                                          ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -940,10 +1276,7 @@ class _AdminContentWrapper extends StatelessWidget {
             ),
           ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: child,
-        ),
+        child: Padding(padding: const EdgeInsets.all(12), child: child),
       ),
     );
   }

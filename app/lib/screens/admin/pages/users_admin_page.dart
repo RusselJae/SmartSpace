@@ -26,6 +26,8 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
   List<User> _users = [];
   bool _loading = true;
   String _searchQuery = '';
+  String _sortBy = 'newest';
+  bool _onlyWithOrders = false;
   String? _error;
 
   static const int _pageSize = 10;
@@ -85,13 +87,117 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
   /// Filters users by search query for fast, responsive search.
   List<User> get _filtered {
-    if (_searchQuery.isEmpty) return _users;
-    
-    return _users.where((user) {
+    var filtered = _users.where((user) {
       return user.fullName.toLowerCase().contains(_searchQuery) ||
              user.email.toLowerCase().contains(_searchQuery) ||
              (user.phoneNumber?.toLowerCase().contains(_searchQuery) ?? false);
-    }).toList();
+    }).toList(growable: false);
+    if (_searchQuery.isEmpty) {
+      filtered = List<User>.from(_users);
+    }
+    if (_onlyWithOrders) {
+      filtered = filtered.where((u) => u.orderIds.isNotEmpty).toList(growable: false);
+    }
+    switch (_sortBy) {
+      case 'oldest':
+        filtered.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      case 'name_az':
+        filtered.sort((a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
+        break;
+      case 'name_za':
+        filtered.sort((a, b) => b.fullName.toLowerCase().compareTo(a.fullName.toLowerCase()));
+        break;
+      case 'newest':
+      default:
+        filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+    }
+    return filtered;
+  }
+
+  int get _activeFilterCount => (_sortBy != 'newest' ? 1 : 0) + (_onlyWithOrders ? 1 : 0);
+
+  void _showUserFilterSheet() {
+    var tempSort = _sortBy;
+    var tempOnlyWithOrders = _onlyWithOrders;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text('Filter Customers', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
+                        const Spacer(),
+                        IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: tempSort,
+                      items: const [
+                        DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                        DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                        DropdownMenuItem(value: 'name_az', child: Text('Name A-Z')),
+                        DropdownMenuItem(value: 'name_za', child: Text('Name Z-A')),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setModalState(() => tempSort = v);
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    SwitchListTile.adaptive(
+                      value: tempOnlyWithOrders,
+                      onChanged: (v) => setModalState(() => tempOnlyWithOrders = v),
+                      title: const Text('Only Customers With Orders'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: () => setModalState(() {
+                            tempSort = 'newest';
+                            tempOnlyWithOrders = false;
+                          }),
+                          child: const Text('Reset'),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () {
+                            setState(() {
+                              _sortBy = tempSort;
+                              _onlyWithOrders = tempOnlyWithOrders;
+                              _pageIndex = 0;
+                            });
+                            Navigator.of(sheetContext).pop();
+                          },
+                          style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
+                          child: const Text('Apply'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   /// Shows detailed user information in a centered modal dialog.
@@ -207,6 +313,29 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
                 ),
               ),
               const SizedBox(width: 12),
+              Stack(
+                children: [
+                  IconButton.outlined(
+                    onPressed: _showUserFilterSheet,
+                    icon: const Icon(Icons.tune_outlined),
+                    tooltip: 'Filter',
+                  ),
+                  if (_activeFilterCount > 0)
+                    Positioned(
+                      right: 2,
+                      top: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: const BoxDecoration(color: Color(0xFF8D6E63), shape: BoxShape.circle),
+                        child: Text(
+                          '$_activeFilterCount',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _createUser,
                 icon: const Icon(Icons.person_add_alt_outlined),

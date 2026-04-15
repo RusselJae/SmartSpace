@@ -147,9 +147,16 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
         return;
       }
       try {
+        final maxPayable = _getPaymentAmount(order);
+        final selectedAmount = await _promptForPaymongoAmount(maxPesos: maxPayable);
+        if (selectedAmount == null) {
+          if (mounted) Toast.info(context, 'Payment cancelled');
+          return;
+        }
         final url = await _db.createPaymongoCheckoutSession(
           orderId: order.id,
           userId: user.id,
+          amountPesos: selectedAmount,
         );
         if (!mounted) return;
         await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
@@ -174,6 +181,84 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
       ),
     );
     await _loadPendingOrders();
+  }
+
+  /// Let users choose a custom amount during pay-again.
+  /// This keeps the amount between 0 and the currently payable ceiling.
+  Future<double?> _promptForPaymongoAmount({required double maxPesos}) async {
+    final safeMax = maxPesos > 0.01 ? maxPesos : 1.0;
+    final controller = TextEditingController(text: safeMax.toStringAsFixed(2));
+
+    final result = await showCupertinoDialog<double>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: Text(
+          'Enter amount to pay',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CupertinoTextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              placeholder: '0.00',
+              style: GoogleFonts.poppins(),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: const Color(0xFF8D6E63).withValues(alpha: 0.30),
+                  width: 1,
+                ),
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Max: ₱${safeMax.toStringAsFixed(2)}',
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF8D6E63),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () {
+              final raw = controller.text.trim();
+              final cleaned = raw.replaceAll(',', '');
+              final parsed = double.tryParse(cleaned);
+              if (parsed == null || parsed <= 0.01) {
+                Navigator.pop(ctx, null);
+                return;
+              }
+              final clamped = parsed > safeMax ? safeMax : parsed;
+              Navigator.pop(ctx, clamped);
+            },
+            child: Text(
+              'Continue',
+              style: GoogleFonts.poppins(
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF8D6E63),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+    return result;
   }
 
   @override

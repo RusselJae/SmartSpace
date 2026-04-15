@@ -8,6 +8,7 @@ import {
   updateProduct,
 } from '../services/product_service';
 import { asyncHandler } from '../utils/async_handler';
+import { logAdminActivity } from '../services/admin_activity_log_service';
 
 const productComponentSchema = z.object({
   name: z.string().min(1),
@@ -59,8 +60,18 @@ productRouter.get(
 productRouter.post(
   '/',
   asyncHandler(async (req, res) => {
+    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
     const input = parseProductInput(req.body);
     const product = await createProduct(input);
+    if (adminId.length > 0) {
+      await logAdminActivity({
+        adminId,
+        action: 'product_created',
+        entityType: 'product',
+        entityId: product.id,
+        details: { name: product.name },
+      });
+    }
     res.status(201).json({ success: true, data: product });
   }),
 );
@@ -68,8 +79,18 @@ productRouter.post(
 productRouter.put(
   '/:id',
   asyncHandler(async (req, res) => {
+    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
     const input = parseProductInput(req.body);
     const product = await updateProduct(req.params.id, input);
+    if (adminId.length > 0) {
+      await logAdminActivity({
+        adminId,
+        action: 'product_updated',
+        entityType: 'product',
+        entityId: product.id,
+        details: { name: product.name },
+      });
+    }
     res.json({ success: true, data: product });
   }),
 );
@@ -77,7 +98,16 @@ productRouter.put(
 productRouter.delete(
   '/:id',
   asyncHandler(async (req, res) => {
+    const adminId = req.query.adminId != null ? String(req.query.adminId).trim() : '';
     await deleteProduct(req.params.id);
+    if (adminId.length > 0) {
+      await logAdminActivity({
+        adminId,
+        action: 'product_deleted',
+        entityType: 'product',
+        entityId: req.params.id,
+      });
+    }
     res.status(204).send();
   }),
 );

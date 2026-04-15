@@ -21,6 +21,7 @@ class TermsAndConditionsScreen extends StatefulWidget {
 class _TermsAndConditionsScreenState extends State<TermsAndConditionsScreen> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   String? _customContent;
+  int _latestVersion = 1;
   bool _loading = true;
 
   @override
@@ -33,9 +34,11 @@ class _TermsAndConditionsScreenState extends State<TermsAndConditionsScreen> {
     try {
       await _db.initialize();
       final content = await _db.getLegalContent('terms');
+      final payload = await _db.getLegalContentPayload('terms');
       if (!mounted) return;
       setState(() {
         _customContent = (content != null && content.trim().isNotEmpty) ? content : null;
+        _latestVersion = payload?.version ?? 1;
         _loading = false;
       });
     } catch (_) {
@@ -72,23 +75,25 @@ class _TermsAndConditionsScreenState extends State<TermsAndConditionsScreen> {
       ),
       child: SafeArea(
         bottom: false,
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFFFFFBF7), Colors.white],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: [0.0, 0.3],
-            ),
-          ),
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _customContent != null
-                  ? LegalContentRenderer(
-                      content: _customContent!,
-                      dividerColor: dividerColor,
-                    )
-                  : ListView(
+        child: Stack(
+          children: [
+            DecoratedBox(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFFFFFBF7), Colors.white],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: [0.0, 0.3],
+                ),
+              ),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _customContent != null
+                      ? LegalContentRenderer(
+                          content: _customContent!,
+                          dividerColor: dividerColor,
+                        )
+                      : ListView(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
             children: [
               _sectionTitle('About SmartSpace'),
@@ -273,6 +278,20 @@ class _TermsAndConditionsScreenState extends State<TermsAndConditionsScreen> {
               const SizedBox(height: 28),
             ],
           ),
+            ),
+            Positioned(
+              right: 16,
+              bottom: 12,
+              child: Text(
+                'Version $_latestVersion',
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  color: const Color(0xFF8D6E63),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

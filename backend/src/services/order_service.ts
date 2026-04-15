@@ -1072,6 +1072,37 @@ export const updateOrderStatus = async (orderId: string, status: string): Promis
       console.error('Failed to send expired-order email:', error);
     });
   }
+
+  if (status === 'shipped' && previousStatus !== 'shipped') {
+    EmailService.sendOrderShippedEmail(userId, orderId).catch((error) => {
+      console.error('Failed to send shipped-order email:', error);
+    });
+  }
+
+  if (status === 'delivered' && previousStatus !== 'delivered') {
+    EmailService.sendOrderDeliveredEmail(userId, orderId).catch((error) => {
+      console.error('Failed to send delivered-order email:', error);
+    });
+  }
+
+  if (status === 'cancelled' && previousStatus !== 'cancelled') {
+    EmailService.sendOrderCancelledEmail(userId, orderId).catch((error) => {
+      console.error('Failed to send cancelled-order email:', error);
+    });
+
+    EmailService.sendAdminEventEmail({
+      title: 'Order cancelled',
+      message: 'A customer order was cancelled and may need follow-up.',
+      details: [
+        { label: 'Order ID', value: orderId },
+        { label: 'User ID', value: userId },
+        { label: 'Previous status', value: previousStatus },
+        { label: 'Amount', value: `PHP ${orderTotal.toFixed(2)}` },
+      ],
+    }).catch((error) => {
+      console.error('Failed to send admin cancellation alert email:', error);
+    });
+  }
 };
 
 /**

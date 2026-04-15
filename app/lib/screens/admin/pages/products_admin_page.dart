@@ -27,6 +27,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
   List<Product> _products = [];
   bool _loading = true;
   String _segment = 'all';
+  String _sortBy = 'newest';
   String _searchQuery = '';
   String? _error;
 
@@ -102,8 +103,125 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                p.material.toLowerCase().contains(_searchQuery);
       }).toList();
     }
+    switch (_sortBy) {
+      case 'oldest':
+        filtered.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      case 'name_az':
+        filtered.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case 'name_za':
+        filtered.sort((a, b) => b.name.toLowerCase().compareTo(a.name.toLowerCase()));
+        break;
+      case 'price_high':
+        filtered.sort((a, b) => b.price.compareTo(a.price));
+        break;
+      case 'price_low':
+        filtered.sort((a, b) => a.price.compareTo(b.price));
+        break;
+      case 'newest':
+      default:
+        filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+    }
     
     return filtered;
+  }
+
+  int get _activeFilterCount => (_segment != 'all' ? 1 : 0) + (_sortBy != 'newest' ? 1 : 0);
+
+  void _showProductFilterSheet() {
+    var tempSegment = _segment;
+    var tempSort = _sortBy;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Filter Products', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: tempSort,
+                  items: const [
+                    DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                    DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                    DropdownMenuItem(value: 'name_az', child: Text('Name A-Z')),
+                    DropdownMenuItem(value: 'name_za', child: Text('Name Z-A')),
+                    DropdownMenuItem(value: 'price_high', child: Text('Price: High to Low')),
+                    DropdownMenuItem(value: 'price_low', child: Text('Price: Low to High')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    tempSort = v;
+                  },
+                ),
+                const SizedBox(height: 10),
+                const Text('Category', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: tempSegment,
+                  items: [
+                    const DropdownMenuItem(value: 'all', child: Text('All Categories')),
+                    ..._categories.map((c) => DropdownMenuItem(value: c.toLowerCase(), child: Text(c))),
+                    const DropdownMenuItem(value: 'archived', child: Text('Archived')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    tempSegment = v;
+                  },
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    OutlinedButton(
+                      onPressed: () {
+                        tempSegment = 'all';
+                        tempSort = 'newest';
+                        setState(() {
+                          _segment = tempSegment;
+                          _sortBy = tempSort;
+                          _pageIndex = 0;
+                        });
+                        Navigator.of(sheetContext).pop();
+                      },
+                      child: const Text('Reset'),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: () {
+                        setState(() {
+                          _segment = tempSegment;
+                          _sortBy = tempSort;
+                          _pageIndex = 0;
+                        });
+                        Navigator.of(sheetContext).pop();
+                      },
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
+                      child: const Text('Apply'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _createProduct() async {
@@ -343,6 +461,29 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                 ),
               ),
               const SizedBox(width: 12),
+              Stack(
+                children: [
+                  IconButton.outlined(
+                    onPressed: _showProductFilterSheet,
+                    icon: const Icon(Icons.tune_outlined),
+                    tooltip: 'Filter',
+                  ),
+                  if (_activeFilterCount > 0)
+                    Positioned(
+                      right: 2,
+                      top: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: const BoxDecoration(color: Color(0xFF8D6E63), shape: BoxShape.circle),
+                        child: Text(
+                          '$_activeFilterCount',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _createProduct,
                 icon: const Icon(Icons.add),
@@ -354,21 +495,6 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
               const SizedBox(width: 8),
               IconButton(icon: const Icon(Icons.refresh), onPressed: _loadProducts),
             ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: SegmentedButton<String>(
-            segments: [
-              const ButtonSegment<String>(value: 'all', label: Text('All')),
-              ..._categories.map((cat) => ButtonSegment<String>(value: cat.toLowerCase(), label: Text(cat))),
-              const ButtonSegment<String>(value: 'archived', label: Text('Archived')),
-            ],
-            selected: {_segment},
-            onSelectionChanged: (Set<String> values) => setState(() {
-              _segment = values.first;
-              _pageIndex = 0;
-            }),
           ),
         ),
         const SizedBox(height: 8),

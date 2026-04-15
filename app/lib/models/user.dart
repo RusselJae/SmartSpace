@@ -18,6 +18,8 @@ class User {
   final bool emailVerified;
   final String? verificationToken;
   final DateTime? verificationTokenExpires;
+  final int? termsVersionAccepted;
+  final DateTime? termsAcceptedAt;
 
   const User({
     required this.id,
@@ -39,6 +41,8 @@ class User {
     this.emailVerified = false,
     this.verificationToken,
     this.verificationTokenExpires,
+    this.termsVersionAccepted,
+    this.termsAcceptedAt,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -90,6 +94,8 @@ class User {
       emailVerified: parseBoolean(json['emailVerified']),
       verificationToken: json['verificationToken'] as String?,
       verificationTokenExpires: parseDate(json['verificationTokenExpires'] as String?),
+      termsVersionAccepted: (json['termsVersionAccepted'] as num?)?.toInt(),
+      termsAcceptedAt: parseDate(json['termsAcceptedAt'] as String?),
     );
   }
 
@@ -114,6 +120,8 @@ class User {
       'emailVerified': emailVerified,
       'verificationToken': verificationToken,
       'verificationTokenExpires': verificationTokenExpires?.toIso8601String(),
+      'termsVersionAccepted': termsVersionAccepted,
+      'termsAcceptedAt': termsAcceptedAt?.toIso8601String(),
     };
   }
 
@@ -137,6 +145,8 @@ class User {
     bool? emailVerified,
     String? verificationToken,
     DateTime? verificationTokenExpires,
+    int? termsVersionAccepted,
+    DateTime? termsAcceptedAt,
   }) {
     return User(
       id: id ?? this.id,
@@ -158,6 +168,8 @@ class User {
       emailVerified: emailVerified ?? this.emailVerified,
       verificationToken: verificationToken ?? this.verificationToken,
       verificationTokenExpires: verificationTokenExpires ?? this.verificationTokenExpires,
+      termsVersionAccepted: termsVersionAccepted ?? this.termsVersionAccepted,
+      termsAcceptedAt: termsAcceptedAt ?? this.termsAcceptedAt,
     );
   }
 }

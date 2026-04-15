@@ -4,8 +4,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 import '../../services/auth_service.dart';
+import '../../services/mysql_database_service.dart';
 import '../../widgets/styled_text_field.dart';
 import '../../widgets/toast.dart';
+import '../profile/terms_and_conditions_screen.dart';
+import '../profile/privacy_policy_screen.dart';
 import 'sign_in.dart';
 import 'email_verification_screen.dart';
 
@@ -32,6 +35,7 @@ class SignUpScreen extends StatefulWidget {
 
 class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderStateMixin {
   final AuthService _auth = AuthService();
+  final MySQLDatabaseService _db = MySQLDatabaseService();
   
   // Color constants - moved to class level for use in methods
   static const Color kTextPrimary = Color(0xFF6D4C41); // Medium brown for text
@@ -53,6 +57,9 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
   DateTime? _selectedBirthday;
   
   bool _loading = false;
+  bool _termsAccepted = false;
+  bool _privacyAccepted = false;
+  int _latestTermsVersion = 1;
 
   // Password strength criteria (used for inline suggestions)
   bool get _pwHasMinLength => _passwordController.text.length >= 8;
@@ -96,6 +103,18 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     // so we need to trigger rebuilds as the user types.
     _passwordController.addListener(_handlePasswordChanged);
     _confirmPasswordController.addListener(_handleConfirmPasswordChanged);
+    _loadLatestTermsVersion();
+  }
+
+  Future<void> _loadLatestTermsVersion() async {
+    try {
+      await _db.initialize();
+      final payload = await _db.getLegalContentPayload('terms');
+      if (!mounted || payload == null) return;
+      setState(() {
+        _latestTermsVersion = payload.version;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -204,6 +223,14 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
       Toast.warning(context, 'Use a stronger password');
       return;
     }
+    if (!_termsAccepted) {
+      Toast.warning(context, 'You must accept the Terms and Conditions to continue.');
+      return;
+    }
+    if (!_privacyAccepted) {
+      Toast.warning(context, 'You must accept the Privacy Policy to continue.');
+      return;
+    }
 
     setState(() {
       _loading = true;
@@ -218,6 +245,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         email: email,
         fullName: fullName,
         password: _passwordController.text,
+        termsVersionAccepted: _latestTermsVersion,
         username: _usernameController.text.trim(),
         dateOfBirth: _selectedBirthday,
         // Keep username + DOB available for backend now / future validation.
@@ -680,6 +708,110 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         ),
         const SizedBox(height: 10),
         _ConfirmPasswordMatchHint(hasValue: _confirmPasswordController.text.isNotEmpty, isMatch: _pwPasswordsMatch),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Checkbox(
+              value: _termsAccepted,
+              onChanged: (value) {
+                setState(() {
+                  _termsAccepted = value ?? false;
+                });
+              },
+            ),
+            Expanded(
+              child: Wrap(
+                children: [
+                  Text(
+                    'I agree to the ',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: CupertinoColors.secondaryLabel,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.of(context, rootNavigator: true).push(
+                        CupertinoPageRoute(builder: (_) => const TermsAndConditionsScreen()),
+                      );
+                    },
+                    child: Text(
+                      'Terms & Conditions',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: kTextPrimary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '.',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: CupertinoColors.secondaryLabel,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Checkbox(
+              value: _privacyAccepted,
+              onChanged: (value) {
+                setState(() {
+                  _privacyAccepted = value ?? false;
+                });
+              },
+            ),
+            Expanded(
+              child: Wrap(
+                children: [
+                  Text(
+                    'I agree to the ',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: CupertinoColors.secondaryLabel,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.of(context, rootNavigator: true).push(
+                        CupertinoPageRoute(builder: (_) => const PrivacyPolicyScreen()),
+                      );
+                    },
+                    child: Text(
+                      'Privacy Policy',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: kTextPrimary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '.',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: CupertinoColors.secondaryLabel,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }

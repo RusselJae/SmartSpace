@@ -35,6 +35,60 @@ class _LegalContentAdminPageState extends State<LegalContentAdminPage>
   bool _saving = false;
   String? _error;
 
+  static const String _defaultTermsContent = '''
+## About SmartSpace
+SmartSpace provides made-to-order and on-hand furniture for personal and commercial use.
+
+## 1. Orders & Product Information
+- Product details are provided as accurately as possible.
+- Minor variations in handcrafted and wood products are normal.
+- Orders are confirmed once required payment and approval are complete.
+
+## 2. Payment Terms
+- Down payments apply to custom orders and may be non-refundable once production starts.
+- Remaining balance is typically payable on delivery.
+- Installment availability depends on the selected plan.
+
+## 3. Delivery & Acceptance
+- Delivery schedules are coordinated based on location and availability.
+- Customers should inspect items upon delivery.
+- Additional handling fees may apply for difficult delivery access.
+
+## 4. Returns & Warranty
+- Custom orders are generally not returnable for change-of-mind.
+- Manufacturing defects should be reported through support with photos.
+
+## 5. Contact
+- For support or disputes, contact SmartSpace through the in-app support page.
+''';
+
+  static const String _defaultPrivacyContent = '''
+## 1. Scope
+This Privacy Policy explains how SmartSpace collects, uses, and protects personal data.
+
+## 2. Information We Collect
+- Account details (name, email, username, phone).
+- Order and checkout details.
+- Delivery addresses and support messages.
+
+## 3. How We Use Data
+- To manage accounts, orders, payments, and delivery.
+- To improve product and app experience.
+- To prevent fraud and support security.
+
+## 4. Sharing
+- We do not sell personal data.
+- Data may be shared only with service providers needed for operations.
+- Legal disclosures may be made when required by law.
+
+## 5. Retention & Security
+- Data is retained only as long as necessary for operations and compliance.
+- Reasonable safeguards are applied, but no system is 100% risk-free.
+
+## 6. Contact
+- For privacy concerns, contact SmartSpace using the in-app support page.
+''';
+
   @override
   void initState() {
     super.initState();
@@ -60,8 +114,8 @@ class _LegalContentAdminPageState extends State<LegalContentAdminPage>
       final terms = await _db.getLegalContent('terms');
       final privacy = await _db.getLegalContent('privacy');
       if (!mounted) return;
-      _termsController.text = terms ?? '';
-      _privacyController.text = privacy ?? '';
+      _termsController.text = (terms != null && terms.trim().isNotEmpty) ? terms : _defaultTermsContent;
+      _privacyController.text = (privacy != null && privacy.trim().isNotEmpty) ? privacy : _defaultPrivacyContent;
       setState(() => _loading = false);
     } catch (e) {
       if (!mounted) return;

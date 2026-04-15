@@ -22,6 +22,7 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
   List<Review> _reviews = [];
   bool _loading = true;
   String _filter = 'all';
+  String _sortBy = 'rating_low';
   String _searchQuery = '';
   String? _error;
 
@@ -91,10 +92,120 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
       }).toList();
     }
     
-    // Sort by rating from low to high (lowest rated products first)
-    filtered.sort((a, b) => a.rating.compareTo(b.rating));
+    switch (_sortBy) {
+      case 'rating_high':
+        filtered.sort((a, b) => b.rating.compareTo(a.rating));
+        break;
+      case 'newest':
+        filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+      case 'oldest':
+        filtered.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      case 'rating_low':
+      default:
+        filtered.sort((a, b) => a.rating.compareTo(b.rating));
+        break;
+    }
     
     return filtered;
+  }
+
+  int get _activeFilterCount => (_filter != 'all' ? 1 : 0) + (_sortBy != 'rating_low' ? 1 : 0);
+
+  void _showReviewFilterSheet() {
+    var tempFilter = _filter;
+    var tempSort = _sortBy;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Filter Reviews', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: tempSort,
+                  items: const [
+                    DropdownMenuItem(value: 'rating_low', child: Text('Rating: Low to High')),
+                    DropdownMenuItem(value: 'rating_high', child: Text('Rating: High to Low')),
+                    DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                    DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    tempSort = v;
+                  },
+                ),
+                const SizedBox(height: 10),
+                const Text('Rating', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: tempFilter,
+                  items: const [
+                    DropdownMenuItem(value: 'all', child: Text('All Ratings')),
+                    DropdownMenuItem(value: '1', child: Text('1 Star')),
+                    DropdownMenuItem(value: '2', child: Text('2 Stars')),
+                    DropdownMenuItem(value: '3', child: Text('3 Stars')),
+                    DropdownMenuItem(value: '4', child: Text('4 Stars')),
+                    DropdownMenuItem(value: '5', child: Text('5 Stars')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    tempFilter = v;
+                  },
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    OutlinedButton(
+                      onPressed: () {
+                        tempFilter = 'all';
+                        tempSort = 'rating_low';
+                        setState(() {
+                          _filter = tempFilter;
+                          _sortBy = tempSort;
+                          _pageIndex = 0;
+                        });
+                        Navigator.of(sheetContext).pop();
+                      },
+                      child: const Text('Reset'),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: () {
+                        setState(() {
+                          _filter = tempFilter;
+                          _sortBy = tempSort;
+                          _pageIndex = 0;
+                        });
+                        Navigator.of(sheetContext).pop();
+                      },
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
+                      child: const Text('Apply'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Shows detailed review information in a centered modal dialog.
@@ -191,32 +302,35 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
                 ),
               ),
               const SizedBox(width: 8),
+              Stack(
+                children: [
+                  IconButton.outlined(
+                    onPressed: _showReviewFilterSheet,
+                    icon: const Icon(Icons.tune_outlined),
+                    tooltip: 'Filter',
+                  ),
+                  if (_activeFilterCount > 0)
+                    Positioned(
+                      right: 2,
+                      top: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: const BoxDecoration(color: Color(0xFF8D6E63), shape: BoxShape.circle),
+                        child: Text(
+                          '$_activeFilterCount',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.refresh),
                 onPressed: _loadReviews,
                 tooltip: 'Refresh reviews',
               ),
             ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: SegmentedButton<String>(
-            segments: const [
-              ButtonSegment<String>(value: 'all', label: Text('All')),
-              ButtonSegment<String>(value: '1', label: Text('1⭐')),
-              ButtonSegment<String>(value: '2', label: Text('2⭐')),
-              ButtonSegment<String>(value: '3', label: Text('3⭐')),
-              ButtonSegment<String>(value: '4', label: Text('4⭐')),
-              ButtonSegment<String>(value: '5', label: Text('5⭐')),
-            ],
-            selected: {_filter},
-            onSelectionChanged: (Set<String> values) {
-              setState(() {
-                _filter = values.first;
-                _pageIndex = 0;
-              });
-            },
           ),
         ),
         Padding(

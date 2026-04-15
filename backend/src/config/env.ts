@@ -62,6 +62,9 @@ type EnvironmentConfig = {
     /** Where PayMongo redirects if user cancels */
     readonly cancelUrl: string;
   };
+  readonly firebase: {
+    readonly serviceAccountJson: string;
+  };
 };
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -144,6 +147,9 @@ export const config: EnvironmentConfig = {
     cancelUrl:
       process.env.PAYMONGO_CANCEL_URL ??
       `${process.env.PUBLIC_API_BASE_URL ?? 'http://localhost:4000'}/api/paymongo-return/cancel`,
+  },
+  firebase: {
+    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON ?? '',
   },
 };
 

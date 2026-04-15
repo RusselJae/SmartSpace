@@ -21,6 +21,36 @@ type UserRow = RowDataPacket & {
   readonly verification_token: string | null;
   readonly verification_token_expires: Date | null;
   readonly verification_code: string | null;
+  readonly terms_version_accepted: number | null;
+  readonly terms_accepted_at: Date | null;
+};
+
+let _userLegalSchemaEnsured = false;
+
+const ensureUserLegalColumns = async (): Promise<void> => {
+  if (_userLegalSchemaEnsured) return;
+  const pool = getPool();
+  try {
+    await pool.query(
+      'ALTER TABLE users ADD COLUMN terms_version_accepted INT NULL DEFAULT NULL',
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.toLowerCase().includes('duplicate column')) {
+      throw e;
+    }
+  }
+  try {
+    await pool.query(
+      'ALTER TABLE users ADD COLUMN terms_accepted_at TIMESTAMP NULL DEFAULT NULL',
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.toLowerCase().includes('duplicate column')) {
+      throw e;
+    }
+  }
+  _userLegalSchemaEnsured = true;
 };
 
 const mapUser = (row: UserRow): User => {
@@ -45,14 +75,18 @@ const mapUser = (row: UserRow): User => {
     verificationToken: row.verification_token ?? undefined,
     verificationTokenExpires: row.verification_token_expires ?? undefined,
     verificationCode: row.verification_code ?? undefined,
+    termsVersionAccepted: row.terms_version_accepted ?? undefined,
+    termsAcceptedAt: row.terms_accepted_at ?? undefined,
   };
 };
 
 export const listUsers = async (): Promise<User[]> => {
+  await ensureUserLegalColumns();
   const pool = getPool();
   const [rows] = await pool.query<UserRow[]>(
     `SELECT id, email, full_name, username, gender, date_of_birth, avatar_url, phone_number, 
-            created_at, updated_at, last_login_at, email_verified, verification_token, verification_token_expires, verification_code
+            created_at, updated_at, last_login_at, email_verified, verification_token, verification_token_expires, verification_code,
+            terms_version_accepted, terms_accepted_at
      FROM users
      ORDER BY created_at DESC`,
   );
@@ -66,6 +100,7 @@ export interface CreateUserInput {
   readonly username?: string;
   readonly phoneNumber?: string;
   readonly gender?: 'male' | 'female' | 'other';
+  readonly termsVersionAccepted?: number;
 }
 
 const deriveUsername = (input: CreateUserInput, fallbackId: string): string => {
@@ -116,6 +151,7 @@ const getTokenExpiration = (): Date => {
 };
 
 export const createUser = async (input: CreateUserInput): Promise<User> => {
+  await ensureUserLegalColumns();
   const pool = getPool();
   const id = generateId('u');
   const now = new Date();
@@ -140,8 +176,9 @@ export const createUser = async (input: CreateUserInput): Promise<User> => {
   await pool.query(
     `INSERT INTO users (
       id, email, password_hash, full_name, username, gender, date_of_birth, avatar_url,
-      phone_number, created_at, updated_at, last_login_at, email_verified, verification_token, verification_token_expires, verification_code
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      phone_number, created_at, updated_at, last_login_at, email_verified, verification_token, verification_token_expires, verification_code,
+      terms_version_accepted, terms_accepted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.email,
@@ -159,6 +196,8 @@ export const createUser = async (input: CreateUserInput): Promise<User> => {
       verificationToken,
       tokenExpiration,
       verificationCode,
+      input.termsVersionAccepted ?? null,
+      input.termsVersionAccepted != null ? now : null,
     ],
   );
 
@@ -233,6 +272,7 @@ export const updateUser = async (userId: string, input: UpdateUserInput): Promis
 };
 
 export const findUserById = async (id: string): Promise<User | null> => {
+  await ensureUserLegalColumns();
   const pool = getPool();
   const [rows] = await pool.query<UserRow[]>('SELECT * FROM users WHERE id = ?', [id]);
   if (rows.length === 0) return null;
@@ -259,6 +299,7 @@ export const verifyUserCredentials = async (
   identifier: string,
   password: string,
 ): Promise<User> => {
+  await ensureUserLegalColumns();
   const pool = getPool();
   const normalized = identifier.trim().toLowerCase();
 
@@ -358,6 +399,7 @@ export const changeUserPassword = async (
  * Used during email verification flow when user clicks the verification link.
  */
 export const findUserByVerificationToken = async (token: string): Promise<User | null> => {
+  await ensureUserLegalColumns();
   const pool = getPool();
   const [rows] = await pool.query<UserRow[]>(
     'SELECT * FROM users WHERE verification_token = ? AND verification_token_expires > NOW()',
@@ -372,6 +414,7 @@ export const findUserByVerificationToken = async (token: string): Promise<User |
  * Used when user manually enters the verification code.
  */
 export const findUserByVerificationCode = async (code: string): Promise<User | null> => {
+  await ensureUserLegalColumns();
   const pool = getPool();
   const [rows] = await pool.query<UserRow[]>(
     'SELECT * FROM users WHERE verification_code = ? AND verification_token_expires > NOW()',
@@ -468,6 +511,22 @@ export const resendVerificationToken = async (userId: string): Promise<{ token: 
   );
 
   return { token: newToken, code: newCode };
+};
+
+export const recordTermsAcceptance = async (
+  userId: string,
+  version: number,
+  acceptedAt?: Date,
+): Promise<void> => {
+  await ensureUserLegalColumns();
+  const pool = getPool();
+  const when = acceptedAt ?? new Date();
+  await pool.query(
+    `UPDATE users
+     SET terms_version_accepted = ?, terms_accepted_at = ?, updated_at = NOW()
+     WHERE id = ?`,
+    [version, when, userId],
+  );
 };
 
 /**

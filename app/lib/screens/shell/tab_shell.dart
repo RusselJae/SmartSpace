@@ -12,6 +12,9 @@ import '../tabs/profile.dart';
 import '../../services/cart_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/support_notifications_service.dart';
+import '../../services/customer_notifications_service.dart';
+import '../../services/mysql_database_service.dart';
+import '../../services/push_notifications_service.dart';
 import '../../widgets/global_profile_sidebar.dart';
 import '_nav_icon.dart';
 import '../views/sign_in.dart';
@@ -43,19 +46,23 @@ class _TabShellState extends State<TabShell> {
   final CartService _cart = CartService();
   final AuthService _auth = AuthService();
   final SupportNotificationsService _supportNotifications = SupportNotificationsService.instance;
+  final CustomerNotificationsService _customerNotifications = CustomerNotificationsService.instance;
   final CupertinoTabController _tabs = CupertinoTabController();
   final GlobalProfileSidebarController _profileSidebar = GlobalProfileSidebarController.instance;
 
   int _lastNonProfileIndex = 0;
   int _selectedIndex = 0;
+  bool _termsRestrictedGuestView = false;
 
   @override
   void initState() {
     super.initState();
     _cart.addListener(_onCartChanged);
     _supportNotifications.unreadCount.addListener(_onCartChanged);
+    _customerNotifications.notifications.addListener(_onCartChanged);
     _primeSession();
     _supportNotifications.startPolling();
+    _customerNotifications.startPolling();
   }
 
   Future<void> _primeSession() async {
@@ -63,6 +70,17 @@ class _TabShellState extends State<TabShell> {
     // We must restore the persisted session before building the tab list,
     // otherwise users can land on an "empty" orders experience.
     await _auth.initializeSession();
+    final user = _auth.currentUser;
+    if (user != null) {
+      final db = MySQLDatabaseService();
+      await db.initialize();
+      await PushNotificationsService.instance.registerTokenForCurrentUser();
+      final terms = await db.getLegalContentPayload('terms');
+      final latest = terms?.version ?? 1;
+      _termsRestrictedGuestView = (user.termsVersionAccepted ?? 0) < latest;
+    } else {
+      _termsRestrictedGuestView = false;
+    }
     if (!mounted) return;
     setState(() {});
   }
@@ -71,7 +89,9 @@ class _TabShellState extends State<TabShell> {
   void dispose() {
     _cart.removeListener(_onCartChanged);
     _supportNotifications.unreadCount.removeListener(_onCartChanged);
+    _customerNotifications.notifications.removeListener(_onCartChanged);
     _supportNotifications.stopPolling();
+    _customerNotifications.stopPolling();
     _tabs.dispose();
     super.dispose();
   }
@@ -83,28 +103,30 @@ class _TabShellState extends State<TabShell> {
   @override
   Widget build(BuildContext context) {
     // Use productCount (number of unique items) instead of totalQuantity
-    final isAuthenticated = _auth.isAuthenticated;
+    final isAuthenticated = _auth.isAuthenticated && !_termsRestrictedGuestView;
     final cartCount = isAuthenticated ? _cart.productCount : 0;
     final supportUnread = isAuthenticated ? _supportNotifications.unreadCount.value : 0;
+    final customerUnread = isAuthenticated ? _customerNotifications.unreadCount : 0;
     Widget _buildSupportBadge() {
-      if (supportUnread <= 0) return const SizedBox.shrink();
+      final totalUnread = supportUnread + customerUnread;
+      if (totalUnread <= 0) return const SizedBox.shrink();
       return Positioned(
         right: -5,
         top: -5,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-          // Walnut gradient (customer profile tab) — matches sidebar support badge; admin inbox stays red.
+          // Match cart badge styling so profile notifications feel consistent.
           decoration: const BoxDecoration(
             borderRadius: BorderRadius.all(Radius.circular(999)),
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF8D6E63), Color(0xFF5D4037)],
+              colors: [Color(0xFF8D6E63), Color(0xFFFF9800)],
             ),
           ),
           constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
           child: Text(
-            supportUnread > 99 ? '99+' : '$supportUnread',
+            totalUnread > 99 ? '99+' : '$totalUnread',
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
           ),

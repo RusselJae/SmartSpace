@@ -14,10 +14,12 @@ class LegalContentRenderer extends StatelessWidget {
   const LegalContentRenderer({
     super.key,
     required this.content,
+    this.header,
     this.dividerColor = const Color(0xFFE0D4C8),
   });
 
   final String content;
+  final Widget? header;
   final Color dividerColor;
 
   static const Color _mediumBrown = Color(0xFF8D6E63);
@@ -25,9 +27,16 @@ class LegalContentRenderer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final blocks = _parse(content);
+    final children = <Widget>[
+      if (header != null) ...[
+        header!,
+        const SizedBox(height: 12),
+      ],
+      ...blocks.asMap().entries.map((e) => _buildBlock(e.value, e.key)),
+    ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-      children: blocks.asMap().entries.map((e) => _buildBlock(e.value, e.key)).toList(),
+      children: children,
     );
   }
 

@@ -34,6 +34,9 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
   bool _loading = true;
   String _filter = 'all';
   String _searchQuery = '';
+  String _sortBy = 'newest';
+  DateTime? _createdFrom;
+  DateTime? _createdTo;
   String? _error;
 
   static const int _pageSize = 10;
@@ -106,8 +109,200 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                order.productIds.any((id) => id.toLowerCase().contains(_searchQuery));
       }).toList();
     }
+
+    if (_createdFrom != null) {
+      final start = DateTime(_createdFrom!.year, _createdFrom!.month, _createdFrom!.day);
+      filtered = filtered.where((order) => !order.createdAt.isBefore(start)).toList();
+    }
+    if (_createdTo != null) {
+      final end = DateTime(_createdTo!.year, _createdTo!.month, _createdTo!.day, 23, 59, 59);
+      filtered = filtered.where((order) => !order.createdAt.isAfter(end)).toList();
+    }
+
+    switch (_sortBy) {
+      case 'oldest':
+        filtered.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      case 'amount_high':
+        filtered.sort((a, b) => b.totalAmount.compareTo(a.totalAmount));
+        break;
+      case 'amount_low':
+        filtered.sort((a, b) => a.totalAmount.compareTo(b.totalAmount));
+        break;
+      case 'customer_az':
+        filtered.sort((a, b) => a.userName.toLowerCase().compareTo(b.userName.toLowerCase()));
+        break;
+      case 'customer_za':
+        filtered.sort((a, b) => b.userName.toLowerCase().compareTo(a.userName.toLowerCase()));
+        break;
+      case 'newest':
+      default:
+        filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+    }
     
     return filtered;
+  }
+
+  int get _activeOrderFilterCount {
+    var count = 0;
+    if (_filter != 'all') count++;
+    if (_sortBy != 'newest') count++;
+    if (_createdFrom != null || _createdTo != null) count++;
+    return count;
+  }
+
+  void _showOrderFilterSheet() {
+    String tempStatus = _filter;
+    String tempSort = _sortBy;
+    DateTime? tempFrom = _createdFrom;
+    DateTime? tempTo = _createdTo;
+
+    Future<void> pickDate({
+      required bool isFrom,
+      required void Function(void Function()) setModalState,
+    }) async {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: (isFrom ? tempFrom : tempTo) ?? DateTime.now(),
+        firstDate: DateTime(2020, 1, 1),
+        lastDate: DateTime.now().add(const Duration(days: 365)),
+      );
+      if (picked == null) return;
+      setModalState(() {
+        if (isFrom) {
+          tempFrom = picked;
+        } else {
+          tempTo = picked;
+        }
+      });
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Filter Orders',
+                          style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Sort by', style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54)),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: tempSort,
+                      items: const [
+                        DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                        DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                        DropdownMenuItem(value: 'amount_high', child: Text('Amount: High to Low')),
+                        DropdownMenuItem(value: 'amount_low', child: Text('Amount: Low to High')),
+                        DropdownMenuItem(value: 'customer_az', child: Text('Customer A-Z')),
+                        DropdownMenuItem(value: 'customer_za', child: Text('Customer Z-A')),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setModalState(() => tempSort = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text('Status', style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54)),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: tempStatus,
+                      items: [
+                        const DropdownMenuItem(value: 'all', child: Text('All Statuses')),
+                        ..._statuses.map((s) => DropdownMenuItem(value: s, child: Text('${s[0].toUpperCase()}${s.substring(1)}'))),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setModalState(() => tempStatus = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => pickDate(isFrom: true, setModalState: setModalState),
+                            icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                            label: Text(
+                              tempFrom == null ? 'Created From' : tempFrom!.toIso8601String().split('T').first,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => pickDate(isFrom: false, setModalState: setModalState),
+                            icon: const Icon(Icons.event_available_outlined, size: 18),
+                            label: Text(
+                              tempTo == null ? 'Created To' : tempTo!.toIso8601String().split('T').first,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: () {
+                            setModalState(() {
+                              tempStatus = 'all';
+                              tempSort = 'newest';
+                              tempFrom = null;
+                              tempTo = null;
+                            });
+                          },
+                          child: const Text('Reset'),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () {
+                            setState(() {
+                              _filter = tempStatus;
+                              _sortBy = tempSort;
+                              _createdFrom = tempFrom;
+                              _createdTo = tempTo;
+                              _pageIndex = 0;
+                            });
+                            Navigator.of(sheetContext).pop();
+                          },
+                          style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
+                          child: const Text('Apply'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   /// Shows order history dialog with cancelled and delivered orders
@@ -1188,6 +1383,32 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                 ),
               ),
               const SizedBox(width: 12),
+              Stack(
+                children: [
+                  IconButton.outlined(
+                    onPressed: _showOrderFilterSheet,
+                    icon: const Icon(Icons.tune_outlined),
+                    tooltip: 'Filter',
+                  ),
+                  if (_activeOrderFilterCount > 0)
+                    Positioned(
+                      right: 2,
+                      top: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF8D6E63),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '$_activeOrderFilterCount',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _showMadeToOrderRequests,
                 icon: const Icon(Icons.design_services_outlined, size: 18),
@@ -1242,25 +1463,6 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
               ),
             ),
           ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: SegmentedButton<String>(
-            segments: [
-              const ButtonSegment<String>(value: 'all', label: Text('All')),
-              ..._statuses.map((status) => ButtonSegment<String>(
-                    value: status,
-                    label: Text(status[0].toUpperCase() + status.substring(1)),
-                  )),
-            ],
-            selected: {_filter},
-            onSelectionChanged: (Set<String> values) {
-              setState(() {
-                _filter = values.first;
-                _pageIndex = 0;
-              });
-            },
-          ),
-        ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           child: Text(

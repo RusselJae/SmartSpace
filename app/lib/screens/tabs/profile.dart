@@ -20,6 +20,7 @@ import '../profile/reviews.dart';
 import '../profile/help_center_screen.dart';
 import '../profile/about_us_screen.dart';
 import '../profile/settings_screen.dart';
+import '../profile/notifications_center_screen.dart';
 import '../views/sign_in.dart';
 import '../support/support_chat_screen.dart';
 import '../../widgets/global_profile_sidebar.dart';
@@ -383,6 +384,13 @@ class _ProfileTabState extends State<ProfileTab> {
           title: 'Support Chat',
           onTap: () => Navigator.of(context, rootNavigator: true).push(
             CupertinoPageRoute(builder: (_) => const SupportChatScreen()),
+          ),
+        ),
+        _buildTile(
+          icon: CupertinoIcons.bell,
+          title: 'Notifications',
+          onTap: () => Navigator.of(context, rootNavigator: true).push(
+            CupertinoPageRoute(builder: (_) => const NotificationsCenterScreen()),
           ),
         ),
         // About Us - using info circle icon

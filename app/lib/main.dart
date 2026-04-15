@@ -21,6 +21,7 @@ import 'screens/profile/terms_and_conditions_screen.dart';
 import 'screens/profile/privacy_policy_screen.dart';
 import 'screens/profile/security_privacy_screen.dart';
 import 'screens/profile/change_password_screen.dart';
+import 'screens/profile/notifications_center_screen.dart';
 import 'utils/env_loader.dart';
 import 'utils/deep_link_handler.dart';
 import 'utils/paymongo_return_deep_link.dart';
@@ -32,6 +33,7 @@ import 'config/database_config.dart';
 import 'services/auth_service.dart';
 import 'services/onboarding_storage.dart';
 import 'services/catalog_model_prefetch.dart';
+import 'services/push_notifications_service.dart';
 import 'widgets/splash_screen.dart';
 
 Future<void> main() async {
@@ -323,6 +325,7 @@ class _WoodHomeFurnitureAppState extends State<WoodHomeFurnitureApp> {
         PrivacyPolicyScreen.route: (_) => const PrivacyPolicyScreen(),
         SecurityPrivacyScreen.route: (_) => const SecurityPrivacyScreen(),
         ChangePasswordScreen.route: (_) => const ChangePasswordScreen(),
+        NotificationsCenterScreen.route: (_) => const NotificationsCenterScreen(),
       },
     );
   }
@@ -341,6 +344,8 @@ class _AppInitializerState extends State<_AppInitializer> {
   /// beat all complete — then onboarding or home is shown.
   bool _bootstrapComplete = false;
   bool _showOnboarding = true;
+  bool _mustAcceptLatestTerms = false;
+  int _latestTermsVersion = 1;
 
   @override
   void initState() {
@@ -364,6 +369,7 @@ class _AppInitializerState extends State<_AppInitializer> {
         AuthService().initializeSession(),
         MySQLDatabaseService().initialize(),
       ]);
+      await PushNotificationsService.instance.initialize();
       onboardingDone = await OnboardingStorage.isComplete();
 
       // Only block the cold splash for downloads when we are headed straight home.
@@ -377,6 +383,14 @@ class _AppInitializerState extends State<_AppInitializer> {
         }
         prefetchSw.stop();
         prefetchWasQuick = prefetchSw.elapsedMilliseconds < 500;
+      }
+      final auth = AuthService();
+      final user = auth.currentUser;
+      if (onboardingDone && user != null) {
+        final legal = await MySQLDatabaseService().getLegalContentPayload('terms');
+        _latestTermsVersion = legal?.version ?? 1;
+        final accepted = user.termsVersionAccepted ?? 0;
+        _mustAcceptLatestTerms = accepted < _latestTermsVersion;
       }
     } catch (e) {
       developer.log('⚠️ Cold start bootstrap failed: $e');
@@ -406,6 +420,96 @@ class _AppInitializerState extends State<_AppInitializer> {
         footerHint: 'Signing in and loading your catalog…',
       );
     }
+    if (_mustAcceptLatestTerms) {
+      return _TermsAcceptanceGate(
+        version: _latestTermsVersion,
+        onAccepted: () async {
+          await AuthService().acceptLatestTerms(_latestTermsVersion);
+          if (!mounted) return;
+          setState(() {
+            _mustAcceptLatestTerms = false;
+          });
+        },
+      );
+    }
     return _showOnboarding ? const OnboardingFlow() : const TabShell();
+  }
+}
+
+class _TermsAcceptanceGate extends StatelessWidget {
+  const _TermsAcceptanceGate({required this.version, required this.onAccepted});
+
+  final int version;
+  final Future<void> Function() onAccepted;
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoPageScaffold(
+      navigationBar: const CupertinoNavigationBar(middle: Text('Terms Update')),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Terms and Conditions v$version',
+                style: GoogleFonts.poppins(fontSize: 21, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Before using account features, you must accept the latest terms update.',
+                style: GoogleFonts.poppins(fontSize: 13),
+              ),
+              const SizedBox(height: 14),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7F7F7),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Open the full policy to review the updated clauses before accepting.',
+                        style: GoogleFonts.poppins(fontSize: 13),
+                      ),
+                      const SizedBox(height: 10),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: () {
+                          Navigator.of(context).pushNamed(TermsAndConditionsScreen.route);
+                        },
+                        child: Text(
+                          'Read Terms & Conditions',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: CupertinoButton.filled(
+                  onPressed: () => onAccepted(),
+                  child: Text(
+                    'Accept latest terms',
+                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

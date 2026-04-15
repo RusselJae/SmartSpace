@@ -871,12 +871,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 },
               ),
             ),
-            const SizedBox(width: 6),
-            _QtyButton(
-              icon: CupertinoIcons.plus,
-              onPressed: product.inStock ? _inc : null,
-              walnutStyle: true,
-            ),
+            if (product.inStock && product.inventoryQty > 1)
+              ...[
+                const SizedBox(width: 6),
+                _QtyButton(
+                  icon: CupertinoIcons.plus,
+                  onPressed: _inc,
+                  walnutStyle: true,
+                ),
+              ],
           ],
         ),
       ],
@@ -885,6 +888,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Full-width bar pinned to the bottom; square buttons, solid walnut Buy Now.
   Widget _buildPurchaseBar(BuildContext context, Product product) {
+    // When stock is 1 or lower, only keep Buy Now visible.
+    // This avoids showing "Add to Cart" for single/zero stock cases.
+    final hideAddToCart = product.inventoryQty <= 1;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     return Container(
       decoration: BoxDecoration(
@@ -910,49 +916,51 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         height: _kPurchaseBarButtonHeight,
         child: Row(
           children: [
-            Expanded(
-              child: CupertinoButton(
-                padding: EdgeInsets.zero,
-                borderRadius: BorderRadius.zero,
-                onPressed: product.inStock ? _addToCart : null,
-                color: Colors.transparent,
-                child: Container(
-                  height: _kPurchaseBarButtonHeight,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: product.inStock
-                        ? Colors.white.withValues(alpha: _kPurchaseButtonFillOpacity)
-                        : CupertinoColors.systemGrey5
-                            .withValues(alpha: _kPurchaseButtonFillOpacity),
-                    border: Border.all(
-                      color: product.inStock ? _kWalnut : Colors.grey.shade400,
-                      width: 1.5,
+            if (!hideAddToCart) ...[
+              Expanded(
+                child: CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  borderRadius: BorderRadius.zero,
+                  onPressed: product.inStock ? _addToCart : null,
+                  color: Colors.transparent,
+                  child: Container(
+                    height: _kPurchaseBarButtonHeight,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: product.inStock
+                          ? Colors.white.withValues(alpha: _kPurchaseButtonFillOpacity)
+                          : CupertinoColors.systemGrey5
+                              .withValues(alpha: _kPurchaseButtonFillOpacity),
+                      border: Border.all(
+                        color: product.inStock ? _kWalnut : Colors.grey.shade400,
+                        width: 1.5,
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        CupertinoIcons.cart,
-                        size: 20,
-                        color: product.inStock ? _kWalnut : Colors.grey,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Add to Cart',
-                        style: GoogleFonts.poppins(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          CupertinoIcons.cart,
+                          size: 20,
                           color: product.inStock ? _kWalnut : Colors.grey,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                          decoration: TextDecoration.none,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Text(
+                          'Add to Cart',
+                          style: GoogleFonts.poppins(
+                            color: product.inStock ? _kWalnut : Colors.grey,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
+              const SizedBox(width: 10),
+            ],
             Expanded(
               child: CupertinoButton(
                 padding: EdgeInsets.zero,

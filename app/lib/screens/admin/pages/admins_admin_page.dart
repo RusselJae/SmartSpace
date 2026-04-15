@@ -30,6 +30,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
   bool _loading = true;
   String? _error;
   String _searchQuery = '';
+  String _sortBy = 'newest';
 
   @override
   void initState() {
@@ -72,13 +73,93 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
 
   /// Filters admins by search query (searches name and email).
   List<Admin> get _filtered {
-    if (_searchQuery.isEmpty) return _admins;
-    
     final query = _searchQuery.toLowerCase();
-    return _admins.where((admin) {
+    final filtered = _admins.where((admin) {
       return admin.fullName.toLowerCase().contains(query) ||
              admin.email.toLowerCase().contains(query);
-    }).toList();
+    }).toList(growable: false);
+    final result = _searchQuery.isEmpty ? List<Admin>.from(_admins) : filtered;
+    switch (_sortBy) {
+      case 'oldest':
+        result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      case 'name_az':
+        result.sort((a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
+        break;
+      case 'name_za':
+        result.sort((a, b) => b.fullName.toLowerCase().compareTo(a.fullName.toLowerCase()));
+        break;
+      case 'newest':
+      default:
+        result.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+    }
+    return result;
+  }
+
+  int get _activeFilterCount => _sortBy == 'newest' ? 0 : 1;
+
+  void _showAdminFilterSheet() {
+    var tempSort = _sortBy;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Filter Admins', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: tempSort,
+                  items: const [
+                    DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                    DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                    DropdownMenuItem(value: 'name_az', child: Text('Name A-Z')),
+                    DropdownMenuItem(value: 'name_za', child: Text('Name Z-A')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    tempSort = v;
+                  },
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => setState(() => _sortBy = 'newest'),
+                      child: const Text('Reset'),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: () {
+                        setState(() => _sortBy = tempSort);
+                        Navigator.of(sheetContext).pop();
+                      },
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
+                      child: const Text('Apply'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Shows detailed admin information in a centered modal dialog.
@@ -185,6 +266,29 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
                 ),
               ),
               const SizedBox(width: 12),
+              Stack(
+                children: [
+                  IconButton.outlined(
+                    onPressed: _showAdminFilterSheet,
+                    icon: const Icon(Icons.tune_outlined),
+                    tooltip: 'Filter',
+                  ),
+                  if (_activeFilterCount > 0)
+                    Positioned(
+                      right: 2,
+                      top: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: const BoxDecoration(color: Color(0xFF8D6E63), shape: BoxShape.circle),
+                        child: Text(
+                          '$_activeFilterCount',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _createAdmin,
                 icon: const Icon(Icons.admin_panel_settings_outlined),

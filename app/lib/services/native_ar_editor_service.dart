@@ -161,10 +161,9 @@ class NativeArEditorService {
         'category="${product.category}"',
       );
 
-      // Keep enough options for the vertical native carousel.
-      final cappedVariants = variants.take(30).toList();
       final safeVariantPayload = <Map<String, dynamic>>[];
-      for (final p in cappedVariants) {
+      // Include all available variants so the native carousel can show the full set.
+      for (final p in variants) {
         try {
           safeVariantPayload.add(_variantToJson(p));
         } catch (e) {

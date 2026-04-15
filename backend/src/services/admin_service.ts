@@ -3,6 +3,7 @@ import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
 import { Admin } from '../models/admin';
 import { generateId } from '../utils/id_generator';
+import { logAdminActivity } from './admin_activity_log_service';
 
 /**
  * Database row structure for admins table.
@@ -91,6 +92,13 @@ export const createAdmin = async (input: CreateAdminInput): Promise<Admin> => {
   if (rows.length === 0) {
     throw new Error('Failed to create admin');
   }
+  await logAdminActivity({
+    adminId: id,
+    action: 'admin_created',
+    entityType: 'admin',
+    entityId: id,
+    details: { email: input.email.toLowerCase().trim() },
+  });
   return mapAdmin(rows[0]);
 };
 
@@ -144,6 +152,13 @@ export const updateAdmin = async (adminId: string, input: UpdateAdminInput): Pro
   if (rows.length === 0) {
     throw new Error('Admin not found');
   }
+  await logAdminActivity({
+    adminId,
+    action: 'admin_profile_updated',
+    entityType: 'admin',
+    entityId: adminId,
+    details: { fullName: input.fullName ?? '' },
+  });
   return mapAdmin(rows[0]);
 };
 

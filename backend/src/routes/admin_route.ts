@@ -8,6 +8,7 @@ import {
   CreateAdminInput,
   UpdateAdminInput,
 } from '../services/admin_service';
+import { listAdminActivityLogs } from '../services/admin_activity_log_service';
 
 export const adminRouter = Router();
 
@@ -130,6 +131,29 @@ adminRouter.patch(
       }
       throw error;
     }
+  }),
+);
+
+/**
+ * GET /api/admins/activity-logs?limit=50
+ * Returns recent critical admin activity entries for accountability.
+ */
+adminRouter.get(
+  '/activity-logs',
+  asyncHandler(async (req, res) => {
+    const limit = Number(req.query.limit ?? 50);
+    const adminId = req.query.adminId != null ? String(req.query.adminId).trim() : '';
+    const action = req.query.action != null ? String(req.query.action).trim() : '';
+    const from = req.query.from != null ? new Date(String(req.query.from)) : null;
+    const to = req.query.to != null ? new Date(String(req.query.to)) : null;
+    const logs = await listAdminActivityLogs({
+      limit,
+      adminId: adminId.length > 0 ? adminId : undefined,
+      action: action.length > 0 ? action : undefined,
+      from: from != null && !Number.isNaN(from.getTime()) ? from : undefined,
+      to: to != null && !Number.isNaN(to.getTime()) ? to : undefined,
+    });
+    res.json({ success: true, data: logs });
   }),
 );
 

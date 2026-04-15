@@ -14,6 +14,7 @@ import {
   CreateUserInput,
   verifyUserCredentials,
   changeUserPassword,
+  recordTermsAcceptance,
 } from '../services/user_service';
 import { EmailService } from '../services/email_service';
 import { avatarsDir, ensureUploadsDirectories } from '../utils/uploads';
@@ -22,6 +23,7 @@ import { config } from '../config/env';
 import { isCloudinaryUploadsEnabled, uploadImageBuffer } from '../services/cloudinary_service';
 import { isSupabaseStorageEnabled, uploadToSupabaseStorage } from '../services/supabase_storage_service';
 import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
+import { getLegalContent } from '../services/legal_content_service';
 
 /** Escape text embedded in minimal HTML landing pages (verification errors, etc.). */
 function escapeHtmlVerificationPage(value: string): string {
@@ -195,9 +197,18 @@ userRouter.post(
       username: req.body.username,
       phoneNumber: req.body.phoneNumber,
       gender: req.body.gender,
+      termsVersionAccepted:
+          req.body.termsVersionAccepted != null ? Number(req.body.termsVersionAccepted) : undefined,
     };
     if (!input.email || !input.fullName || !input.password) {
       return res.status(400).json({ success: false, message: 'Email, full name, and password are required' });
+    }
+    const termsPayload = await getLegalContent('terms');
+    if (!Number.isFinite(input.termsVersionAccepted) || (input.termsVersionAccepted ?? 0) < termsPayload.version) {
+      return res.status(400).json({
+        success: false,
+        message: 'You must accept the latest Terms and Conditions before creating an account.',
+      });
     }
     
     try {
@@ -236,6 +247,27 @@ userRouter.post(
       // Re-throw other errors to be handled by asyncHandler
       throw error;
     }
+  }),
+);
+
+/**
+ * POST /api/users/:id/legal-acceptance
+ * Stores the accepted legal terms version for order and compliance checks.
+ */
+userRouter.post(
+  '/:id/legal-acceptance',
+  asyncHandler(async (req, res) => {
+    const userId = req.params.id;
+    const version = Number(req.body.termsVersionAccepted);
+    if (!Number.isFinite(version) || version <= 0) {
+      return res.status(400).json({ success: false, message: 'termsVersionAccepted is required' });
+    }
+    await recordTermsAcceptance(userId, version, new Date());
+    const user = await findUserById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    return res.json({ success: true, data: user });
   }),
 );
 

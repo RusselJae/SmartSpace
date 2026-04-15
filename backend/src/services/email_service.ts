@@ -10,6 +10,11 @@ type UserRow = RowDataPacket & {
   readonly full_name: string;
 };
 
+type AdminEmailRow = RowDataPacket & {
+  readonly email: string;
+  readonly full_name: string | null;
+};
+
 /** Avoid breaking HTML email bodies when names contain <>&. */
 const escapeHtml = (value: string): string =>
   value
@@ -164,7 +169,130 @@ const sendEmail = async (payload: EmailPayload): Promise<void> => {
   });
 };
 
+type WoodHomeTemplateInput = {
+  readonly heading: string;
+  readonly greeting: string;
+  readonly intro: string;
+  readonly bodyHtml: string;
+  readonly footerNote?: string;
+};
+
+/**
+ * Shared email shell matching the original Wood Home verification layout.
+ * This keeps all customer emails visually consistent.
+ */
+const buildWoodHomeTemplate = (input: WoodHomeTemplateInput): string => {
+  const fbHref = escapeHtml(config.brand.facebookUrl);
+  const iconSrc = safeEmailImageUrl(config.brand.facebookIconUrl);
+  const fbIcon = iconSrc
+    ? `<img src="${escapeHtml(iconSrc)}" alt="Facebook" width="20" height="20" style="display:inline-block;vertical-align:middle;border:0;margin-right:6px;" />`
+    : `<span style="display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;background:#1877F2;border-radius:50%;color:#fff;font-weight:700;font-size:13px;margin-right:6px;vertical-align:middle;">f</span>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(input.heading)}</title>
+</head>
+<body style="margin:0;padding:14px;background:#f3f3f3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#2a2a2a;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #dedede;border-radius:8px;overflow:hidden;">
+          <tr>
+            <td style="padding:24px;background:#7b5a4f;text-align:center;">
+              <p style="margin:0;font-size:34px;line-height:34px;">🪑</p>
+              <h1 style="margin:10px 0 0;color:#fff;font-size:32px;line-height:1;font-weight:700;letter-spacing:0.5px;">WH</h1>
+              <p style="margin:10px 0 0;color:#fff;font-size:30px;line-height:1.15;font-weight:700;">${escapeHtml(input.heading)}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 18px 10px;">
+              <p style="margin:0 0 14px;font-size:22px;color:#2f2f2f;">${escapeHtml(input.greeting)}</p>
+              <p style="margin:0 0 18px;font-size:22px;line-height:1.35;color:#2f2f2f;">${escapeHtml(input.intro)}</p>
+              ${input.bodyHtml}
+              ${
+                input.footerNote
+                  ? `<p style="margin:18px 0 0;font-size:18px;line-height:1.4;color:#444;">${escapeHtml(input.footerNote)}</p>`
+                  : ''
+              }
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:12px 18px 18px;border-top:1px solid #ededed;text-align:center;">
+              <a href="${fbHref}" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:#1877F2;font-size:16px;font-weight:600;">
+                ${fbIcon}<span style="vertical-align:middle;">Wood Home Facebook</span>
+              </a>
+              <p style="margin:10px 0 0;font-size:13px;color:#999;">Wood Home Furniture Trading</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+};
+
 export class EmailService {
+  /**
+   * Sends one admin-facing event email (to all admin recipients).
+   * Used for operational alerts like cancelled orders and new support messages.
+   */
+  static async sendAdminEventEmail(params: {
+    readonly title: string;
+    readonly message: string;
+    readonly details?: ReadonlyArray<{ readonly label: string; readonly value: string }>;
+  }): Promise<void> {
+    try {
+      const recipients = await EmailService.getAdminRecipients();
+      if (recipients.length === 0) {
+        return;
+      }
+      const detailRows = (params.details ?? [])
+        .map(
+          (d) =>
+            `<tr><td style="padding:6px 0;color:#6b7280;">${escapeHtml(d.label)}</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(d.value)}</td></tr>`,
+        )
+        .join('');
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Admin Activity Alert',
+        greeting: 'Hi Admin,',
+        intro: params.message,
+        bodyHtml:
+          detailRows.length > 0
+            ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${detailRows}</table>`
+            : `<p style="margin:0;font-size:18px;color:#444;">No additional details.</p>`,
+        footerNote: 'SmartSpace admin alert',
+      });
+      await sendEmail({
+        to: recipients.map((r) => r.email),
+        subject: `[Admin Alert] ${params.title}`,
+        html: htmlBody,
+        text: `${params.title}\n\n${params.message}`,
+      });
+    } catch (error) {
+      console.error('❌ Failed to send admin event email:', error);
+    }
+  }
+
+  /**
+   * Pull active admin recipients from the admins table.
+   */
+  static async getAdminRecipients(): Promise<ReadonlyArray<{ readonly email: string; readonly name: string }>> {
+    const pool = getPool();
+    const [rows] = await pool.query<AdminEmailRow[]>(
+      `SELECT email, full_name FROM admins WHERE COALESCE(is_active, TRUE) = TRUE`,
+    );
+    return rows
+      .map((row) => ({
+        email: String(row.email ?? '').trim(),
+        name: String(row.full_name ?? '').trim(),
+      }))
+      .filter((row) => row.email.length > 0);
+  }
+
   /**
    * Sends an order expiration email when the order is marked as expired.
    * Used when admin expires an order or when the system auto-expires unpaid orders.
@@ -188,12 +316,12 @@ export class EmailService {
 
       const shortId = orderId.substring(0, 8).toUpperCase();
       const subject = `Order expired — #${shortId}`;
-      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
-<body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#222;max-width:420px;margin:0;padding:16px;">
-<p>Hi ${escapeHtml(userName)},</p>
-<p>Order <strong>#${escapeHtml(shortId)}</strong> has expired.</p>
-<p>Wood Home Furniture Trading</p>
-</body></html>`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Order Update',
+        greeting: `Hi ${userName},`,
+        intro: 'Your order is no longer active.',
+        bodyHtml: `<p style="margin:0;font-size:20px;line-height:1.45;color:#333;">Order <strong>#${escapeHtml(shortId)}</strong> has expired. You can place a new order any time in the app.</p>`,
+      });
       await sendEmail({
         to: email,
         subject,
@@ -231,12 +359,13 @@ export class EmailService {
       const shortId = orderId.substring(0, 8).toUpperCase();
       const totalStr = orderTotal.toFixed(2);
       const subject = `Payment pending — #${shortId}`;
-      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
-<body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#222;max-width:420px;margin:0;padding:16px;">
-<p>Hi ${escapeHtml(user.full_name)},</p>
-<p>Order <strong>#${escapeHtml(shortId)}</strong> · Total <strong>₱${escapeHtml(totalStr)}</strong></p>
-<p>Complete payment in the app under <strong>Orders</strong>.</p>
-</body></html>`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Payment Reminder',
+        greeting: `Hi ${user.full_name},`,
+        intro: `Order #${shortId} is waiting for payment.`,
+        bodyHtml: `<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Total amount: <strong>₱${escapeHtml(totalStr)}</strong></p>
+<p style="margin:0;font-size:18px;line-height:1.45;color:#333;">Please complete payment in the app under <strong>Orders</strong> to avoid auto-cancellation.</p>`,
+      });
       await sendEmail({
         to: user.email,
         subject,
@@ -277,12 +406,13 @@ export class EmailService {
 
       const shortId = orderId.substring(0, 8).toUpperCase();
       const subject = `Order confirmed — #${shortId}`;
-      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
-<body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#222;max-width:420px;margin:0;padding:16px;">
-<p>Hi ${escapeHtml(userName)},</p>
-<p>Order <strong>#${escapeHtml(shortId)}</strong> · ₱${escapeHtml(orderTotal.toFixed(2))}</p>
-<p>Wood Home Furniture Trading</p>
-</body></html>`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Order Confirmed',
+        greeting: `Hi ${userName},`,
+        intro: 'Great news! Your order has been confirmed.',
+        bodyHtml: `<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Order number: <strong>#${escapeHtml(shortId)}</strong></p>
+<p style="margin:0;font-size:20px;line-height:1.4;color:#333;">Total: <strong>₱${escapeHtml(orderTotal.toFixed(2))}</strong></p>`,
+      });
       await sendEmail({
         to: email,
         subject,
@@ -328,13 +458,14 @@ export class EmailService {
       const isCOD = paymentMethod === 'cod';
       const shortId = orderId.substring(0, 8).toUpperCase();
       const subject = `Payment received — #${shortId}`;
-      const htmlBody = `<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
-<body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#222;max-width:420px;margin:0;padding:16px;">
-<p>Hi ${escapeHtml(userName)},</p>
-<p>Payment confirmed for order <strong>#${escapeHtml(shortId)}</strong> · ₱${escapeHtml(orderTotal.toFixed(2))}</p>
-${isCOD ? `<p>Balance due on delivery.</p>` : ''}
-<p>Wood Home Furniture Trading</p>
-</body></html>`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Payment Confirmed',
+        greeting: `Hi ${userName},`,
+        intro: 'We received your payment successfully.',
+        bodyHtml: `<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Order number: <strong>#${escapeHtml(shortId)}</strong></p>
+<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Amount: <strong>₱${escapeHtml(orderTotal.toFixed(2))}</strong></p>
+${isCOD ? `<p style="margin:0;font-size:18px;line-height:1.45;color:#333;">Remaining balance will be collected on delivery.</p>` : ''}`,
+      });
       await sendEmail({
         to: email,
         subject,
@@ -350,6 +481,99 @@ ${isCOD ? `<p>Balance due on delivery.</p>` : ''}
   }
 
   /**
+   * Sends an order shipped email when logistics marks the package in transit.
+   */
+  static async sendOrderShippedEmail(userId: string, orderId: string): Promise<void> {
+    try {
+      const pool = getPool();
+      const [rows] = await pool.query<UserRow[]>(
+        'SELECT email, full_name FROM users WHERE id = ? LIMIT 1',
+        [userId],
+      );
+      if (rows.length === 0) return;
+      const user = rows[0];
+      const shortId = orderId.substring(0, 8).toUpperCase();
+      const subject = `Order shipped — #${shortId}`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Order Shipped',
+        greeting: `Hi ${user.full_name},`,
+        intro: 'Your order is now in transit.',
+        bodyHtml: `<p style="margin:0;font-size:20px;line-height:1.45;color:#333;">Order <strong>#${escapeHtml(shortId)}</strong> has been shipped and is on the way.</p>`,
+      });
+      await sendEmail({
+        to: user.email,
+        subject,
+        html: htmlBody,
+        text: `Order #${shortId} has been shipped.`,
+      });
+    } catch (error) {
+      console.error('❌ Failed to send order shipped email:', error);
+    }
+  }
+
+  /**
+   * Sends an order delivered email when the order reaches the customer.
+   */
+  static async sendOrderDeliveredEmail(userId: string, orderId: string): Promise<void> {
+    try {
+      const pool = getPool();
+      const [rows] = await pool.query<UserRow[]>(
+        'SELECT email, full_name FROM users WHERE id = ? LIMIT 1',
+        [userId],
+      );
+      if (rows.length === 0) return;
+      const user = rows[0];
+      const shortId = orderId.substring(0, 8).toUpperCase();
+      const subject = `Order delivered — #${shortId}`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Order Delivered',
+        greeting: `Hi ${user.full_name},`,
+        intro: 'Your order has been delivered.',
+        bodyHtml: `<p style="margin:0;font-size:20px;line-height:1.45;color:#333;">Order <strong>#${escapeHtml(shortId)}</strong> is marked as delivered. Thank you for choosing Wood Home Furniture Trading.</p>`,
+      });
+      await sendEmail({
+        to: user.email,
+        subject,
+        html: htmlBody,
+        text: `Order #${shortId} has been delivered.`,
+      });
+    } catch (error) {
+      console.error('❌ Failed to send order delivered email:', error);
+    }
+  }
+
+  /**
+   * Sends an order cancelled email to the customer.
+   */
+  static async sendOrderCancelledEmail(userId: string, orderId: string): Promise<void> {
+    try {
+      const pool = getPool();
+      const [rows] = await pool.query<UserRow[]>(
+        'SELECT email, full_name FROM users WHERE id = ? LIMIT 1',
+        [userId],
+      );
+      if (rows.length === 0) return;
+      const user = rows[0];
+      const shortId = orderId.substring(0, 8).toUpperCase();
+      const subject = `Order cancelled — #${shortId}`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Order Cancelled',
+        greeting: `Hi ${user.full_name},`,
+        intro: 'Your order has been cancelled.',
+        bodyHtml: `<p style="margin:0;font-size:20px;line-height:1.45;color:#333;">Order <strong>#${escapeHtml(shortId)}</strong> is now cancelled. If this was unexpected, contact support from the app.</p>`,
+      });
+      await sendEmail({
+        to: user.email,
+        subject,
+        html: htmlBody,
+        text: `Order #${shortId} has been cancelled.`,
+      });
+    } catch (error) {
+      console.error('❌ Failed to send order cancelled email:', error);
+    }
+  }
+
+  /**
    * Sends an email verification email to the user after signup.
    * Contains a verification link that the user must click to verify their email.
    */
@@ -361,89 +585,28 @@ ${isCOD ? `<p>Balance due on delivery.</p>` : ''}
     _frontendUrl?: string,
   ): Promise<void> {
     try {
-      const appVerifyUrl = `smartspace://verify-email?token=${encodeURIComponent(verificationToken)}`;
-
-      const apiOrigin =
-        config.publicApiBaseUrl.trim().length > 0
-          ? config.publicApiBaseUrl.trim()
-          : config.environment === 'development'
-            ? `http://localhost:${config.port}`
-            : '';
-      const browserVerifyUrl =
-        apiOrigin.length > 0
-          ? `${apiOrigin}/api/users/verify-email?token=${encodeURIComponent(verificationToken)}&ui=1`
-          : '';
-
       const safeName = escapeHtml(userName);
       const safeCode = escapeHtml(verificationCode);
-
-      const walnut = '#5C4033';
-      const walnutMid = '#6D4C41';
-      const subject = 'Verify your email — Wood Home';
-      const safeEmailAddr = escapeHtml(userEmail);
-      const hrefBrowser = browserVerifyUrl ? escapeHtml(browserVerifyUrl) : '';
-      const hrefApp = escapeHtml(appVerifyUrl);
-      const hrefFacebook = escapeHtml(config.brand.facebookUrl);
-      const logoSrc = safeEmailImageUrl(config.emailBranding.logoUrl);
-      const fbIconSrc = safeEmailImageUrl(config.brand.facebookIconUrl);
-      const logoBlock = logoSrc
-        ? `<img src="${escapeHtml(logoSrc)}" alt="Wood Home" width="140" style="display:block;margin:0 auto 12px;max-width:160px;width:100%;height:auto;border:0;"/>`
-        : `<p style="margin:0 0 8px;font-size:20px;font-weight:700;color:${walnutMid};letter-spacing:-0.02em;font-family:Poppins,Helvetica,Arial,sans-serif;">Wood Home</p>`;
-      const fbFooterBlock =
-        fbIconSrc.length > 0
-          ? `<a href="${hrefFacebook}" style="display:inline-block;text-decoration:none;color:${walnutMid};font-family:Poppins,Helvetica,Arial,sans-serif;">
-<img src="${escapeHtml(fbIconSrc)}" alt="Facebook" width="36" height="36" style="display:block;margin:0 auto 8px;border:0;"/>
-<span style="font-size:14px;font-weight:600;text-decoration:underline;">Facebook</span>
-</a>`
-          : `<a href="${hrefFacebook}" style="color:${walnutMid};font-weight:600;text-decoration:underline;font-size:14px;font-family:Poppins,Helvetica,Arial,sans-serif;">Facebook</a>`;
-      const btnBase = `display:block;width:100%;max-width:300px;margin:0 auto;box-sizing:border-box;text-align:center;padding:16px 24px;background:${walnut};color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;font-size:15px;font-family:Poppins,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;`;
-      const browserCta = browserVerifyUrl
-        ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:12px 0 0;">
-<tr><td align="center" style="padding:0 8px;">
-<a href="${hrefBrowser}" style="${btnBase}">Verify in browser</a>
-</td></tr></table>`
-        : '';
-      const htmlBody = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<meta name="x-apple-disable-message-reformatting"/>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet"/>
-</head>
-<body style="margin:0;padding:0;background:#f0f0f0;font-family:Poppins,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0f0f0;"><tr><td align="center" style="padding:20px 12px;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:400px;width:100%;">
-<tr><td align="center" style="padding:0 0 16px;">${logoBlock}</td></tr>
-<tr><td style="background:#ffffff;border:1px solid #e8e8e8;border-radius:14px;padding:28px 22px 26px;">
-<p style="margin:0 0 10px;font-size:22px;font-weight:700;color:#1a1a1a;line-height:1.25;font-family:Poppins,Helvetica,Arial,sans-serif;">Let's verify your email</p>
-<p style="margin:0 0 20px;font-size:15px;line-height:1.5;color:#333333;font-family:Poppins,Helvetica,Arial,sans-serif;">Hi ${safeName}, confirm <strong style="color:${walnut};font-weight:600;">${safeEmailAddr}</strong> with the code below.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#f7f7f7;border:1px solid #eeeeee;border-radius:10px;padding:18px 12px;text-align:center;">
-<span style="font-size:24px;font-weight:700;letter-spacing:0.22em;color:${walnut};font-family:'Courier New',Courier,monospace;">${safeCode}</span>
-</td></tr></table>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:22px;">
-<tr><td align="center" style="padding:0 8px;">
-<a href="${hrefApp}" style="${btnBase}">Open Wood Home app</a>
+      const subject = 'Verify your Wood Home Furniture Trading account';
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Welcome to Wood Home Furniture Trading!',
+        greeting: `Hi ${safeName},`,
+        intro: 'Thanks for signing up! To complete your registration and start using Wood Home Furniture Trading, please verify your email address.',
+        bodyHtml: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8f8f8;border:1px dashed #9a7f72;border-radius:8px;margin:8px 0 4px;">
+<tr><td style="padding:18px 14px;text-align:center;">
+<p style="margin:0 0 8px;font-size:14px;color:#7b5a4f;font-weight:600;">Your verification code:</p>
+<p style="margin:0;font-family:'Courier New',Courier,monospace;font-size:34px;letter-spacing:0.24em;color:#7b5a4f;font-weight:700;white-space:nowrap;">${safeCode}</p>
+<p style="margin:10px 0 0;font-size:12px;color:#999;">Enter this code in the app to verify your email.</p>
 </td></tr>
-</table>
-${browserCta}
-</td></tr>
-<tr><td align="center" style="padding:22px 12px 8px;">
-<p style="margin:0 0 4px;font-size:15px;font-weight:700;color:${walnutMid};font-family:Poppins,Helvetica,Arial,sans-serif;">Wood Home</p>
-<p style="margin:0 0 14px;font-size:12px;color:#888888;font-family:Poppins,Helvetica,Arial,sans-serif;">Furniture you can trust.</p>
-<p style="margin:0 0 14px;font-size:11px;color:#aaaaaa;line-height:1.45;font-family:Poppins,Helvetica,Arial,sans-serif;">© ${new Date().getFullYear()} Wood Home Furniture Trading</p>
-<p style="margin:0;text-align:center;line-height:1.4;">${fbFooterBlock}</p>
-</td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
+</table>`,
+        footerNote:
+          'This verification code expires in 24 hours. If you did not create this account, you can safely ignore this email.',
+      });
       await sendEmail({
         to: userEmail,
         subject,
         html: htmlBody,
-        text:
-          `Code: ${verificationCode}\n` +
-          (browserVerifyUrl ? `Verify (browser): ${browserVerifyUrl}\n` : '') +
-          `Open app: ${appVerifyUrl}\n`,
+        text: `Verify your Wood Home Furniture Trading account.\n\nYour code: ${verificationCode}\n`,
       });
 
       console.log(`✅ Successfully sent verification email to ${userEmail}`);

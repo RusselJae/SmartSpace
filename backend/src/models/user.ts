@@ -19,6 +19,8 @@ export interface User {
   readonly verificationToken?: string;
   readonly verificationTokenExpires?: Date;
   readonly verificationCode?: string;
+  readonly termsVersionAccepted?: number;
+  readonly termsAcceptedAt?: Date;
 }
 
 

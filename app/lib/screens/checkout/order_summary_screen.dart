@@ -23,6 +23,8 @@ import '../../utils/phone_input_formatters.dart';
 import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
+import '../profile/terms_and_conditions_screen.dart';
+import '../profile/privacy_policy_screen.dart';
 import 'models.dart';
 
 // ---------------------------------------------------------------------------
@@ -95,6 +97,9 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
   bool _prefilling = true;
   List<AddressEntry> _savedAddresses = [];
   String? _selectedAddressId;
+  int _latestTermsVersion = 1;
+  bool _acceptLatestTerms = false;
+  bool _acceptLatestPrivacy = false;
 
   List<CartItem> get _checkoutItems {
     final ids = widget.productIds;
@@ -381,10 +386,22 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       return;
     }
     _loadSettings();
+    _loadLatestTermsVersion();
     _loadPhilippinesLocationData();
     _hydrateForm();
   }
-  
+
+  Future<void> _loadLatestTermsVersion() async {
+    try {
+      await _db.initialize();
+      final payload = await _db.getLegalContentPayload('terms');
+      if (!mounted || payload == null) return;
+      setState(() {
+        _latestTermsVersion = payload.version;
+      });
+    } catch (_) {}
+  }
+
   /// Load application settings for shipping and payment calculations
   Future<void> _loadSettings() async {
     try {
@@ -816,6 +833,18 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       Toast.error(context, 'Please sign in to place your order');
       return;
     }
+    final acceptedVersion = user.termsVersionAccepted ?? 0;
+    final needsTermsAcceptance = acceptedVersion < _latestTermsVersion;
+    if (needsTermsAcceptance && !_acceptLatestTerms) {
+      setState(() => _loading = false);
+      Toast.warning(context, 'Accept the latest Terms & Conditions before purchasing.');
+      return;
+    }
+    if (!_acceptLatestPrivacy) {
+      setState(() => _loading = false);
+      Toast.warning(context, 'Accept the Privacy Policy before purchasing.');
+      return;
+    }
 
     _placeOrderAsync();
   }
@@ -829,6 +858,10 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         setState(() => _loading = false);
         Toast.error(context, 'Please sign in to place your order');
         return;
+      }
+      final acceptedVersion = user.termsVersionAccepted ?? 0;
+      if (acceptedVersion < _latestTermsVersion && _acceptLatestTerms) {
+        await _auth.acceptLatestTerms(_latestTermsVersion);
       }
 
       final subtotal = _checkoutSubtotal;
@@ -1022,7 +1055,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   // Static 3D model preview image
                   Container(
@@ -1567,6 +1600,100 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                           ),
                         ),
                       ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _kWalnut.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Checkbox(
+                    value: _acceptLatestTerms,
+                    onChanged: (value) {
+                      setState(() => _acceptLatestTerms = value ?? false);
+                    },
+                  ),
+                  Expanded(
+                    child: Wrap(
+                      children: [
+                        Text(
+                          'I accept the latest ',
+                          style: GoogleFonts.poppins(fontSize: 12, color: _kWalnutDeep),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.of(context).push(
+                              CupertinoPageRoute(builder: (_) => const TermsAndConditionsScreen()),
+                            );
+                          },
+                          child: Text(
+                            'Terms & Conditions',
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _kWalnut,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                        Text('.', style: GoogleFonts.poppins(fontSize: 12, color: _kWalnutDeep)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _kWalnut.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Checkbox(
+                    value: _acceptLatestPrivacy,
+                    onChanged: (value) {
+                      setState(() => _acceptLatestPrivacy = value ?? false);
+                    },
+                  ),
+                  Expanded(
+                    child: Wrap(
+                      children: [
+                        Text(
+                          'I accept the latest ',
+                          style: GoogleFonts.poppins(fontSize: 12, color: _kWalnutDeep),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.of(context).push(
+                              CupertinoPageRoute(builder: (_) => const PrivacyPolicyScreen()),
+                            );
+                          },
+                          child: Text(
+                            'Privacy Policy',
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _kWalnut,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                        Text('.', style: GoogleFonts.poppins(fontSize: 12, color: _kWalnutDeep)),
+                      ],
                     ),
                   ),
                 ],

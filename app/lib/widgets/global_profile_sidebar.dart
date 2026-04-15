@@ -8,12 +8,14 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../models/profile_extras.dart';
 import '../models/user.dart';
+import '../models/customer_notification.dart';
 import '../screens/profile/addresses_screen.dart';
 import '../screens/profile/about_us_screen.dart';
 import '../screens/profile/help_center_screen.dart';
 import '../screens/profile/my_profile_screen.dart';
 import '../screens/profile/reviews.dart';
 import '../screens/profile/settings_screen.dart';
+import '../screens/profile/notifications_center_screen.dart';
 import '../screens/shell/tab_shell.dart';
 import '../screens/support/support_chat_screen.dart';
 import '../screens/views/made_to_order_request_screen.dart';
@@ -24,6 +26,7 @@ import '../services/cart_service.dart';
 import '../services/mysql_database_service.dart';
 import '../services/profile_storage.dart';
 import '../services/support_notifications_service.dart';
+import '../services/customer_notifications_service.dart';
 import '../widgets/loading_screen.dart';
 
 /// =============================================================
@@ -69,6 +72,7 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
   final ProfileStorage _storage = ProfileStorage();
   final CartService _cart = CartService();
   final SupportNotificationsService _supportNotifications = SupportNotificationsService.instance;
+  final CustomerNotificationsService _customerNotifications = CustomerNotificationsService.instance;
 
   ProfileExtras? _extras;
   Uint8List? _avatarBytes;
@@ -391,7 +395,11 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
   Widget _buildButtons(User user) {
     return ValueListenableBuilder<int>(
       valueListenable: _supportNotifications.unreadCount,
-      builder: (context, supportUnread, _) => Column(
+      builder: (context, supportUnread, _) => ValueListenableBuilder<List<CustomerNotification>>(
+        valueListenable: _customerNotifications.notifications,
+        builder: (context, __, ___) {
+          final customerUnread = _customerNotifications.unreadCount;
+          return Column(
       children: [
         _buildTile(
           icon: CupertinoIcons.location,
@@ -418,6 +426,14 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
           gradientUnreadBadge: true,
           onTap: () => Navigator.of(context, rootNavigator: true)
               .push(CupertinoPageRoute(builder: (_) => const SupportChatScreen())),
+        ),
+        _buildTile(
+          icon: CupertinoIcons.bell,
+          title: 'Notifications',
+          badgeCount: customerUnread,
+          gradientUnreadBadge: true,
+          onTap: () => Navigator.of(context, rootNavigator: true)
+              .push(CupertinoPageRoute(builder: (_) => const NotificationsCenterScreen())),
         ),
         _buildTile(
           icon: CupertinoIcons.sparkles,
@@ -466,7 +482,9 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
           onTap: _handleLogout,
         ),
       ],
-    ),
+    );
+        },
+      ),
     );
   }
 

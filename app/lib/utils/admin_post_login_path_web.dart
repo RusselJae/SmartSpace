@@ -8,17 +8,17 @@ import '../screens/admin/admin_routes.dart';
 String readAdminPostLoginTargetPath() {
   var hash = html.window.location.hash;
   if (hash.isEmpty || hash == '#') {
-    return AdminRoutes.overview;
+    return AdminRoutes.dashboard;
   }
   if (hash.startsWith('#')) {
     hash = hash.substring(1);
   }
   final path = AdminRoutes.normalizePath(hash);
   if (path == AdminRoutes.legacyShell) {
-    return AdminRoutes.overview;
+    return AdminRoutes.dashboard;
   }
-  if (AdminRoutes.pathsByIndex.contains(path)) {
+  if (AdminRoutes.isKnownShellPath(path)) {
     return path;
   }
-  return AdminRoutes.overview;
+  return AdminRoutes.dashboard;
 }

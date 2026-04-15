@@ -11,9 +11,10 @@ import '../../../models/order_record.dart';
 import '../../../models/product.dart';
 import '../../../models/review.dart';
 import '../../../services/mysql_database_service.dart';
+import '../../../utils/admin_formatters.dart';
 import '../../../utils/report_file_saver.dart';
 import '../../../widgets/toast.dart';
-import '../widgets/admin_toolbar.dart';
+import '../widgets/admin_analytics_components.dart';
 
 class SalesReportsAdminPage extends StatefulWidget {
   const SalesReportsAdminPage({super.key});
@@ -24,17 +25,15 @@ class SalesReportsAdminPage extends StatefulWidget {
 
 class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
-  final DateFormat _monthLabel = DateFormat('MMMM yyyy');
-  final DateFormat _axisMonthLabel = DateFormat('MMM');
-  final DateFormat _dateLabel = DateFormat('yyyy-MM-dd');
-
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
+  AdminTrendGranularity _trendGranularity = AdminTrendGranularity.monthly;
   List<OrderRecord> _orders = const [];
   List<Product> _products = const [];
   List<Review> _reviews = const [];
   bool _loading = true;
   bool _exporting = false;
   String? _error;
+  final List<int> _insightSegments = <int>[0, 0, 0];
 
   @override
   void initState() {
@@ -93,6 +92,14 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   }
 
   List<OrderRecord> get _monthOrders => _orders.where(_isIncludedOrder).toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+  List<OrderRecord> get _monthCancelledOrders => _orders
+      .where((o) =>
+          o.status.toLowerCase() == 'cancelled' &&
+          !o.createdAt.isBefore(_monthStart) &&
+          o.createdAt.isBefore(_monthEnd))
+      .toList()
     ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
   double get _monthSales => _monthOrders.fold<double>(0, (s, o) => s + o.totalAmount);
@@ -166,21 +173,80 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     return fallback.take(10).toList();
   }
 
-  List<_MonthPoint> get _monthlyTrend {
-    final points = <_MonthPoint>[];
-    for (var i = 11; i >= 0; i--) {
-      final month = DateTime(_selectedMonth.year, _selectedMonth.month - i, 1);
-      final nextMonth = DateTime(month.year, month.month + 1, 1);
-      final value = _orders
-          .where((o) {
-            final s = o.status.toLowerCase();
-            if (s == 'cancelled') return false;
-            return !o.createdAt.isBefore(month) && o.createdAt.isBefore(nextMonth);
-          })
-          .fold<double>(0, (sum, o) => sum + o.totalAmount);
-      points.add(_MonthPoint(month: month, sales: value));
+  List<_SalesProductStat> get _mostCancelledInMonth {
+    final counts = <String, int>{};
+    for (final order in _monthCancelledOrders) {
+      for (final productId in order.productIds) {
+        counts[productId] = (counts[productId] ?? 0) + 1;
+      }
+    }
+    final rows = <_SalesProductStat>[];
+    counts.forEach((productId, qty) {
+      rows.add(
+        _SalesProductStat(
+          productId: productId,
+          name: _productsById[productId]?.name ?? 'Unknown product',
+          value: qty.toDouble(),
+          secondaryValue: 0,
+        ),
+      );
+    });
+    rows.sort((a, b) => b.value.compareTo(a.value));
+    return rows.take(10).toList();
+  }
+
+  bool _isCancelled(OrderRecord o) => o.status.toLowerCase() == 'cancelled';
+
+  double _revenueInRange(DateTime start, DateTime end) {
+    return _orders
+        .where((o) => !_isCancelled(o) && !o.createdAt.isBefore(start) && o.createdAt.isBefore(end))
+        .fold<double>(0, (sum, o) => sum + o.totalAmount);
+  }
+
+  List<AdminSeriesPoint> get _dailyTrendPoints {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final monday = today.subtract(Duration(days: today.weekday - DateTime.monday));
+    final points = <AdminSeriesPoint>[];
+    for (var i = 0; i < 7; i++) {
+      final day = monday.add(Duration(days: i));
+      final next = day.add(const Duration(days: 1));
+      points.add(AdminSeriesPoint(x: day, y: _revenueInRange(day, next)));
     }
     return points;
+  }
+
+  List<AdminSeriesPoint> get _monthlyTrendPoints {
+    final points = <AdminSeriesPoint>[];
+    for (var i = 11; i >= 0; i--) {
+      final month = DateTime(_selectedMonth.year, _selectedMonth.month - i, 1);
+      final next = DateTime(month.year, month.month + 1, 1);
+      points.add(AdminSeriesPoint(x: month, y: _revenueInRange(month, next)));
+    }
+    return points;
+  }
+
+  List<AdminSeriesPoint> get _yearlyTrendPoints {
+    final y0 = _selectedMonth.year;
+    final points = <AdminSeriesPoint>[];
+    for (var i = 11; i >= 0; i--) {
+      final year = y0 - i;
+      final start = DateTime(year, 1, 1);
+      final end = DateTime(year + 1, 1, 1);
+      points.add(AdminSeriesPoint(x: DateTime(year, 7, 1), y: _revenueInRange(start, end)));
+    }
+    return points;
+  }
+
+  List<AdminSeriesPoint> get _activeTrendPoints {
+    switch (_trendGranularity) {
+      case AdminTrendGranularity.daily:
+        return _dailyTrendPoints;
+      case AdminTrendGranularity.monthly:
+        return _monthlyTrendPoints;
+      case AdminTrendGranularity.yearly:
+        return _yearlyTrendPoints;
+    }
   }
 
   Map<DateTime, double> get _dailySales {
@@ -201,7 +267,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     try {
       final csv = _buildCsv();
       final bytes = Uint8List.fromList(csv.codeUnits);
-      final filename = 'sales_report_${DateFormat('yyyy_MM').format(_selectedMonth)}.csv';
+      final filename = 'sales_report_${AdminFormatters.monthKey(_selectedMonth)}.csv';
       final savedAt = await saveReportFile(
         filename: filename,
         bytes: bytes,
@@ -237,8 +303,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     final buffer = StringBuffer();
     final summary = _summaryRows();
     buffer.writeln('Wood Home Furniture Trading');
-    buffer.writeln('Sales Report,${_csv(_monthLabel.format(_selectedMonth))}');
-    buffer.writeln('Generated At,${_csv(DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now()))}');
+    buffer.writeln('Sales Report,${_csv(AdminFormatters.monthYear(_selectedMonth))}');
+    buffer.writeln('Generated At,${_csv(AdminFormatters.dateYmdHm(DateTime.now()))}');
     buffer.writeln('');
     buffer.writeln('Summary,Value');
     for (final row in summary) {
@@ -247,19 +313,23 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     buffer.writeln('');
     buffer.writeln('Daily Sales Date,Amount');
     _dailySales.forEach((date, value) {
-      buffer.writeln('${_csv(_dateLabel.format(date))},${value.toStringAsFixed(2)}');
+      buffer.writeln('${_csv(AdminFormatters.dateYmd(date))},${AdminFormatters.decimal(value)}');
     });
     buffer.writeln('');
     buffer.writeln('Best Selling Products');
     buffer.writeln('Product,Units Sold,Estimated Revenue');
     for (final item in _bestSellingInMonth) {
-      buffer.writeln('${_csv(item.name)},${item.value.toStringAsFixed(0)},${item.secondaryValue.toStringAsFixed(2)}');
+      buffer.writeln(
+        '${_csv(item.name)},${AdminFormatters.decimal(item.value, digits: 0)},${AdminFormatters.decimal(item.secondaryValue)}',
+      );
     }
     buffer.writeln('');
     buffer.writeln('Top Rated Products');
     buffer.writeln('Product,Average Rating,Review Count');
     for (final item in _topRatedInMonth) {
-      buffer.writeln('${_csv(item.name)},${item.value.toStringAsFixed(2)},${item.secondaryValue.toStringAsFixed(0)}');
+      buffer.writeln(
+        '${_csv(item.name)},${AdminFormatters.decimal(item.value)},${AdminFormatters.decimal(item.secondaryValue, digits: 0)}',
+      );
     }
     return buffer.toString();
   }
@@ -273,12 +343,15 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     final avgOrderValue = _monthOrders.isEmpty ? 0.0 : _monthSales / _monthOrders.length;
     final topBestSeller = _bestSellingInMonth.isEmpty ? '-' : _bestSellingInMonth.first.name;
     final topRated = _topRatedInMonth.isEmpty ? '-' : _topRatedInMonth.first.name;
+    final topCancelled = _mostCancelledInMonth.isEmpty ? '-' : _mostCancelledInMonth.first.name;
     return <(String, String)>[
-      ('Total Sales', 'PHP ${_monthSales.toStringAsFixed(2)}'),
-      ('Total Orders', '${_monthOrders.length}'),
-      ('Average Order Value', 'PHP ${avgOrderValue.toStringAsFixed(2)}'),
+      ('Total Sales', AdminFormatters.currency(_monthSales)),
+      ('Total Orders', AdminFormatters.count(_monthOrders.length)),
+      ('Cancelled Orders', AdminFormatters.count(_monthCancelledOrders.length)),
+      ('Average Order Value', AdminFormatters.currency(avgOrderValue)),
       ('Best Selling Product', topBestSeller),
       ('Top Rated Product', topRated),
+      ('Most Cancelled Product', topCancelled),
     ];
   }
 
@@ -294,13 +367,24 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
     final summary = _summaryRows();
     final dailyRows = _dailySales.entries
-        .map((e) => <String>[_dateLabel.format(e.key), 'PHP ${e.value.toStringAsFixed(2)}'])
+        .map((e) => <String>[AdminFormatters.dateYmd(e.key), AdminFormatters.currency(e.value)])
         .toList();
     final bestRows = _bestSellingInMonth
-        .map((e) => <String>[e.name, e.value.toStringAsFixed(0), 'PHP ${e.secondaryValue.toStringAsFixed(2)}'])
+        .map((e) => <String>[
+              e.name,
+              AdminFormatters.decimal(e.value, digits: 0),
+              AdminFormatters.currency(e.secondaryValue),
+            ])
         .toList();
     final ratedRows = _topRatedInMonth
-        .map((e) => <String>[e.name, e.value.toStringAsFixed(2), e.secondaryValue.toStringAsFixed(0)])
+        .map((e) => <String>[
+              e.name,
+              AdminFormatters.decimal(e.value),
+              AdminFormatters.decimal(e.secondaryValue, digits: 0),
+            ])
+        .toList();
+    final cancelledRows = _mostCancelledInMonth
+        .map((e) => <String>[e.name, AdminFormatters.decimal(e.value, digits: 0)])
         .toList();
 
     doc.addPage(
@@ -334,14 +418,14 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
                     ),
                     pw.SizedBox(height: 2),
                     pw.Text(
-                      'Sales Report - ${_monthLabel.format(_selectedMonth)}',
+                      'Sales Report - ${AdminFormatters.monthYear(_selectedMonth)}',
                       style: const pw.TextStyle(fontSize: 11),
                     ),
                   ],
                 ),
                 pw.Spacer(),
                 pw.Text(
-                  'Generated ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}',
+                  'Generated ${AdminFormatters.dateYmdHm(DateTime.now())}',
                   style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
                 ),
               ],
@@ -389,6 +473,16 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
             headerDecoration: const pw.BoxDecoration(color: PdfColors.teal700),
             cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           ),
+          pw.SizedBox(height: 16),
+          pw.Text('Most Cancelled Products', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 8),
+          pw.TableHelper.fromTextArray(
+            headers: const <String>['Product', 'Cancelled Orders'],
+            data: cancelledRows,
+            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+            headerDecoration: const pw.BoxDecoration(color: PdfColors.red700),
+            cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          ),
         ],
       ),
     );
@@ -417,302 +511,85 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     return RefreshIndicator(
       onRefresh: _loadData,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         children: [
-          AdminToolbar(
-            title: 'Sales Reports',
-            actions: [
-              AdminToolbarAction(label: 'Refresh', icon: Icons.refresh, onPressed: _loadData),
-              AdminToolbarAction(
-                label: 'Export Excel',
-                icon: Icons.table_view_outlined,
-                onPressed: _exporting ? null : _exportExcelCsv,
-                primary: true,
+          _ReportKpiStrip(summary: summary),
+          const SizedBox(height: 14),
+          _SalesTrendSection(
+            granularity: _trendGranularity,
+            onGranularityChanged: (g) => setState(() => _trendGranularity = g),
+            selectedMonth: _selectedMonth,
+            onPickMonth: _pickMonth,
+            onExport: _exporting ? null : _exportExcelCsv,
+            onPrint: _exporting ? null : _printPdfReport,
+            points: _activeTrendPoints,
+          ),
+          const SizedBox(height: 16),
+          AdminInsightPanelRow(
+            columns: [
+              AdminInsightColumn(
+                title: 'Top Selling Products',
+                segmentLabels: const ['Units', 'Revenue', 'All'],
+                activeSegment: _insightSegments[0],
+                onSegmentSelected: (i) => setState(() => _insightSegments[0] = i),
+                entries: _toInsightEntries(
+                  _bestSellingInMonth.take(6).toList(growable: false),
+                  valueOf: (e) => _insightSegments[0] == 1 ? e.secondaryValue : e.value,
+                  labelOf: (e) => e.name,
+                  displayOf: (e) => _insightSegments[0] == 1
+                      ? AdminFormatters.currency(e.secondaryValue)
+                      : AdminFormatters.decimal(e.value, digits: 0),
+                ),
               ),
-              AdminToolbarAction(
-                label: 'Print PDF',
-                icon: Icons.picture_as_pdf_outlined,
-                onPressed: _exporting ? null : _printPdfReport,
+              AdminInsightColumn(
+                title: 'Top Rated Products',
+                segmentLabels: const ['Rating', 'Reviews', 'All'],
+                activeSegment: _insightSegments[1],
+                onSegmentSelected: (i) => setState(() => _insightSegments[1] = i),
+                entries: _toInsightEntries(
+                  _topRatedInMonth.take(6).toList(growable: false),
+                  valueOf: (e) => _insightSegments[1] == 1 ? e.secondaryValue : e.value,
+                  labelOf: (e) => e.name,
+                  displayOf: (e) => _insightSegments[1] == 1
+                      ? AdminFormatters.decimal(e.secondaryValue, digits: 0)
+                      : '${AdminFormatters.decimal(e.value)}★',
+                ),
+              ),
+              AdminInsightColumn(
+                title: 'Most Cancelled Products',
+                segmentLabels: const ['Units', 'Rate', 'All'],
+                activeSegment: _insightSegments[2],
+                onSegmentSelected: (i) => setState(() => _insightSegments[2] = i),
+                entries: _toInsightEntries(
+                  _mostCancelledInMonth.take(6).toList(growable: false),
+                  valueOf: (e) => e.value,
+                  labelOf: (e) => e.name,
+                  displayOf: (e) => AdminFormatters.decimal(e.value, digits: 0),
+                ),
               ),
             ],
-            trailing: FilledButton.icon(
-              onPressed: _pickMonth,
-              icon: const Icon(Icons.calendar_month_outlined, size: 18),
-              label: Text(_monthLabel.format(_selectedMonth)),
-            ),
-            showTitle: true,
-          ),
-          const SizedBox(height: 10),
-          _SummaryCards(summary: summary),
-          const SizedBox(height: 16),
-          _SalesChartCard(
-            points: _monthlyTrend,
-            axisFormatter: _axisMonthLabel,
-          ),
-          const SizedBox(height: 16),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 1000;
-              if (wide) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: _BestSellingCard(items: _bestSellingInMonth),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _TopRatedCard(items: _topRatedInMonth),
-                    ),
-                  ],
-                );
-              }
-              return Column(
-                children: [
-                  _BestSellingCard(items: _bestSellingInMonth),
-                  const SizedBox(height: 16),
-                  _TopRatedCard(items: _topRatedInMonth),
-                ],
-              );
-            },
           ),
         ],
       ),
     );
   }
-}
 
-class _SummaryCards extends StatelessWidget {
-  const _SummaryCards({required this.summary});
-
-  final List<(String, String)> summary;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 1000 ? 5 : constraints.maxWidth >= 760 ? 3 : 2;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: summary.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 2.3,
+  List<AdminInsightEntry> _toInsightEntries(
+    List<_SalesProductStat> rows, {
+    required double Function(_SalesProductStat row) valueOf,
+    required String Function(_SalesProductStat row) labelOf,
+    required String Function(_SalesProductStat row) displayOf,
+  }) {
+    final max = rows.isEmpty ? 1.0 : rows.map(valueOf).reduce((a, b) => a > b ? a : b);
+    return rows
+        .map(
+          (r) => AdminInsightEntry(
+            label: labelOf(r),
+            value: displayOf(r),
+            progress: max <= 0 ? 0 : valueOf(r) / max,
           ),
-          itemBuilder: (context, index) {
-            final item = summary[index];
-            return DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xFFF7F9FC),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE3E8EF)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(item.$1, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700])),
-                    const SizedBox(height: 6),
-                    Text(item.$2, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _SalesChartCard extends StatelessWidget {
-  const _SalesChartCard({required this.points, required this.axisFormatter});
-
-  final List<_MonthPoint> points;
-  final DateFormat axisFormatter;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Monthly Sales Trend', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 220,
-              child: points.isEmpty
-                  ? const Center(child: Text('No data'))
-                  : _LineChart(points: points, axisFormatter: axisFormatter),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LineChart extends StatelessWidget {
-  const _LineChart({required this.points, required this.axisFormatter});
-
-  final List<_MonthPoint> points;
-  final DateFormat axisFormatter;
-
-  @override
-  Widget build(BuildContext context) {
-    final maxSales = points.fold<double>(0, (max, p) => p.sales > max ? p.sales : max);
-    return Column(
-      children: [
-        Expanded(
-          child: CustomPaint(
-            painter: _LineChartPainter(points: points, maxValue: maxSales <= 0 ? 1 : maxSales),
-            child: const SizedBox.expand(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            for (final p in points.where((e) => e.month.month.isEven))
-              Text(axisFormatter.format(p.month), style: Theme.of(context).textTheme.bodySmall),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _LineChartPainter extends CustomPainter {
-  _LineChartPainter({required this.points, required this.maxValue});
-
-  final List<_MonthPoint> points;
-  final double maxValue;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (points.length < 2) return;
-    final gridPaint = Paint()
-      ..color = const Color(0xFFE5E7EB)
-      ..strokeWidth = 1;
-    for (var i = 0; i < 5; i++) {
-      final y = size.height * i / 4;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-
-    final linePaint = Paint()
-      ..color = const Color(0xFF8D6E63)
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke;
-    final fillPaint = Paint()
-      ..color = const Color(0xFF8D6E63).withValues(alpha: 0.12)
-      ..style = PaintingStyle.fill;
-
-    final path = Path();
-    final area = Path();
-    for (var i = 0; i < points.length; i++) {
-      final x = size.width * i / (points.length - 1);
-      final y = size.height - ((points[i].sales / maxValue) * size.height);
-      if (i == 0) {
-        path.moveTo(x, y);
-        area.moveTo(x, size.height);
-        area.lineTo(x, y);
-      } else {
-        path.lineTo(x, y);
-        area.lineTo(x, y);
-      }
-    }
-    area.lineTo(size.width, size.height);
-    area.close();
-
-    canvas.drawPath(area, fillPaint);
-    canvas.drawPath(path, linePaint);
-
-    final dotPaint = Paint()..color = const Color(0xFF5D4037);
-    for (var i = 0; i < points.length; i++) {
-      final x = size.width * i / (points.length - 1);
-      final y = size.height - ((points[i].sales / maxValue) * size.height);
-      canvas.drawCircle(Offset(x, y), 3.5, dotPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _LineChartPainter oldDelegate) {
-    return oldDelegate.points != points || oldDelegate.maxValue != maxValue;
-  }
-}
-
-class _BestSellingCard extends StatelessWidget {
-  const _BestSellingCard({required this.items});
-
-  final List<_SalesProductStat> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Best Selling Products', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            if (items.isEmpty)
-              const Text('No sales data for selected month.')
-            else
-              ...items.take(8).map(
-                    (e) => ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text('Est. revenue: PHP ${e.secondaryValue.toStringAsFixed(2)}'),
-                      trailing: Text('${e.value.toStringAsFixed(0)} sold'),
-                    ),
-                  ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TopRatedCard extends StatelessWidget {
-  const _TopRatedCard({required this.items});
-
-  final List<_SalesProductStat> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Top Rated Products', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            if (items.isEmpty)
-              const Text('No ratings available.')
-            else
-              ...items.take(8).map(
-                    (e) => ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text('${e.secondaryValue.toStringAsFixed(0)} reviews'),
-                      trailing: Text('${e.value.toStringAsFixed(2)} / 5'),
-                    ),
-                  ),
-          ],
-        ),
-      ),
-    );
+        )
+        .toList(growable: false);
   }
 }
 
@@ -730,9 +607,210 @@ class _SalesProductStat {
   final double secondaryValue;
 }
 
-class _MonthPoint {
-  const _MonthPoint({required this.month, required this.sales});
+class _ReportKpiStrip extends StatelessWidget {
+  const _ReportKpiStrip({required this.summary});
 
-  final DateTime month;
-  final double sales;
+  final List<(String, String)> summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = summary.take(4).map(
+          (item) => AdminKpiItem(
+            title: item.$1,
+            value: item.$2,
+            subtitle: 'Compare to last period',
+            accent: AdminAnalyticsColors.primary,
+            icon: _iconForMetric(item.$1),
+          ),
+        );
+    return AdminKpiStripRow(items: primary.toList(growable: false));
+  }
+
+  IconData _iconForMetric(String metric) {
+    final m = metric.toLowerCase();
+    if (m.contains('sales')) return Icons.payments_outlined;
+    if (m.contains('order')) return Icons.shopping_cart_outlined;
+    if (m.contains('cancel')) return Icons.cancel_schedule_send_outlined;
+    return Icons.trending_up_outlined;
+  }
 }
+
+class _SalesTrendSection extends StatelessWidget {
+  const _SalesTrendSection({
+    required this.granularity,
+    required this.onGranularityChanged,
+    required this.selectedMonth,
+    required this.onPickMonth,
+    required this.onExport,
+    required this.onPrint,
+    required this.points,
+  });
+
+  final AdminTrendGranularity granularity;
+  final ValueChanged<AdminTrendGranularity> onGranularityChanged;
+  final DateTime selectedMonth;
+  final VoidCallback onPickMonth;
+  final VoidCallback? onExport;
+  final VoidCallback? onPrint;
+  final List<AdminSeriesPoint> points;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Spacer(),
+                SegmentedButton<AdminTrendGranularity>(
+                  segments: const [
+                    ButtonSegment(value: AdminTrendGranularity.daily, label: Text('Daily')),
+                    ButtonSegment(value: AdminTrendGranularity.monthly, label: Text('Monthly')),
+                    ButtonSegment(value: AdminTrendGranularity.yearly, label: Text('Yearly')),
+                  ],
+                  selected: {granularity},
+                  onSelectionChanged: (s) {
+                    if (s.isEmpty) return;
+                    onGranularityChanged(s.first);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (granularity == AdminTrendGranularity.daily)
+              _SalesDailyTemplate(points: points)
+            else if (granularity == AdminTrendGranularity.monthly)
+              AdminUnifiedTrendChartCard(
+                title: 'Revenue Trend (Monthly)',
+                subtitle: 'Net revenue for each of the last 12 months.',
+                seriesLabel: 'Net revenue',
+                points: points,
+                granularity: granularity,
+                onGranularityChanged: onGranularityChanged,
+                showGranularitySelector: false,
+                valueFormatter: AdminFormatters.currency,
+              )
+            else
+              _SalesYearlyTemplate(points: points),
+            const SizedBox(height: 10),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                FilledButton.icon(
+                  onPressed: onPickMonth,
+                  icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                  label: Text(AdminFormatters.monthYear(selectedMonth)),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onExport,
+                  icon: const Icon(Icons.table_view_outlined, size: 18),
+                  label: const Text('Export CSV'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onPrint,
+                  icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                  label: const Text('Print PDF'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SalesDailyTemplate extends StatelessWidget {
+  const _SalesDailyTemplate({required this.points});
+  final List<AdminSeriesPoint> points;
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 220,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (final p in points)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(AdminFormatters.currency(p.y), style: Theme.of(context).textTheme.labelSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 4),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: FractionallySizedBox(
+                          heightFactor: points.isEmpty
+                              ? 0
+                              : (p.y / (points.map((e) => e.y).fold<double>(1, (a, b) => a > b ? a : b))).clamp(0.08, 1.0),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFB7B0A6),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(DateFormat.E().format(p.x), style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SalesYearlyTemplate extends StatelessWidget {
+  const _SalesYearlyTemplate({required this.points});
+  final List<AdminSeriesPoint> points;
+  @override
+  Widget build(BuildContext context) {
+    final max = points.isEmpty ? 1.0 : points.map((e) => e.y).reduce((a, b) => a > b ? a : b);
+    return Column(
+      children: [
+        for (final p in points)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                SizedBox(width: 50, child: Text('${p.x.year}', style: Theme.of(context).textTheme.bodySmall)),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: LinearProgressIndicator(
+                      value: (p.y / max).clamp(0.0, 1.0),
+                      minHeight: 8,
+                      backgroundColor: AdminAnalyticsColors.neutralTrack,
+                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF8D6E63)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 110,
+                  child: Text(
+                    AdminFormatters.currency(p.y),
+                    textAlign: TextAlign.right,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+

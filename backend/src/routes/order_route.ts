@@ -22,6 +22,9 @@ import {
 } from '../services/order_service';
 import { createPaymongoCheckoutSession } from '../services/paymongo_service';
 import { config } from '../config/env';
+import { findUserById } from '../services/user_service';
+import { getLegalContent } from '../services/legal_content_service';
+import { logAdminActivity } from '../services/admin_activity_log_service';
 
 const validIdStorage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -149,6 +152,14 @@ orderRouter.post(
     };
     if (!input.userId || !input.userName || !input.productIds || input.productIds.length === 0) {
       return res.status(400).json({ success: false, message: 'userId, userName, and productIds are required' });
+    }
+    const user = await findUserById(input.userId);
+    const terms = await getLegalContent('terms');
+    if (!user || (user.termsVersionAccepted ?? 0) < terms.version) {
+      return res.status(403).json({
+        success: false,
+        message: 'Please accept the latest Terms and Conditions before placing an order.',
+      });
     }
     const order = await createOrder(input);
     res.status(201).json({ success: true, data: order });
@@ -389,6 +400,14 @@ orderRouter.post(
       return res.status(400).json({
         success: false,
         message: 'userId and shippingAddress are required',
+      });
+    }
+    const user = await findUserById(userId);
+    const terms = await getLegalContent('terms');
+    if (!user || (user.termsVersionAccepted ?? 0) < terms.version) {
+      return res.status(403).json({
+        success: false,
+        message: 'Please accept the latest Terms and Conditions before creating an order.',
       });
     }
 
@@ -784,6 +803,16 @@ orderRouter.patch(
   asyncHandler(async (req, res) => {
     const payload = statusSchema.parse(req.body);
     await updateOrderStatus(req.params.id, payload.status);
+    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
+    if (adminId.length > 0) {
+      await logAdminActivity({
+        adminId,
+        action: payload.status.toLowerCase() == 'cancelled' ? 'order_cancelled' : 'order_status_updated',
+        entityType: 'order',
+        entityId: req.params.id,
+        details: { status: payload.status },
+      });
+    }
     res.status(204).send();
   }),
 );

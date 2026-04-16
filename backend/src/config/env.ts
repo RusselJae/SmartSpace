@@ -31,6 +31,10 @@ type EnvironmentConfig = {
     readonly apiKey: string;
     readonly from: string;
   };
+  readonly brevo: {
+    readonly apiKey: string;
+    readonly from: string;
+  };
   /** Absolute URL to a logo image for HTML emails (HTTPS recommended). */
   readonly emailBranding: {
     readonly logoUrl: string;
@@ -112,6 +116,16 @@ export const config: EnvironmentConfig = {
     // Use a dedicated SENDGRID_FROM when present; otherwise reuse SMTP_FROM
     // so existing env setups keep working.
     from:
+      process.env.SENDGRID_FROM ??
+      process.env.SMTP_FROM ??
+      'Wood Home Furniture Trading <noreply@woodhomefurniture.com>',
+  },
+  brevo: {
+    // Brevo API key (Sendinblue). Uses HTTPS API, so no SMTP egress needed.
+    apiKey: process.env.BREVO_API_KEY ?? '',
+    // Fallback sender string: reuse existing SENDGRID_FROM / SMTP_FROM.
+    from:
+      process.env.BREVO_FROM ??
       process.env.SENDGRID_FROM ??
       process.env.SMTP_FROM ??
       'Wood Home Furniture Trading <noreply@woodhomefurniture.com>',

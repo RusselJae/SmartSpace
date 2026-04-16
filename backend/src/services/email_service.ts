@@ -138,9 +138,69 @@ const getResendClient = (): Resend | null => {
   }
 };
 
+type ParsedSender = {
+  readonly name?: string;
+  readonly email: string;
+};
+
+const parseSenderFromField = (from: string): ParsedSender => {
+  const trimmed = from.trim();
+  // Expected format: "Display Name <sender@email.com>"
+  const match = trimmed.match(/^(.*)<([^>]+)>$/);
+  if (match) {
+    const name = match[1].trim();
+    const email = match[2].trim();
+    return { name: name.length > 0 ? name : undefined, email };
+  }
+  return { email: trimmed };
+};
+
+const sendViaBrevo = async (payload: EmailPayload): Promise<void> => {
+  const apiKey = config.brevo.apiKey;
+  if (!apiKey) return;
+
+  const sender = parseSenderFromField(config.brevo.from);
+  const toList = Array.isArray(payload.to) ? payload.to : [payload.to];
+
+  // Brevo transactional email API (no SMTP egress required)
+  // https://developers.brevo.com/docs/smtp-v3/
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: {
+        ...(sender.name ? { name: sender.name } : {}),
+        email: sender.email,
+      },
+      to: toList.map((email) => ({ email })),
+      subject: payload.subject,
+      htmlContent: payload.html,
+      textContent: payload.text ?? '',
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Brevo send failed (${res.status}): ${body}`);
+  }
+};
+
 const sendEmail = async (payload: EmailPayload): Promise<void> => {
-  // Prefer SendGrid when configured. This works without a custom domain
-  // as long as you verified a Single Sender in the SendGrid dashboard.
+  // Prefer Brevo when configured. Brevo uses HTTPS API so it works on free
+  // Render plans where SMTP egress may be blocked.
+  if (config.brevo.apiKey) {
+    try {
+      await sendViaBrevo(payload);
+      return;
+    } catch (e) {
+      console.error('❌ Brevo send failed, falling back:', e);
+    }
+  }
+
+  // Fallback to SendGrid when configured.
   if (ensureSendGrid()) {
     await sgMail.send({
       to: payload.to,
@@ -156,7 +216,7 @@ const sendEmail = async (payload: EmailPayload): Promise<void> => {
   // Resend fallback (kept for flexibility). Note: `resend.dev` is restricted.
   const resend = getResendClient();
   if (resend == null) {
-    console.warn('⚠️ Email delivery disabled: neither SendGrid nor Resend is configured.');
+    console.warn('⚠️ Email delivery disabled: configure Brevo, SendGrid, or Resend.');
     return;
   }
 

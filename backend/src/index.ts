@@ -20,22 +20,31 @@ const startServer = (): Server => {
 };
 
 const checkEmailConfiguration = (): void => {
-  // SendGrid (Single Sender Verification) works without a custom domain.
-  // Resend requires domain verification for most production sending.
-  if (!config.sendgrid.apiKey) {
+  // Brevo uses HTTPS API, so it doesn't depend on SMTP egress like Gmail.
+  // SendGrid (Single Sender Verification) works without a custom domain too.
+  const hasBrevo = Boolean(config.brevo.apiKey);
+  const hasSendGrid = Boolean(config.sendgrid.apiKey);
+
+  if (!hasBrevo && !hasSendGrid) {
     console.warn('');
     console.warn('⚠️  EMAIL SERVICE NOT CONFIGURED');
     console.warn('═══════════════════════════════════════════════════════════');
-    console.warn('Verification emails will NOT work until SendGrid is configured.');
+    console.warn('Verification emails will NOT work until Brevo or SendGrid is configured.');
     console.warn('');
     console.warn('Add these to your backend environment:');
-    console.warn('  SENDGRID_API_KEY=... (from SendGrid dashboard)');
-    console.warn('  SENDGRID_FROM=Your App <you@gmail.com> (must be verified in SendGrid Sender Identity)');
+    console.warn('  BREVO_API_KEY=... (from Brevo dashboard)');
+    console.warn('  BREVO_FROM=Your App <you@gmail.com> (sender identity in Brevo)');
+    console.warn('  (or) SENDGRID_API_KEY=... and SENDGRID_FROM=... (verified in SendGrid Sender Identity)');
     console.warn('═══════════════════════════════════════════════════════════');
     console.warn('');
   } else {
-    console.log('✅ Email service configured (SendGrid)');
-    console.log(`   From: ${config.sendgrid.from}`);
+    if (hasBrevo) {
+      console.log('✅ Email service configured (Brevo)');
+      console.log(`   From: ${config.brevo.from}`);
+    } else {
+      console.log('✅ Email service configured (SendGrid)');
+      console.log(`   From: ${config.sendgrid.from}`);
+    }
   }
 };
 

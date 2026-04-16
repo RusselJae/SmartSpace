@@ -233,6 +233,11 @@ const sendEmail = async (payload: EmailPayload): Promise<void> => {
 type WoodHomeTemplateInput = {
   readonly heading: string;
   readonly greeting: string;
+  /**
+   * Optional HTML version of [greeting], for cases like bolding the name.
+   * Callers must pass safe, pre-escaped HTML.
+   */
+  readonly greetingHtml?: string;
   readonly intro: string;
   readonly bodyHtml: string;
   readonly footerNote?: string;
@@ -243,6 +248,22 @@ type WoodHomeTemplateInput = {
  * This keeps all customer emails visually consistent.
  */
 const buildWoodHomeTemplate = (input: WoodHomeTemplateInput): string => {
+  const logoSrc = safeEmailImageUrl(config.emailBranding.logoUrl);
+  const greetingBlock = (() => {
+    if (input.greetingHtml) return input.greetingHtml;
+
+    // Auto-bold common greeting pattern:
+    // - "Hi Admin,"
+    // - "Hi John Doe,"
+    const match = input.greeting.match(/^Hi\s+(.+),\s*$/i);
+    if (match?.[1]) {
+      return `Hi <strong>${escapeHtml(match[1])}</strong>,`;
+    }
+
+    // Fallback: plain text greeting
+    return escapeHtml(input.greeting);
+  })();
+
   const fbHref = escapeHtml(config.brand.facebookUrl);
   const iconSrc = safeEmailImageUrl(config.brand.facebookIconUrl);
   const fbIcon = iconSrc
@@ -254,23 +275,25 @@ const buildWoodHomeTemplate = (input: WoodHomeTemplateInput): string => {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
   <title>${escapeHtml(input.heading)}</title>
 </head>
-<body style="margin:0;padding:14px;background:#f3f3f3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#2a2a2a;">
+<body style="margin:0;padding:14px;background:#f3f3f3;font-family:Poppins,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#2a2a2a;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr>
       <td align="center">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #dedede;border-radius:8px;overflow:hidden;">
           <tr>
-            <td style="padding:24px;background:#7b5a4f;text-align:center;">
-              <p style="margin:0;font-size:34px;line-height:34px;">🪑</p>
-              <h1 style="margin:10px 0 0;color:#fff;font-size:32px;line-height:1;font-weight:700;letter-spacing:0.5px;">WH</h1>
-              <p style="margin:10px 0 0;color:#fff;font-size:30px;line-height:1.15;font-weight:700;">${escapeHtml(input.heading)}</p>
+            <td style="padding:28px;background:#5C4033;text-align:center;">
+              ${logoSrc ? `<img src="${escapeHtml(logoSrc)}" alt="Wood Home Furniture Trading" width="96" style="display:block;margin:0 auto 12px;max-width:110px;height:auto;border:0;" />` : ''}
+              <p style="margin:0;color:#fff;font-size:30px;line-height:1.15;font-weight:700;letter-spacing:0.2px;">${escapeHtml(input.heading)}</p>
             </td>
           </tr>
           <tr>
             <td style="padding:22px 18px 10px;">
-              <p style="margin:0 0 14px;font-size:22px;color:#2f2f2f;">${escapeHtml(input.greeting)}</p>
+              <p style="margin:0 0 14px;font-size:22px;color:#2f2f2f;">${greetingBlock}</p>
               <p style="margin:0 0 18px;font-size:22px;line-height:1.35;color:#2f2f2f;">${escapeHtml(input.intro)}</p>
               ${input.bodyHtml}
               ${
@@ -283,7 +306,7 @@ const buildWoodHomeTemplate = (input: WoodHomeTemplateInput): string => {
           <tr>
             <td style="padding:12px 18px 18px;border-top:1px solid #ededed;text-align:center;">
               <a href="${fbHref}" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:#1877F2;font-size:16px;font-weight:600;">
-                ${fbIcon}<span style="vertical-align:middle;">Wood Home Facebook</span>
+                ${fbIcon}
               </a>
               <p style="margin:10px 0 0;font-size:13px;color:#999;">Wood Home Furniture Trading</p>
             </td>
@@ -773,12 +796,11 @@ ${isCOD ? `<p style="margin:0;font-size:18px;line-height:1.45;color:#333;">Remai
     _frontendUrl?: string,
   ): Promise<void> {
     try {
-      const safeName = escapeHtml(userName);
       const safeCode = escapeHtml(verificationCode);
       const subject = 'Verify your Wood Home Furniture Trading account';
       const htmlBody = buildWoodHomeTemplate({
         heading: 'Welcome to Wood Home Furniture Trading!',
-        greeting: `Hi ${safeName},`,
+        greeting: `Hi ${userName},`,
         intro: 'Thanks for signing up! To complete your registration and start using Wood Home Furniture Trading, please verify your email address.',
         bodyHtml: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8f8f8;border:1px dashed #9a7f72;border-radius:8px;margin:8px 0 4px;">
 <tr><td style="padding:18px 14px;text-align:center;">

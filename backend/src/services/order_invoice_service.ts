@@ -226,6 +226,10 @@ const buildInvoiceBodyHtml = (params: {
           <div style="font-size:38px;font-weight:900;color:#fff;margin-top:8px;letter-spacing:.01em;">${escapeHtml(formatPesos(totalBalanceDue))}</div>
           <div style="font-size:12px;color:#cbd5e1;margin-top:6px;line-height:1.4;">This invoice updates automatically as payments and daily late fees are recorded.</div>
         </div>
+
+        <div style="margin-top:14px;background:#F0EEF9;border-radius:14px;padding:14px;color:#4B5563;font-size:12px;line-height:1.4;">
+          Notes: Please pay your invoice within 6 months of receiving it
+        </div>
       </div>
   `;
 };

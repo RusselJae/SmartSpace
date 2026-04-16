@@ -40,6 +40,10 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
+        leading: CupertinoNavigationBarBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          color: const Color(0xFF5C4033),
+        ),
         middle: Text('Notifications', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         trailing: CupertinoButton(
           padding: EdgeInsets.zero,

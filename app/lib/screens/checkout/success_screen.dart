@@ -36,7 +36,7 @@ class SuccessScreen extends StatelessWidget {
     final userId = (invoiceUserId ?? auth.currentUser?.id)?.trim();
     if (userId == null || userId.isEmpty) return;
 
-    await Navigator.of(context).push(
+    await Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(
         builder: (_) => OrderInvoiceScreen(
           orderId: orderId.trim(),
@@ -176,16 +176,44 @@ class SuccessScreen extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: () => _openInvoice(context, download: true),
-                        child: Text(
-                          'Download invoice',
-                          style: GoogleFonts.poppins(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                            color: const Color(0xFF5C4033),
-                            decoration: TextDecoration.underline,
+                      SizedBox(
+                        width: 240,
+                        child: ElevatedButton(
+                          onPressed: () => _openInvoice(context, download: true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: const Color(0xFF5C4033),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                              side: BorderSide(
+                                color: const Color(0xFF5C4033).withValues(alpha: 0.25),
+                                width: 1,
+                              ),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                CupertinoIcons.arrow_down_doc,
+                                size: 18,
+                                color: const Color(0xFF5C4033).withValues(alpha: 0.9),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Download invoice',
+                                style: GoogleFonts.poppins(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                  color: const Color(0xFF5C4033).withValues(alpha: 0.9),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),

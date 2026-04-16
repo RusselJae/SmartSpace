@@ -64,7 +64,13 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     required String userId,
     required bool download,
   }) async {
-    await Navigator.of(context).push(
+    // Open above any modal/sheet so the invoice always appears "on top of all screens"
+    // (same behavior as download).
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+
+    await Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(
         builder: (_) => OrderInvoiceScreen(
           orderId: orderId,
@@ -740,10 +746,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
                         Row(
                           children: [
                             Expanded(
-                              child: CupertinoButton(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                                color: const Color(0xFFF5EFEA),
-                                borderRadius: BorderRadius.circular(12),
+                              child: ElevatedButton(
                                 onPressed: currentUser == null
                                     ? null
                                     : () async {
@@ -753,46 +756,86 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
                                           download: false,
                                         );
                                       },
-                                child: Text(
-                                  'View invoice',
-                                  style: GoogleFonts.poppins(
-                                    color: _kWalnut,
-                                    fontWeight: FontWeight.w700,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _kWalnut,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 12,
                                   ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      CupertinoIcons.doc_text_fill,
+                                      size: 18,
+                                      color: Colors.white,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'View invoice',
+                                      style: GoogleFonts.poppins(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
                             const SizedBox(width: 10),
-                            CupertinoButton(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                              color: CupertinoColors.systemGrey6,
-                              borderRadius: BorderRadius.circular(12),
-                              onPressed: currentUser == null
-                                  ? null
-                                  : () async {
-                                      await _openOrderInvoice(
-                                        orderId: order.id,
-                                        userId: currentUser.id,
-                                        download: true,
-                                      );
-                                    },
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    CupertinoIcons.arrow_down_doc,
-                                    size: 18,
-                                    color: _kWalnut.withValues(alpha: 0.9),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: currentUser == null
+                                    ? null
+                                    : () async {
+                                        await _openOrderInvoice(
+                                          orderId: order.id,
+                                          userId: currentUser.id,
+                                          download: true,
+                                        );
+                                      },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: _kWalnut,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 12,
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Download',
-                                    style: GoogleFonts.poppins(
-                                      color: _kWalnut.withValues(alpha: 0.9),
-                                      fontWeight: FontWeight.w700,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(999),
+                                    side: BorderSide(
+                                      color: _kWalnut.withValues(alpha: 0.25),
+                                      width: 1,
                                     ),
                                   ),
-                                ],
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      CupertinoIcons.arrow_down_doc,
+                                      size: 18,
+                                      color: _kWalnut.withValues(alpha: 0.9),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Download',
+                                      style: GoogleFonts.poppins(
+                                        color: _kWalnut.withValues(alpha: 0.9),
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ],

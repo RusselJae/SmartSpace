@@ -1165,7 +1165,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                             ),
                           ),
                           _buildSlider(
-                            label: 'Hulugan down payment (%)',
+                            label: 'Installment down payment (%)',
                             value: _huluganDownpaymentPercent,
                             min: 10,
                             max: 90,
@@ -1174,7 +1174,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                             valueDisplay: (value) => '${value.toStringAsFixed(0)}%',
                           ),
                           _buildSlider(
-                            label: 'Hulugan financing interest (%)',
+                            label: 'Installment financing interest (%)',
                             value: _huluganInterestPercent,
                             min: 0,
                             max: 20,

@@ -402,7 +402,8 @@ export const markOrderPaidViaPaymongo = async (
     return;
   }
 
-  if (row.status === 'confirmed' && row.payment_status === 'completed') {
+  const rem = Number(row.remaining_balance ?? 0);
+  if (row.status === 'confirmed' && row.payment_status === 'completed' && rem <= 0.01) {
     console.log(`PayMongo webhook: order ${orderId} already confirmed`);
     return;
   }
@@ -410,7 +411,6 @@ export const markOrderPaidViaPaymongo = async (
   const userId = row.user_id;
   const orderTotal = Number(row.total_amount);
   const previousStatus = row.status;
-  const rem = Number(row.remaining_balance ?? 0);
   const dp = Number(row.downpayment_amount ?? 0);
   const plan = row.payment_plan ?? null;
   const paidAmount = options?.amountPesos ?? null;

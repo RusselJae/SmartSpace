@@ -95,7 +95,7 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
       AdminKpiItem(
         title: 'Current users',
         value: AdminFormatters.count(activeIds.length),
-        subtitle: 'Ordered or signed in within 30 days',
+        subtitle: 'Ordered or signed in within 6 months',
         accent: AdminAnalyticsColors.positive,
         icon: Icons.person_pin_circle_outlined,
       ),
@@ -265,7 +265,7 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
     return [
       AdminInsightColumn(
         title: 'Paid Amount by User',
-        segmentLabels: const ['Lifetime', '90 days', '30 days'],
+        segmentLabels: const ['Lifetime', '90 days', '6 months'],
         activeSegment: _insightSegments[0],
         entries: topSpenders,
         onSegmentSelected: (i) => setState(() => _insightSegments[0] = i),

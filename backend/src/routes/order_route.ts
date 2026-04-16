@@ -770,12 +770,7 @@ orderRouter.post(
 
     const orderStatus = order.status.toLowerCase();
     const paymentStatus = (order.shippingAddress['paymentStatus']?.toString() ?? 'pending').toLowerCase();
-    const isPaymongoBalanceFollowUp =
-      paymentStatus === 'downpayment_received' && orderStatus !== 'cancelled';
-
-    if (orderStatus != 'pending' &&
-        orderStatus != 'pending_payment_verification' &&
-        !isPaymongoBalanceFollowUp) {
+    if (orderStatus === 'cancelled') {
       return res.status(400).json({
         success: false,
         message: 'Order not awaiting payment',
@@ -804,6 +799,22 @@ orderRouter.post(
     const rem = Number(pr?.remainingBalance ?? order.shippingAddress['remainingBalance'] ?? 0);
     const dp = Number(pr?.downpaymentAmount ?? order.shippingAddress['downpayment'] ?? 0);
 
+    // Allow follow-up payments for down-payment plans as long as there's a remaining balance,
+    // even if the admin already moved `order.status` to `confirmed`.
+    const isDownPlan = plan === 'downpayment';
+    const isPaymongoBalanceFollowUp = isDownPlan && rem > 0.01 && orderStatus !== 'cancelled';
+    const isAllowedOrderState =
+      orderStatus === 'pending' ||
+      orderStatus === 'pending_payment_verification' ||
+      isPaymongoBalanceFollowUp;
+
+    if (!isAllowedOrderState) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order not awaiting payment',
+      });
+    }
+
     /** Full payment vs down-payment first charge vs balance settlement (second PayMongo session). */
     let chargePesos: number;
     if (plan === 'downpayment' && ps === 'pending') {
@@ -818,7 +829,7 @@ orderRouter.post(
         }
       }
       chargePesos = dp;
-    } else if (plan === 'downpayment' && ps === 'downpayment_received') {
+    } else if (plan === 'downpayment' && rem > 0.01 && ps !== 'pending') {
       // Pay-again stage: allow user-chosen amount (partial payments allowed).
       if (requestedAmountPesos != null) {
         if (!Number.isFinite(requestedAmountPesos) || requestedAmountPesos <= 0.01) {

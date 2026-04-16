@@ -284,7 +284,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '${_policyTermMonths} months HULUGAN (Installments)',
+                    '${_policyTermMonths} months Installment (Installments)',
                     style: GoogleFonts.poppins(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
@@ -390,7 +390,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     }
     if (_orderOption == CheckoutOrderOption.hulugan) {
       return '${noRefund}'
-          '• Hulugan: in-stock items only; ${_huluganDownPercent.toStringAsFixed(0)}% down via Gcash; '
+          '• Installment: in-stock items only; ${_huluganDownPercent.toStringAsFixed(0)}% down via Gcash; '
           '${_huluganInterestPercent.toStringAsFixed(1)}% on the financed balance.\n'
           '• Balance due within $_policyTermMonths months from your first payment; '
           '₱${_policyLateFeePerDay.toStringAsFixed(0)}/day after month $_policyTermMonths until settled.\n'
@@ -829,7 +829,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         setState(() => _loading = false);
         Toast.warning(
           context,
-          'Lay-away needs at least ₱${_layawayDownMin.toStringAsFixed(0)} order total — pick full pay or Hulugan',
+          'Lay-away needs at least ₱${_layawayDownMin.toStringAsFixed(0)} order total — pick full pay or Installment',
         );
         return;
       }
@@ -855,7 +855,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         setState(() => _loading = false);
         Toast.warning(
           context,
-          'Hulugan is for in-stock items only — adjust your cart or choose Lay-away / full pay',
+          'Installment is for in-stock items only — adjust your cart or choose Lay-away / full pay',
         );
         return;
       }
@@ -1355,7 +1355,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
             if (!_canUseAnySplitPlan) ...[
               const SizedBox(height: 8),
               Text(
-                'Split pay needs either ₱3,000+ total (Lay-away) or in-stock items (Hulugan).',
+                'Split pay needs either ₱3,000+ total (Lay-away) or in-stock items (Installment).',
                 style: GoogleFonts.poppins(fontSize: 12, color: CupertinoColors.systemGrey),
               ),
             ],
@@ -1431,7 +1431,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                         DropdownMenuItem(
                           value: CheckoutOrderOption.hulugan,
                           child: Text(
-                            'Hulugan',
+                            'Installment',
                             style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                           ),
                         ),
@@ -1529,7 +1529,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Hulugan (installment)',
+                        'Installment (installment)',
                         style: GoogleFonts.poppins(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,

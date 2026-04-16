@@ -32,6 +32,8 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final DateFormat _dateFmt = DateFormat('d MMM yyyy');
 
+  static const Color _kWalnut = Color(0xFF5C4033);
+
   bool _loading = true;
   bool _downloading = false;
   String? _error;
@@ -192,6 +194,23 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
                   ],
                 ),
               ),
+              pw.SizedBox(height: 16),
+              // Notes: must match the in-app invoice card so printed/downloaded PDFs align.
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.grey100,
+                  borderRadius: pw.BorderRadius.circular(6),
+                ),
+                child: pw.Text(
+                  'Notes: Please pay your invoice within 6 months of receiving it',
+                  style: pw.TextStyle(
+                    fontSize: 11,
+                    color: PdfColors.grey700,
+                  ),
+                ),
+              ),
             ],
           );
         },
@@ -209,6 +228,10 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
 
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
+        leading: CupertinoNavigationBarBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          color: _kWalnut,
+        ),
         middle: Text('Invoice', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
         trailing: CupertinoButton(
           padding: EdgeInsets.zero,
@@ -247,19 +270,16 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
                                     children: [
                                       Row(
                                         children: [
-                                          const Icon(
-                                            CupertinoIcons.paperplane_fill,
-                                            size: 22,
-                                            color: Color(0xFF5B63D3),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            'SaasAble',
-                                            style: GoogleFonts.poppins(
-                                              fontSize: 36 * 0.72,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: 0.1,
-                                              color: const Color(0xFF5B63D3),
+                                          // Wood Home logo (replaces the legacy wordmark).
+                                          Image.asset(
+                                            'assets/images/logo2.png',
+                                            width: 48,
+                                            height: 48,
+                                            fit: BoxFit.contain,
+                                            errorBuilder: (context, _, __) => const Icon(
+                                              CupertinoIcons.cube_box,
+                                              size: 28,
+                                              color: _kWalnut,
                                             ),
                                           ),
                                         ],
@@ -325,24 +345,96 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
                                         ),
                                       ),
                                       const SizedBox(height: 12),
-                                      Text(
-                                        'Invoice: #${inv?['invoiceNumber'] ?? widget.orderId}',
-                                        style: GoogleFonts.poppins(fontSize: 12, color: const Color(0xFF1F2937)),
+                                      Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            TextSpan(
+                                              text: 'Invoice: ',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text: '#${inv?['invoiceNumber'] ?? widget.orderId}',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                       const SizedBox(height: 2),
-                                      Text(
-                                        'Invoice Date: ${_safeDate(order['createdAt'])}',
-                                        style: GoogleFonts.poppins(fontSize: 12, color: const Color(0xFF1F2937)),
+                                      Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            TextSpan(
+                                              text: 'Invoice Date: ',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text: _safeDate(order['createdAt']),
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                       const SizedBox(height: 2),
-                                      Text(
-                                        'Invoice Amount: ${_currency(order['totalAmount'] as num?)}',
-                                        style: GoogleFonts.poppins(fontSize: 12, color: const Color(0xFF1F2937)),
+                                      Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            TextSpan(
+                                              text: 'Invoice Amount: ',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text: _currency(order['totalAmount'] as num?),
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                       const SizedBox(height: 2),
-                                      Text(
-                                        'Customer ID: #${widget.userId}',
-                                        style: GoogleFonts.poppins(fontSize: 12, color: const Color(0xFF1F2937)),
+                                      Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            TextSpan(
+                                              text: 'Customer ID: ',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text: '#${widget.userId}',
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
@@ -375,7 +467,7 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
                                   ),
                                 ),
                                 Text(
-                                  'AMOUNT (USD)',
+                                  'AMOUNT',
                                   style: GoogleFonts.poppins(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700,
@@ -440,24 +532,28 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
                                   const SizedBox(height: 4),
                                   SizedBox(
                                     width: 170,
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text('Amount Due (USD)',
+                                    child: Text.rich(
+                                      textAlign: TextAlign.right,
+                                      TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text: 'Amount Due ',
                                             style: GoogleFonts.poppins(
                                               fontSize: 12,
                                               fontWeight: FontWeight.w700,
                                               color: const Color(0xFF111827),
-                                            )),
-                                        Text(
-                                          _currency(inv?['totalBalanceDue'] as num?),
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w700,
-                                            color: const Color(0xFF111827),
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                          TextSpan(
+                                            text: _currency(inv?['totalBalanceDue'] as num?),
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                              color: const Color(0xFF111827),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -472,7 +568,7 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                'Notes: Please pay your invoice within 30 days of receiving it',
+                                'Notes: Please pay your invoice within 6 months of receiving it',
                                 style: GoogleFonts.poppins(
                                   fontSize: 11,
                                   color: const Color(0xFF4B5563),

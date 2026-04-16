@@ -335,10 +335,47 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         imageQuality: 85,
       );
       if (!mounted) return;
+      if (x != null) {
+        final bytes = await x.length();
+        if (bytes > 5 * 1024 * 1024) {
+          Toast.warning(context, 'Valid ID image must be 5 MB or smaller.');
+          return;
+        }
+      }
       setState(() => _validIdXFile = x);
     } catch (e) {
       if (!mounted) return;
       Toast.warning(context, 'Could not pick image: $e');
+    }
+  }
+
+  Future<void> _saveCheckoutAddress(AddressEntry entry) async {
+    final user = _auth.currentUser;
+    final resolved = entry.copyWith(
+      id: entry.id.trim().isEmpty
+          ? 'addr_${DateTime.now().millisecondsSinceEpoch}'
+          : entry.id,
+      isDefault: _savedAddresses.isEmpty
+          ? true
+          : entry.isDefault,
+    );
+
+    final next = List<AddressEntry>.from(_savedAddresses);
+    final existingIndex = next.indexWhere((a) => a.id == resolved.id);
+    if (existingIndex >= 0) {
+      next[existingIndex] = resolved;
+    } else {
+      next.add(resolved);
+    }
+
+    setState(() {
+      _savedAddresses = next;
+      _selectedAddressId = resolved.id;
+      _applyAddressToForm(resolved);
+    });
+
+    if (user != null) {
+      await _storage.saveAddresses(user.id, next);
     }
   }
 
@@ -591,7 +628,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
     final currentPhone = currentUser?.phoneNumber ?? _phoneController.text.trim();
 
     final currentEntry = AddressEntry(
-      id: '',
+      id: _selectedAddressId ?? '',
       // Name + contact are read-only (sourced from profile) during address edits.
       fullName: currentFullName,
       phoneNumber: currentPhone,
@@ -611,10 +648,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       builder: (_) => _AddressEditorSheet(
         entry: currentEntry,
         onSubmit: (updatedEntry) {
-          setState(() {
-            _applyAddressToForm(updatedEntry);
-            _selectedAddressId = null;
-          });
+          _saveCheckoutAddress(updatedEntry);
         },
       ),
     );
@@ -1535,7 +1569,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Upload one clear photo of a government-issued ID. PayMongo opens after you add it.',
+                    'Upload one clear photo of a government-issued ID. Max file size: 5 MB. PayMongo opens after you add it.',
                     style: GoogleFonts.poppins(
                       fontSize: 12,
                       height: 1.35,

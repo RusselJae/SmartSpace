@@ -2109,6 +2109,13 @@ class _OrderDetailsDialog extends StatelessWidget {
         label: 'Payment Status',
         value: order.shippingAddress['paymentStatus']?.toString() ?? '—',
       ),
+      if (order.status.toLowerCase() == 'cancelled' &&
+          order.shippingAddress['cancellationReason'] != null &&
+          order.shippingAddress['cancellationReason'].toString().trim().isNotEmpty)
+        _DetailRow(
+          label: 'Cancellation reason',
+          value: order.shippingAddress['cancellationReason'].toString(),
+        ),
       if (order.shippingAddress['estimatedDeliveryAt'] != null &&
           order.shippingAddress['estimatedDeliveryAt'].toString().isNotEmpty)
         _DetailRow(

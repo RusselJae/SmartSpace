@@ -4,7 +4,7 @@ import { autoCancelUnpaidOrders } from '../services/order_service';
  * Auto-cancellation job for unpaid orders
  * 
  * This job should be run periodically (every 5-10 minutes) to cancel orders
- * that haven't received payment within 30 minutes.
+ * that haven't received payment within 24 hours.
  * 
  * In production, set up a cron job or use a task scheduler like:
  * - node-cron (npm install node-cron)

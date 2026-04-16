@@ -128,9 +128,19 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
+  bool _isPaymentDefaultCancelled(OrderRecord o) {
+    final status = o.status.toLowerCase();
+    if (status != 'cancelled') return false;
+    return o.shippingAddress['cancellationReason']?.toString() ==
+        'payment_default_non_payment_6_months';
+  }
+
   bool _isIncludedOrder(OrderRecord o) {
     final status = o.status.toLowerCase();
-    return status != 'cancelled' &&
+    final isCancelled = status == 'cancelled';
+    // Count deposit forfeiture as revenue even though the order is cancelled.
+    final includeCancelledForRevenue = _isPaymentDefaultCancelled(o);
+    return (isCancelled ? includeCancelledForRevenue : true) &&
         !o.createdAt.isBefore(_periodStart) &&
         o.createdAt.isBefore(_periodEnd);
   }
@@ -146,7 +156,17 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
       .toList()
     ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-  double get _monthSales => _monthOrders.fold<double>(0, (s, o) => s + o.totalAmount);
+  double _orderRevenueForSalesReports(OrderRecord o) {
+    if (!_isPaymentDefaultCancelled(o)) return o.totalAmount;
+
+    final raw = o.shippingAddress['downpayment'];
+    if (raw is num) return raw.toDouble();
+    final parsed = double.tryParse(raw?.toString() ?? '');
+    return parsed ?? 0.0;
+  }
+
+  double get _monthSales =>
+      _monthOrders.fold<double>(0, (s, o) => s + _orderRevenueForSalesReports(o));
 
   Map<String, Product> get _productsById => {
         for (final p in _products) p.id: p,
@@ -240,12 +260,17 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     return rows.take(10).toList();
   }
 
-  bool _isCancelled(OrderRecord o) => o.status.toLowerCase() == 'cancelled';
-
   double _revenueInRange(DateTime start, DateTime end) {
     return _orders
-        .where((o) => !_isCancelled(o) && !o.createdAt.isBefore(start) && o.createdAt.isBefore(end))
-        .fold<double>(0, (sum, o) => sum + o.totalAmount);
+        .where((o) {
+          final status = o.status.toLowerCase();
+          final isCancelled = status == 'cancelled';
+          final includeCancelledForRevenue = _isPaymentDefaultCancelled(o);
+          return (!isCancelled || includeCancelledForRevenue) &&
+              !o.createdAt.isBefore(start) &&
+              o.createdAt.isBefore(end);
+        })
+        .fold<double>(0, (sum, o) => sum + _orderRevenueForSalesReports(o));
   }
 
   List<AdminSeriesPoint> get _dailyTrendPoints {

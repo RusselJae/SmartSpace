@@ -4,6 +4,7 @@ import { getPool } from '../config/database';
 import { OrderRecord } from '../models/order_record';
 import { parseJsonRecord, parseStringArray } from '../utils/parser';
 import { EmailService } from './email_service';
+import { ensureInvoiceTables } from './order_invoice_service';
 
 type OrderRow = RowDataPacket & {
   readonly id: string;
@@ -30,6 +31,11 @@ type OrderRow = RowDataPacket & {
   readonly payment_status: string;
   readonly payment_proof_url: string | null;
   readonly valid_id_proof_url?: string | null;
+  readonly cancellation_reason?: string | null;
+  readonly payment_default_cancelled_at?: Date | string | null;
+  readonly payment_default_warn_2m_sent_at?: Date | string | null;
+  readonly payment_default_warn_80d_sent_at?: Date | string | null;
+  readonly payment_default_warn_90d_sent_at?: Date | string | null;
   /** Set when first PayMongo tranche (down payment) posts — 3-month policy window starts here */
   readonly first_installment_paid_at?: Date | string | null;
   readonly estimated_delivery_at?: Date | string | null;
@@ -95,6 +101,16 @@ const mapOrder = async (row: OrderRow): Promise<OrderRecord> => {
     /** ISO — start of 3-month 0% window (first PayMongo payment) */
     ...(firstInstallmentIso !== undefined ? { firstInstallmentPaidAt: firstInstallmentIso } : {}),
     ...(estimatedDeliveryIso !== undefined ? { estimatedDeliveryAt: estimatedDeliveryIso } : {}),
+    /** Set when an order is automatically cancelled due to payment default. */
+    cancellationReason: row.cancellation_reason ?? undefined,
+    ...(row.payment_default_cancelled_at != null
+      ? {
+          paymentDefaultCancelledAt:
+            row.payment_default_cancelled_at instanceof Date
+              ? row.payment_default_cancelled_at.toISOString()
+              : new Date(row.payment_default_cancelled_at as string).toISOString(),
+        }
+      : {}),
   };
   
   return {
@@ -399,6 +415,7 @@ export const markOrderPaidViaPaymongo = async (
   const plan = row.payment_plan ?? null;
   const paidAmount = options?.amountPesos ?? null;
   const eventId = options?.eventId ?? null;
+  const isDownPlan = plan === 'downpayment';
 
   // Idempotency guard: if we already processed this exact webhook event for a PayMongo order,
   // don't subtract remaining again.
@@ -407,7 +424,6 @@ export const markOrderPaidViaPaymongo = async (
     return;
   }
 
-  const isDownPlan = plan === 'downpayment';
   const looksLikeInstallmentStructure = rem > 0.01 && dp < orderTotal - 0.01;
 
   /**
@@ -438,6 +454,25 @@ export const markOrderPaidViaPaymongo = async (
     // Lay-away / one-shot full pay: ETA starts at full settlement (Hulugan one-shot included).
     await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
     console.log(`✅ PayMongo full payment recorded for order ${orderId}`);
+
+    // Invoice updates only apply to PayMongo downpayment plans.
+    if (isDownPlan && paidAmount != null && paidAmount > 0.01) {
+      await ensureInvoiceTables();
+      const safePrefix = orderId.substring(0, 8);
+      const safeSuffix = (eventId ?? Date.now().toString())
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .slice(0, 16);
+      const paymentEventId = `pe_${safePrefix}_${safeSuffix}`;
+      const eventType = row.payment_status === 'pending' ? 'downpayment' : 'installment';
+
+      await pool.query(
+        `INSERT INTO order_payment_events (id, order_id, event_type, amount, paymongo_event_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [paymentEventId, orderId, eventType, paidAmount, eventId],
+      );
+      await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
+    }
+
     if (previousStatus !== 'confirmed') {
       EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
         console.error('Failed to send order confirmation email (PayMongo):', error);
@@ -466,6 +501,22 @@ export const markOrderPaidViaPaymongo = async (
         }
       }
       console.log(`✅ PayMongo down payment recorded for order ${orderId} (balance still due)`);
+
+      if (isDownPlan) {
+        await ensureInvoiceTables();
+        const safePrefix = orderId.substring(0, 8);
+        const safeSuffix = (eventId ?? Date.now().toString())
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .slice(0, 16);
+        const paymentEventId = `pe_${safePrefix}_${safeSuffix}`;
+
+        await pool.query(
+          `INSERT INTO order_payment_events (id, order_id, event_type, amount, paymongo_event_id)
+           VALUES (?, ?, 'downpayment', ?, ?)`,
+          [paymentEventId, orderId, paidAmount, eventId],
+        );
+        await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
+      }
       return;
     }
 
@@ -492,6 +543,23 @@ export const markOrderPaidViaPaymongo = async (
       // Lay-away second tranche (or non-hulugan): ETA from final payment; hulugan keeps DP-based ETA.
       await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
       console.log(`✅ PayMongo balance settled for order ${orderId}`);
+
+      if (isDownPlan) {
+        await ensureInvoiceTables();
+        const safePrefix = orderId.substring(0, 8);
+        const safeSuffix = (eventId ?? Date.now().toString())
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .slice(0, 16);
+        const paymentEventId = `pe_${safePrefix}_${safeSuffix}`;
+
+        await pool.query(
+          `INSERT INTO order_payment_events (id, order_id, event_type, amount, paymongo_event_id)
+           VALUES (?, ?, 'installment', ?, ?)`,
+          [paymentEventId, orderId, paidAmount, eventId],
+        );
+        await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
+      }
+
       if (previousStatus !== 'confirmed') {
         EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
           console.error('Failed to send order confirmation email (PayMongo balance):', error);
@@ -542,6 +610,22 @@ export const markOrderPaidViaPaymongo = async (
         );
         await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
         console.log(`✅ PayMongo balance settled for order ${orderId} (rounding during partial)`);
+      }
+
+      if (isDownPlan) {
+        await ensureInvoiceTables();
+        const safePrefix = orderId.substring(0, 8);
+        const safeSuffix = (eventId ?? Date.now().toString())
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .slice(0, 16);
+        const paymentEventId = `pe_${safePrefix}_${safeSuffix}`;
+
+        await pool.query(
+          `INSERT INTO order_payment_events (id, order_id, event_type, amount, paymongo_event_id)
+           VALUES (?, ?, 'installment', ?, ?)`,
+          [paymentEventId, orderId, paidAmount, eventId],
+        );
+        await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
       }
 
       return;
@@ -998,15 +1082,16 @@ export const updateOrderStatus = async (orderId: string, status: string): Promis
 
   // Delivery gating for admin-managed transitions.
   if (status === 'shipped' || status === 'delivered') {
-    if (isLayaway && !paymentCompleted) {
-      throw new Error('Lay-away orders can only be shipped/delivered after full payment.');
-    }
-    if (isHulugan) {
-      // After first PayMongo down payment, payment_status becomes `downpayment_received`.
-      const hasDownpayment = paymentStatus === 'downpayment_received' || paymentStatus === 'completed';
-      if (!hasDownpayment) {
-        throw new Error('Hulugan orders can only be shipped/delivered after the down payment.');
+    // Shipping and delivery must wait until the order is fully settled.
+    // A down payment is enough for confirmation, but not for fulfillment.
+    if (!paymentCompleted) {
+      if (isLayaway) {
+        throw new Error('Lay-away orders can only be shipped/delivered after full payment.');
       }
+      if (isHulugan) {
+        throw new Error('Hulugan orders can only be shipped/delivered after the remaining balance is fully paid.');
+      }
+      throw new Error('Orders can only be shipped/delivered after payment is completed.');
     }
   }
 
@@ -1086,9 +1171,22 @@ export const updateOrderStatus = async (orderId: string, status: string): Promis
   }
 
   if (status === 'cancelled' && previousStatus !== 'cancelled') {
-    EmailService.sendOrderCancelledEmail(userId, orderId).catch((error) => {
-      console.error('Failed to send cancelled-order email:', error);
-    });
+    const cancellationReason = orderRows[0].cancellation_reason ?? null;
+    const downpaymentAmount = Number(orderRows[0].downpayment_amount ?? 0);
+
+    if (cancellationReason === 'payment_default_non_payment_6_months') {
+      EmailService.sendPaymentDefaultCancelledEmail({
+        userId,
+        orderId,
+        depositAmount: downpaymentAmount,
+      }).catch((error) => {
+        console.error('Failed to send payment-default cancellation email:', error);
+      });
+    } else {
+      EmailService.sendOrderCancelledEmail(userId, orderId).catch((error) => {
+        console.error('Failed to send cancelled-order email:', error);
+      });
+    }
 
     EmailService.sendAdminEventEmail({
       title: 'Order cancelled',
@@ -1098,6 +1196,7 @@ export const updateOrderStatus = async (orderId: string, status: string): Promis
         { label: 'User ID', value: userId },
         { label: 'Previous status', value: previousStatus },
         { label: 'Amount', value: `PHP ${orderTotal.toFixed(2)}` },
+        { label: 'Cancellation reason', value: cancellationReason ?? 'n/a' },
       ],
     }).catch((error) => {
       console.error('Failed to send admin cancellation alert email:', error);
@@ -1250,8 +1349,8 @@ export const autoCancelUnpaidOrders = async (): Promise<number> => {
   const pool = getPool();
   const hasReminderCol = await ensureCheckoutReminderColumn(pool);
 
-  const reminderMin = parseEnvPositiveInt('ORDER_PAYMENT_REMINDER_MINUTES', 15);
-  const cancelMin = parseEnvPositiveInt('ORDER_PAYMENT_HOLD_RELEASE_MINUTES', 45);
+  const reminderMin = parseEnvPositiveInt('ORDER_PAYMENT_REMINDER_MINUTES', 12 * 60);
+  const cancelMin = parseEnvPositiveInt('ORDER_PAYMENT_HOLD_RELEASE_MINUTES', 24 * 60);
   if (cancelMin <= reminderMin) {
     console.warn(
       `ORDER_PAYMENT_HOLD_RELEASE_MINUTES (${cancelMin}) should be greater than ORDER_PAYMENT_REMINDER_MINUTES (${reminderMin})`,

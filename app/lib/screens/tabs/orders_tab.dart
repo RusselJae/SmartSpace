@@ -1623,11 +1623,10 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
                   value: '₱${_remainingBalance.toStringAsFixed(2)}',
                 ),
                 const SizedBox(height: 10),
-                _requiredLabel(widget.allowCustomAmount ? 'Amount to pay' : 'Amount to pay now'),
+                _requiredLabel('Amount'),
                 const SizedBox(height: 6),
                 TextField(
                   controller: _amountController,
-                  enabled: widget.allowCustomAmount,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
                     filled: true,

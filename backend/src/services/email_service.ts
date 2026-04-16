@@ -4,6 +4,7 @@ import sgMail from '@sendgrid/mail';
 import { Resend } from 'resend';
 import { config } from '../config/env';
 import { getPool } from '../config/database';
+import { buildUpdatedOrderInvoiceHtml } from './order_invoice_service';
 
 type UserRow = RowDataPacket & {
   readonly email: string;
@@ -477,6 +478,133 @@ ${isCOD ? `<p style="margin:0;font-size:18px;line-height:1.45;color:#333;">Remai
     } catch (error) {
       console.error('❌ Failed to send payment confirmation email:', error);
       // Don't throw - email failure shouldn't break payment confirmation
+    }
+  }
+
+  /**
+   * Sends the customer's single updating invoice (same invoice number per order)
+   * after each payment and as late-fees progress.
+   */
+  static async sendUpdatedInvoiceEmail(params: {
+    readonly userId: string;
+    readonly orderId: string;
+  }): Promise<void> {
+    try {
+      const { userId, orderId } = params;
+      const pool = getPool();
+      const [rows] = await pool.query<UserRow[]>(
+        'SELECT email, full_name FROM users WHERE id = ? LIMIT 1',
+        [userId],
+      );
+      if (rows.length === 0) return;
+
+      const user = rows[0];
+      const invoice = await buildUpdatedOrderInvoiceHtml(orderId);
+      const shortId = orderId.substring(0, 8).toUpperCase();
+
+      const htmlBody = buildWoodHomeTemplate({
+        heading: invoice.invoiceTitle,
+        greeting: `Hi ${user.full_name},`,
+        intro: `Updated Invoice for Order #${shortId} • ${escapeHtml(invoice.version.split('_').join(' '))}`,
+        bodyHtml: invoice.bodyHtml,
+      });
+
+      await sendEmail({
+        to: user.email,
+        subject: invoice.subject,
+        html: htmlBody,
+        text: `Updated invoice for Order #${shortId}. Balance due: ${invoice.totalBalanceDue.toFixed(2)}.`,
+      });
+    } catch (error) {
+      console.error('❌ Failed to send updated invoice email:', error);
+    }
+  }
+
+  /**
+   * Reminder email at payment default milestones (2 months, 80 days, 90 days).
+   */
+  static async sendPaymentDefaultWarningEmail(params: {
+    readonly userId: string;
+    readonly orderId: string;
+    readonly payByAt: Date;
+    readonly depositAmount: number;
+    readonly remainingBalance: number;
+  }): Promise<void> {
+    try {
+      const pool = getPool();
+      const [rows] = await pool.query<UserRow[]>(
+        'SELECT email, full_name FROM users WHERE id = ? LIMIT 1',
+        [params.userId],
+      );
+      if (rows.length === 0) return;
+
+      const user = rows[0];
+      const shortId = params.orderId.substring(0, 8).toUpperCase();
+      const payByStr = params.payByAt.toISOString().slice(0, 10);
+
+      const subject = `Payment default warning — #${shortId}`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Payment Default Reminder',
+        greeting: `Hi ${user.full_name},`,
+        intro: `Your remaining balance must be paid by ${escapeHtml(payByStr)}.`,
+        bodyHtml: `
+          <p style="margin:0;font-size:20px;line-height:1.45;color:#333;">Order <strong>#${escapeHtml(shortId)}</strong></p>
+          <p style="margin:10px 0 0;font-size:18px;line-height:1.45;color:#333;">Deposit already received: <strong>₱${escapeHtml(params.depositAmount.toFixed(2))}</strong></p>
+          <p style="margin:10px 0 0;font-size:18px;line-height:1.45;color:#333;">Balance currently due: <strong>₱${escapeHtml(params.remainingBalance.toFixed(2))}</strong></p>
+          <p style="margin:16px 0 0;font-size:18px;line-height:1.55;color:#333;">
+            Pay by <strong>${escapeHtml(payByStr)}</strong> or your order will be automatically cancelled and your deposit will be forfeited as a restocking/holding fee.
+          </p>
+        `,
+      });
+
+      await sendEmail({
+        to: user.email,
+        subject,
+        html: htmlBody,
+        text: `Order #${shortId}: pay by ${payByStr} or it will be cancelled and your deposit forfeited.`,
+      });
+    } catch (error) {
+      console.error('❌ Failed to send payment default warning email:', error);
+    }
+  }
+
+  /**
+   * Cancellation email for non-payment default (deposit forfeiture).
+   */
+  static async sendPaymentDefaultCancelledEmail(params: {
+    readonly userId: string;
+    readonly orderId: string;
+    readonly depositAmount: number;
+  }): Promise<void> {
+    try {
+      const pool = getPool();
+      const [rows] = await pool.query<UserRow[]>(
+        'SELECT email, full_name FROM users WHERE id = ? LIMIT 1',
+        [params.userId],
+      );
+      if (rows.length === 0) return;
+      const user = rows[0];
+
+      const shortId = params.orderId.substring(0, 8).toUpperCase();
+      const subject = `Order cancelled — payment default #${shortId}`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Order Cancelled (Payment Default)',
+        greeting: `Hi ${user.full_name},`,
+        intro: 'This order was automatically cancelled due to non-payment after the policy period.',
+        bodyHtml: `<p style="margin:0;font-size:20px;line-height:1.45;color:#333;">Order <strong>#${escapeHtml(shortId)}</strong></p>
+          <p style="margin:10px 0 0;font-size:18px;line-height:1.45;color:#333;">
+            Your deposit of <strong>₱${escapeHtml(params.depositAmount.toFixed(2))}</strong> was forfeited as a restocking/holding fee.
+          </p>`,
+      });
+
+      await sendEmail({
+        to: user.email,
+        subject,
+        html: htmlBody,
+        text: `Order #${shortId} was cancelled due to non-payment. Your deposit was forfeited: ₱${params.depositAmount.toFixed(2)}.`,
+      });
+    } catch (error) {
+      console.error('❌ Failed to send payment default cancelled email:', error);
     }
   }
 

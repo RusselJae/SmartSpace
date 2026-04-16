@@ -75,6 +75,14 @@ const initialize = async (): Promise<void> => {
       console.warn('   Install node-cron: npm install node-cron');
       console.warn('   Or manually call the cleanup function periodically');
     }
+
+    // Installment policy: late fees + 6-month default cancellation + invoice updates.
+    try {
+      const { startInstallmentPolicyScheduler } = await import('./jobs/auto_installment_policy_job');
+      startInstallmentPolicyScheduler();
+    } catch (error) {
+      console.warn('⚠️ Could not start installment policy scheduler:', error);
+    }
   } catch (error) {
     console.error('Failed to initialize database connection', error);
     process.exit(1);

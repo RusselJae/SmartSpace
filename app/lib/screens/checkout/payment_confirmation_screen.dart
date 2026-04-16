@@ -295,7 +295,9 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
         // Navigate to success screen
         Navigator.of(context).pushAndRemoveUntil(
           CupertinoPageRoute(
-            builder: (_) => const SuccessScreen(),
+            builder: (_) => SuccessScreen(
+              invoiceOrderId: widget.orderId,
+            ),
           ),
           (route) => route.isFirst,
         );

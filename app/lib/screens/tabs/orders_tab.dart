@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:flutter/cupertino.dart';
@@ -55,6 +56,24 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   bool _loading = true;
   String? _error;
   String _searchQuery = '';
+  final List<Timer> _postResumeRefreshTimers = <Timer>[];
+
+  Future<void> _openOrderInvoice({
+    required String orderId,
+    required String userId,
+    required bool download,
+  }) async {
+    final url = _db.getOrderInvoiceUrl(orderId: orderId, userId: userId);
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+
+    await launchUrl(
+      uri,
+      // "View" should keep the customer inside the app, with browser controls.
+      // "Download" routes to the platform browser where they can save/share freely.
+      mode: download ? LaunchMode.externalApplication : LaunchMode.inAppWebView,
+    );
+  }
   
   // Selected filter value matching admin panel style.
   // 'all', 'to_pay', 'to_ship', 'to_deliver', 'confirm', 'cancelled'
@@ -92,6 +111,10 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    for (final timer in _postResumeRefreshTimers) {
+      timer.cancel();
+    }
+    _postResumeRefreshTimers.clear();
     _searchController.dispose();
     super.dispose();
   }
@@ -102,6 +125,23 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     // webhook-updated payment statuses/remaining balance are reflected quickly.
     if (state == AppLifecycleState.resumed && mounted) {
       _loadOrders(showLoader: false);
+      _schedulePostResumeRefreshes();
+    }
+  }
+
+  void _schedulePostResumeRefreshes() {
+    for (final timer in _postResumeRefreshTimers) {
+      timer.cancel();
+    }
+    _postResumeRefreshTimers.clear();
+
+    for (final seconds in const <int>[2, 5, 10]) {
+      _postResumeRefreshTimers.add(
+        Timer(Duration(seconds: seconds), () {
+          if (!mounted) return;
+          _loadOrders(showLoader: false);
+        }),
+      );
     }
   }
 
@@ -488,16 +528,16 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
 
     final List<PopupMenuItem<String>> items = [];
 
-    // Items action - always available
+    // Details action - always available
     items.add(
       PopupMenuItem<String>(
-        value: 'items',
+        value: 'details',
         child: Row(
           children: [
-            Icon(CupertinoIcons.cube_box, size: 18, color: _kWalnut.withValues(alpha: 0.85)),
+            Icon(CupertinoIcons.doc_text, size: 18, color: _kWalnut.withValues(alpha: 0.85)),
             const SizedBox(width: 12),
             Text(
-              'Items',
+              'Details',
               style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500),
             ),
           ],
@@ -530,7 +570,9 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       );
 
       // Only allow cancelling while the order is still awaiting fulfillment.
-      final isStillPreFulfillment = status == 'pending' || status == 'pending_payment_verification';
+      final isStillPreFulfillment = status == 'pending' ||
+          status == 'pending_payment_verification' ||
+          (status == 'confirmed' && remainingBalance > 0.01);
       if (isStillPreFulfillment) {
         items.add(
           PopupMenuItem<String>(
@@ -560,8 +602,8 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   /// Handle order action selection
   void _handleOrderAction(String action, OrderRecord order) {
     switch (action) {
-      case 'items':
-        _showItemsSheet(order);
+      case 'details':
+        _showDetailsSheet(order);
         break;
       case 'cancel':
         // Cancel is available for pre-fulfillment payment states.
@@ -576,17 +618,24 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     }
   }
 
-  /// Show order items in a modal sheet
-  void _showItemsSheet(OrderRecord order) {
+  /// Show order details in a modal sheet.
+  void _showDetailsSheet(OrderRecord order) {
     final products = order.productIds
         .map((id) => _productLookup[id])
         .whereType<Product>()
         .toList();
+    final remainingBalance =
+        parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? 0;
+    final downpayment =
+        parseShippingDouble(order.shippingAddress, 'downpayment') ?? 0;
+    final paymentStatus =
+        order.shippingAddress['paymentStatus']?.toString() ?? 'pending';
+    final currentUser = _auth.currentUser;
 
     showCupertinoModalPopup<void>(
       context: context,
       builder: (_) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
+        height: MediaQuery.of(context).size.height * 0.82,
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -607,7 +656,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Order Items',
+                    'Order Details',
                     style: GoogleFonts.poppins(
                       fontWeight: FontWeight.w600,
                       fontSize: 18,
@@ -635,117 +684,282 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
             ),
             // Items list
             Expanded(
-              child: products.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No products found',
-                        style: GoogleFonts.poppins(
-                          color: const Color(0xFF5F5B56), // Dark grey instead of black54
-                          fontSize: 16,
-                          decoration: TextDecoration.none,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _buildDetailCard(
+                    title: 'Summary',
+                    child: Column(
+                      children: [
+                        _buildDetailRow('Order ID', '#${order.id.substring(0, 8).toUpperCase()}'),
+                        _buildDetailRow('Status', _labelForStatus(order.status)),
+                        _buildDetailRow('Payment status', _labelForStatus(paymentStatus)),
+                        _buildDetailRow('Order total', '₱${order.totalAmount.toStringAsFixed(2)}'),
+                        if (downpayment > 0)
+                          _buildDetailRow('Down payment', '₱${downpayment.toStringAsFixed(2)}'),
+                        if (remainingBalance > 0)
+                          _buildDetailRow('Remaining balance', '₱${remainingBalance.toStringAsFixed(2)}'),
+                        _buildDetailRow('Created', _dateFormat.format(order.createdAt)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildDetailCard(
+                    title: 'Delivery',
+                    child: Column(
+                      children: [
+                        _buildDetailRow('Name', order.shippingAddress['name']?.toString() ?? '—'),
+                        _buildDetailRow('Phone', order.shippingAddress['phone']?.toString() ?? '—'),
+                        _buildDetailRow(
+                          'Address',
+                          [
+                            order.shippingAddress['line1']?.toString() ?? '',
+                            order.shippingAddress['line2']?.toString() ?? '',
+                            order.shippingAddress['city']?.toString() ?? '',
+                            order.shippingAddress['postalCode']?.toString() ?? '',
+                          ].where((s) => s.trim().isNotEmpty).join(', '),
                         ),
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: products.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final product = products[index];
-                        return Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: CupertinoColors.systemGroupedBackground,
-                            borderRadius: BorderRadius.circular(12),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildDetailCard(
+                    title: 'Invoice',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Open the latest invoice for this order. It updates after each payment and late-fee change.',
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            color: const Color(0xFF5F5B56),
+                            height: 1.4,
                           ),
-                          child: Row(
-                            children: [
-                              // Product image
-                              if (product.imageUrls.isNotEmpty)
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(
-                                    product.imageUrls.first,
-                                    width: 60,
-                                    height: 60,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
-                                      width: 60,
-                                      height: 60,
-                                      color: CupertinoColors.systemGrey4,
-                                      child: const Icon(
-                                        CupertinoIcons.photo,
-                                        size: 30,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              else
-                                Container(
-                                  width: 60,
-                                  height: 60,
-                                  decoration: BoxDecoration(
-                                    color: CupertinoColors.systemGrey4,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Icon(
-                                    CupertinoIcons.cube_box,
-                                    size: 30,
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: CupertinoButton(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                color: const Color(0xFFF5EFEA),
+                                borderRadius: BorderRadius.circular(12),
+                                onPressed: currentUser == null
+                                    ? null
+                                    : () async {
+                                        await _openOrderInvoice(
+                                          orderId: order.id,
+                                          userId: currentUser.id,
+                                          download: false,
+                                        );
+                                      },
+                                child: Text(
+                                  'View invoice',
+                                  style: GoogleFonts.poppins(
+                                    color: _kWalnut,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                              const SizedBox(width: 12),
-                              // Product details
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            CupertinoButton(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              color: CupertinoColors.systemGrey6,
+                              borderRadius: BorderRadius.circular(12),
+                              onPressed: currentUser == null
+                                  ? null
+                                  : () async {
+                                      await _openOrderInvoice(
+                                        orderId: order.id,
+                                        userId: currentUser.id,
+                                        download: true,
+                                      );
+                                    },
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    CupertinoIcons.arrow_down_doc,
+                                    size: 18,
+                                    color: _kWalnut.withValues(alpha: 0.9),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Download',
+                                    style: GoogleFonts.poppins(
+                                      color: _kWalnut.withValues(alpha: 0.9),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildDetailCard(
+                    title: 'Products',
+                    child: products.isEmpty
+                        ? Text(
+                            'No products found',
+                            style: GoogleFonts.poppins(
+                              color: const Color(0xFF5F5B56),
+                              fontSize: 14,
+                            ),
+                          )
+                        : Column(
+                            children: List.generate(products.length, (index) {
+                              final product = products[index];
+                              return Padding(
+                                padding: EdgeInsets.only(bottom: index == products.length - 1 ? 0 : 12),
+                                child: Row(
                                   children: [
-                                    Text(
-                                      product.name,
-                                      style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 16,
-                                        color: _kWalnut,
-                                        decoration: TextDecoration.none,
+                                    if (product.imageUrls.isNotEmpty)
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Image.network(
+                                          product.imageUrls.first,
+                                          width: 60,
+                                          height: 60,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => Container(
+                                            width: 60,
+                                            height: 60,
+                                            color: CupertinoColors.systemGrey4,
+                                            child: const Icon(CupertinoIcons.photo, size: 30),
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      Container(
+                                        width: 60,
+                                        height: 60,
+                                        decoration: BoxDecoration(
+                                          color: CupertinoColors.systemGrey4,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: const Icon(CupertinoIcons.cube_box, size: 30),
                                       ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      product.description.isNotEmpty
-                                          ? product.description
-                                          : '${product.category} • ${product.style}',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 13,
-                                        color: const Color(0xFF5F5B56), // Dark grey instead of black54
-                                        decoration: TextDecoration.none,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '₱${product.price.toStringAsFixed(2)}',
-                                      style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 15,
-                                        color: CupertinoColors.label,
-                                        decoration: TextDecoration.none,
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            product.name,
+                                            style: GoogleFonts.poppins(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 15,
+                                              color: _kWalnut,
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            product.description.isNotEmpty
+                                                ? product.description
+                                                : '${product.category} • ${product.style}',
+                                            style: GoogleFonts.poppins(
+                                              fontSize: 12,
+                                              color: const Color(0xFF5F5B56),
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '₱${product.price.toStringAsFixed(2)}',
+                                            style: GoogleFonts.poppins(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
                                 ),
-                              ),
-                            ],
+                              );
+                            }),
                           ),
-                        );
-                      },
-                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildDetailCard({required String title, required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: CupertinoColors.systemGroupedBackground,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w700,
+              fontSize: 15,
+              color: _kWalnut,
+            ),
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                color: const Color(0xFF5F5B56),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value.trim().isEmpty ? '—' : value,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                color: CupertinoColors.label,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _labelForStatus(String raw) {
+    if (raw.trim().isEmpty) return '—';
+    final words = raw.split('_').where((w) => w.isNotEmpty);
+    return words
+        .map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase())
+        .join(' ');
   }
 
   /// Get color for filter (matching admin panel style)

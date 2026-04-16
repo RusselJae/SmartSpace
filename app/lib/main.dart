@@ -157,6 +157,7 @@ class _WoodHomeFurnitureAppState extends State<WoodHomeFurnitureApp> {
                     subtitle: short != null
                         ? 'Payment received. Order #$short will update in Orders.'
                         : 'Payment received. Check Orders for your latest status.',
+                    invoiceOrderId: oid,
                   );
                 },
               ),

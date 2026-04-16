@@ -250,7 +250,12 @@ class MySQLDatabaseService {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       developer.log('❌ API returned error status: ${response.statusCode}');
       developer.log('📄 Response body: ${response.body}');
-      throw Exception('API request failed (${response.statusCode}): ${response.body}');
+      throw Exception(
+        _humanMessageFromErrorPayload(
+          statusCode: response.statusCode,
+          body: response.body,
+        ),
+      );
     }
 
     if (response.statusCode == 204 || response.body.isEmpty) {
@@ -267,6 +272,33 @@ class MySQLDatabaseService {
       }
     }
     return decoded;
+  }
+
+  String _humanMessageFromErrorPayload({
+    required int statusCode,
+    required String body,
+  }) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final msg = decoded['message']?.toString();
+        if (msg != null && msg.trim().isNotEmpty) return msg.trim();
+        final err = decoded['error'];
+        if (err is Map<String, dynamic>) {
+          final errMsg = err['message']?.toString();
+          if (errMsg != null && errMsg.trim().isNotEmpty) return errMsg.trim();
+        }
+      }
+    } catch (_) {
+      // Ignore parse errors — fall back to a generic message.
+    }
+    // Keep it human-facing; detailed payloads are already logged above.
+    if (statusCode >= 500) return 'Server error. Please try again.';
+    if (statusCode == 404) return 'Not found.';
+    if (statusCode == 403) return 'Access denied.';
+    if (statusCode == 401) return 'Please sign in again.';
+    if (statusCode == 400) return 'Request was rejected. Please check your input.';
+    return 'Request failed. Please try again.';
   }
 
   List<Map<String, dynamic>> _asMapList(dynamic value, String context) {
@@ -925,6 +957,17 @@ class MySQLDatabaseService {
     return url;
   }
 
+  String getOrderInvoiceUrl({
+    required String orderId,
+    required String userId,
+  }) {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/orders/$orderId/invoice')
+        .replace(queryParameters: <String, String>{
+      'userId': userId,
+    });
+    return uri.toString();
+  }
+
   /// Creates a PayMongo hosted checkout for a made-to-order required down payment.
   /// Backend validates the allowed range (₱3,000..₱5,000).
   Future<({String checkoutUrl, String requestRef})> createMadeToOrderPaymongoCheckoutSession({
@@ -1034,6 +1077,9 @@ class MySQLDatabaseService {
     if (!_useApi) {
       throw Exception('Made-to-order quote requires API mode.');
     }
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId;
     await _sendRequest(
       method: 'PATCH',
       path: '/orders/made-to-order/requests/$requestId/quote',
@@ -1041,6 +1087,7 @@ class MySQLDatabaseService {
         'quotedTotal': quotedTotal,
         'quotedDownpayment': quotedDownpayment,
         'quotedRemaining': quotedRemaining,
+        if (adminId != null && adminId.trim().isNotEmpty) 'adminId': adminId.trim(),
         if (adminMessage != null && adminMessage.trim().isNotEmpty) 'adminMessage': adminMessage.trim(),
       },
     );
@@ -1054,10 +1101,14 @@ class MySQLDatabaseService {
     if (!_useApi) {
       throw Exception('Made-to-order decline requires API mode.');
     }
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId;
     await _sendRequest(
       method: 'PATCH',
       path: '/orders/made-to-order/requests/$requestId/decline',
       body: {
+        if (adminId != null && adminId.trim().isNotEmpty) 'adminId': adminId.trim(),
         if (adminMessage != null && adminMessage.trim().isNotEmpty) 'adminMessage': adminMessage.trim(),
       },
     );

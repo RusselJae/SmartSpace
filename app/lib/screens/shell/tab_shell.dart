@@ -42,7 +42,7 @@ class TabShell extends StatefulWidget {
   State<TabShell> createState() => _TabShellState();
 }
 
-class _TabShellState extends State<TabShell> {
+class _TabShellState extends State<TabShell> with WidgetsBindingObserver {
   final CartService _cart = CartService();
   final AuthService _auth = AuthService();
   final SupportNotificationsService _supportNotifications = SupportNotificationsService.instance;
@@ -57,6 +57,7 @@ class _TabShellState extends State<TabShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _cart.addListener(_onCartChanged);
     _supportNotifications.unreadCount.addListener(_onCartChanged);
     _customerNotifications.notifications.addListener(_onCartChanged);
@@ -87,6 +88,7 @@ class _TabShellState extends State<TabShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _cart.removeListener(_onCartChanged);
     _supportNotifications.unreadCount.removeListener(_onCartChanged);
     _customerNotifications.notifications.removeListener(_onCartChanged);
@@ -98,6 +100,14 @@ class _TabShellState extends State<TabShell> {
 
   void _onCartChanged() {
     if (mounted) setState(() {});
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _supportNotifications.refresh();
+      _customerNotifications.refresh();
+    }
   }
 
   @override
@@ -148,8 +158,6 @@ class _TabShellState extends State<TabShell> {
       // but the tab button itself acts as an overlay toggle (see onTap).
       const ProfileTab(),
     ];
-
-    final profileTabIndex = tabs.length - 1;
 
     Widget _buildCartBadge() {
       if (cartCount <= 0) return const SizedBox.shrink();

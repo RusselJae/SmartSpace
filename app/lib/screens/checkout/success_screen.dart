@@ -1,6 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../services/auth_service.dart';
+import '../../services/mysql_database_service.dart';
 import '../shell/tab_shell.dart';
 
 /// Order confirmation (thank-you or PayMongo cancel).
@@ -11,6 +15,10 @@ class SuccessScreen extends StatelessWidget {
     this.subtitle,
     /// After PayMongo cancel redirect — neutral screen (not “Thank you”).
     this.paymentCancelled = false,
+    /// When set, enables "View invoice" + "Download" actions.
+    this.invoiceOrderId,
+    /// Optional override. When omitted, the current signed-in user is used.
+    this.invoiceUserId,
   });
 
   /// Optional second line under the title (e.g. PayMongo instructions).
@@ -18,10 +26,34 @@ class SuccessScreen extends StatelessWidget {
 
   final bool paymentCancelled;
 
+  final String? invoiceOrderId;
+  final String? invoiceUserId;
+
+  Future<void> _openInvoice(BuildContext context, {required bool download}) async {
+    final orderId = invoiceOrderId;
+    if (orderId == null || orderId.trim().isEmpty) return;
+
+    final auth = AuthService();
+    final userId = (invoiceUserId ?? auth.currentUser?.id)?.trim();
+    if (userId == null || userId.isEmpty) return;
+
+    final db = MySQLDatabaseService();
+    final url = db.getOrderInvoiceUrl(orderId: orderId.trim(), userId: userId);
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+
+    await launchUrl(
+      uri,
+      mode: download ? LaunchMode.externalApplication : LaunchMode.inAppWebView,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final effectiveSubtitle = subtitle ??
         'Your order has been confirmed and will be processed shortly.';
+    final canShowInvoice =
+        !paymentCancelled && (invoiceOrderId != null && invoiceOrderId!.trim().isNotEmpty);
 
     return CupertinoPageScaffold(
       // Match the screenshot: no top nav chrome; just the success card centered.
@@ -121,6 +153,46 @@ class SuccessScreen extends StatelessWidget {
 
                     const SizedBox(height: 22),
 
+                    if (canShowInvoice) ...[
+                      SizedBox(
+                        width: 240,
+                        child: ElevatedButton(
+                          onPressed: () => _openInvoice(context, download: false),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF5C4033),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            'View invoice',
+                            style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: () => _openInvoice(context, download: true),
+                        child: Text(
+                          'Download invoice',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: const Color(0xFF5C4033),
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                    ],
+
                     // Screenshot-like pill button.
                     SizedBox(
                       width: 190,
@@ -138,11 +210,14 @@ class SuccessScreen extends StatelessWidget {
                           }
                         },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2B2B2B),
-                          foregroundColor: Colors.white,
+                          backgroundColor: const Color(0xFFF5EFEA),
+                          foregroundColor: const Color(0xFF5C4033),
                           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(999),
+                            side: const BorderSide(
+                              color: Color(0xFFE2D6CC),
+                            ),
                           ),
                           elevation: 0,
                         ),

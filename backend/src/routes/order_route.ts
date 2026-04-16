@@ -25,6 +25,7 @@ import { config } from '../config/env';
 import { findUserById } from '../services/user_service';
 import { getLegalContent } from '../services/legal_content_service';
 import { logAdminActivity } from '../services/admin_activity_log_service';
+import { buildUpdatedOrderInvoiceHtml } from '../services/order_invoice_service';
 
 const validIdStorage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -130,6 +131,45 @@ const ensureMadeToOrderRequestsTable = async (): Promise<void> => {
     }
   }
 };
+
+orderRouter.get(
+  '/:id/invoice',
+  asyncHandler(async (req, res) => {
+    const orderId = req.params.id;
+    const normalizedUserId =
+      typeof req.query.userId === 'string' && req.query.userId.trim().length > 0
+        ? req.query.userId.trim()
+        : null;
+
+    const order = await getOrderById(orderId);
+    if (!order) {
+      return res.status(404).type('html').send('<h1>Order not found</h1>');
+    }
+    if (normalizedUserId != null && order.userId !== normalizedUserId) {
+      return res.status(403).type('html').send('<h1>Forbidden</h1>');
+    }
+
+    const invoice = await buildUpdatedOrderInvoiceHtml(orderId);
+    res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${invoice.invoiceTitle}</title>
+</head>
+<body style="margin:0;padding:18px;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#111827;">
+  <div style="max-width:920px;margin:0 auto 18px auto;display:flex;justify-content:flex-end;">
+    <button onclick="window.print()" style="border:1px solid #d1d5db;background:#fff;color:#111827;border-radius:999px;padding:10px 16px;font-weight:700;cursor:pointer;">
+      Print / Save PDF
+    </button>
+  </div>
+  <div style="max-width:920px;margin:0 auto;background:#fff;border-radius:20px;padding:20px;box-shadow:0 10px 32px rgba(0,0,0,.08);">
+    ${invoice.bodyHtml}
+  </div>
+</body>
+</html>`);
+  }),
+);
 
 orderRouter.get(
   '/',
@@ -674,7 +714,14 @@ orderRouter.post(
       return res.status(400).json({ success: false, message: 'Order is not PayMongo' });
     }
 
-    if (order.status !== 'pending' && order.status !== 'pending_payment_verification') {
+    const orderStatus = order.status.toLowerCase();
+    const paymentStatus = (order.shippingAddress['paymentStatus']?.toString() ?? 'pending').toLowerCase();
+    const isPaymongoBalanceFollowUp =
+      paymentStatus == 'downpayment_received' && orderStatus == 'confirmed';
+
+    if (orderStatus != 'pending' &&
+        orderStatus != 'pending_payment_verification' &&
+        !isPaymongoBalanceFollowUp) {
       return res.status(400).json({
         success: false,
         message: 'Order not awaiting payment',

@@ -57,6 +57,16 @@ paymongoReturnRouter.get('/cancel', (req, res) => {
         return;
       }
 
+      // Do not cancel an order that already has a down payment / balance-payment lifecycle.
+      // Closing the browser during "pay again" should simply return the user to the app.
+      if (paymentStatus === 'downpayment_received') {
+        sendCancelToApp(
+          'Payment cancelled',
+          'Balance payment was not completed. Your order is still active and you can try again from Orders.',
+        );
+        return;
+      }
+
       await updateOrderStatus(orderId, 'cancelled');
 
       await pool.query(`UPDATE orders SET payment_status = 'failed', updated_at = NOW() WHERE id = ?`, [

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 
 import '../../../models/support_conversation.dart';
 import '../../../models/support_message.dart';
@@ -431,6 +432,11 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
     );
   }
 
+  String _formatMessageTimestamp(DateTime dt) {
+    final local = dt.toLocal();
+    return DateFormat('MMM d, h:mm a', 'en_US').format(local);
+  }
+
   Widget _buildConversationDetail() {
     final conv = _selected;
 
@@ -485,81 +491,91 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                       itemBuilder: (context, index) {
                         final msg = _messages[index];
                         final isAdmin = msg.senderType == 'admin';
-                        return Align(
-                          alignment:
-                              isAdmin ? Alignment.centerRight : Alignment.centerLeft,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 4),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 10),
-                            constraints: const BoxConstraints(maxWidth: 420),
-                            decoration: BoxDecoration(
-                              color: isAdmin
-                                  ? const Color(0xFF8D6E63)
-                                  : const Color(0xFFF2F2F7),
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: isAdmin
-                                  ? CrossAxisAlignment.end
-                                  : CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (msg.attachmentUrl != null)
-                                  if (msg.attachmentType == 'image')
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: Image.network(
-                                        msg.attachmentUrl!,
-                                        width: 220,
-                                        height: 160,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) {
-                                          return Container(
-                                            width: 220,
-                                            height: 160,
-                                            color: Colors.black12,
-                                            alignment: Alignment.center,
-                                            child: const Icon(Icons.broken_image),
-                                          );
-                                        },
-                                      ),
-                                    )
-                                  else
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.attach_file, size: 18),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          msg.attachmentFilename ?? 'Attachment',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.copyWith(
-                                                color:
-                                                    isAdmin ? Colors.white : Colors.black,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
+                        final bubble = Container(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          constraints: const BoxConstraints(maxWidth: 420),
+                          decoration: BoxDecoration(
+                            color: isAdmin ? const Color(0xFF8D6E63) : const Color(0xFFF2F2F7),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Column(
+                            crossAxisAlignment:
+                                isAdmin ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (msg.attachmentUrl != null)
+                                if (msg.attachmentType == 'image')
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Image.network(
+                                      msg.attachmentUrl!,
+                                      width: 220,
+                                      height: 160,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return Container(
+                                          width: 220,
+                                          height: 160,
+                                          color: Colors.black12,
+                                          alignment: Alignment.center,
+                                          child: const Icon(Icons.broken_image),
+                                        );
+                                      },
                                     ),
-                                if (msg.body.trim().isNotEmpty) ...[
-                                  if (msg.attachmentUrl != null) const SizedBox(height: 8),
-                                  Text(
-                                    msg.body,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(
-                                          color: isAdmin ? Colors.white : Colors.black,
-                                        ),
+                                  )
+                                else
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.attach_file, size: 18),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        msg.attachmentFilename ?? 'Attachment',
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                              color: isAdmin ? Colors.white : Colors.black,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
                                   ),
-                                ],
+                              if (msg.body.trim().isNotEmpty) ...[
+                                if (msg.attachmentUrl != null) const SizedBox(height: 8),
+                                Text(
+                                  msg.body,
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: isAdmin ? Colors.white : Colors.black,
+                                      ),
+                                ),
                               ],
-                            ),
+                            ],
+                          ),
+                        );
+
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Text(
+                                  _formatMessageTimestamp(msg.createdAt),
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: Colors.grey[600],
+                                        fontSize: 11,
+                                      ),
+                                ),
+                              ),
+                              Align(
+                                alignment:
+                                    isAdmin ? Alignment.centerRight : Alignment.centerLeft,
+                                child: bubble,
+                              ),
+                            ],
                           ),
                         );
                       },

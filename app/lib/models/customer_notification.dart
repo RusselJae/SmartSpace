@@ -17,6 +17,26 @@ class CustomerNotification {
   final bool isRead;
   final DateTime createdAt;
 
+  CustomerNotification copyWith({
+    String? id,
+    String? type,
+    String? title,
+    String? body,
+    Map<String, String>? data,
+    bool? isRead,
+    DateTime? createdAt,
+  }) {
+    return CustomerNotification(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      title: title ?? this.title,
+      body: body ?? this.body,
+      data: data ?? this.data,
+      isRead: isRead ?? this.isRead,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
   factory CustomerNotification.fromJson(Map<String, dynamic> json) {
     return CustomerNotification(
       id: json['id']?.toString() ?? '',

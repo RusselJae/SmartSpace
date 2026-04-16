@@ -265,12 +265,23 @@ class AdminNotificationsService {
     if (adminId == null || adminId.trim().isEmpty) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final inventoryIds = snapshot.value.items
-        .where((i) => i.type == 'inventory')
-        .map((i) => i.id.split(':').length == 2 ? i.id.split(':')[1] : '')
+    // IMPORTANT:
+    // Use the live product list instead of `snapshot.items` so the badge clears
+    // even when the UI only renders a subset of notifications.
+    final db = MySQLDatabaseService();
+    await db.initialize();
+    final products = await db.getAllProducts();
+    final inventoryIds = products
+        .where(
+          (p) =>
+              p.inventoryQty > 0 &&
+              p.inventoryQty <= lowStockThreshold &&
+              !p.isArchived,
+        )
+        .map((p) => p.id.trim())
         .where((id) => id.isNotEmpty)
         .toSet()
-        .toList();
+        .toList(growable: false);
     await prefs.setStringList(_seenLowStockKey(adminId: adminId), inventoryIds);
     await refresh();
   }
@@ -280,11 +291,18 @@ class AdminNotificationsService {
     await auth.initialize();
     final adminId = auth.currentAdminId ?? auth.currentEmail;
     if (adminId == null || adminId.trim().isEmpty) return;
-    final cancelledIds = snapshot.value.items
-        .where((i) => i.id.startsWith('order_cancelled:'))
-        .map((i) => i.id.split(':').length == 2 ? i.id.split(':')[1] : '')
+    // IMPORTANT:
+    // The snapshot only includes a capped list of items; marking "seen" from that
+    // can leave old cancelled orders unseen and keep the red badge stuck on.
+    final db = MySQLDatabaseService();
+    await db.initialize();
+    final orders = await db.getAllOrders();
+    final cancelledIds = orders
+        .where((o) => o.status.toLowerCase() == 'cancelled')
+        .map((o) => o.id.trim())
         .where((id) => id.isNotEmpty)
-        .toList();
+        .toSet()
+        .toList(growable: false);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(
       _seenCancelledOrdersKey(adminId: adminId),

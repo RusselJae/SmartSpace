@@ -53,6 +53,9 @@ class CustomerNotificationsService {
     final auth = AuthService();
     final user = auth.currentUser;
     if (user == null) return;
+    notifications.value = notifications.value
+        .map((n) => n.id == notificationId ? n.copyWith(isRead: true) : n)
+        .toList(growable: false);
     final db = MySQLDatabaseService();
     await db.initialize();
     await db.markUserNotificationRead(user.id, notificationId: notificationId);
@@ -63,6 +66,9 @@ class CustomerNotificationsService {
     final auth = AuthService();
     final user = auth.currentUser;
     if (user == null) return;
+    notifications.value = notifications.value
+        .map((n) => n.copyWith(isRead: true))
+        .toList(growable: false);
     final db = MySQLDatabaseService();
     await db.initialize();
     await db.markUserNotificationRead(user.id);

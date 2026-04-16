@@ -968,6 +968,20 @@ class MySQLDatabaseService {
     return uri.toString();
   }
 
+  Future<Map<String, dynamic>> getOrderInvoiceData({
+    required String orderId,
+    required String userId,
+  }) async {
+    if (!_useApi) {
+      throw Exception('Invoice requires API mode.');
+    }
+    final data = await _sendRequest(
+      method: 'GET',
+      path: '/orders/$orderId/invoice-data?userId=${Uri.encodeComponent(userId)}',
+    );
+    return _asMap(data, 'invoice data');
+  }
+
   /// Creates a PayMongo hosted checkout for a made-to-order required down payment.
   /// Backend validates the allowed range (₱3,000..₱5,000).
   Future<({String checkoutUrl, String requestRef})> createMadeToOrderPaymongoCheckoutSession({

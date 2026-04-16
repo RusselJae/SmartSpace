@@ -70,7 +70,30 @@ const mapItem = (row: UserNotificationRow): UserNotificationItem => ({
   type: row.type,
   title: row.title,
   body: row.body,
-  data: row.data_json ? (JSON.parse(row.data_json) as Record<string, string>) : {},
+  // MySQL JSON columns may come back as:
+  // - string (JSON text)
+  // - object (already parsed by driver)
+  // - null
+  // Handle all forms safely to avoid `"[object Object]" is not valid JSON`.
+  data: (() => {
+    const raw = row.data_json;
+    if (raw == null) return {};
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed != null && typeof parsed === 'object') {
+          return parsed as Record<string, string>;
+        }
+      } catch (_) {
+        return {};
+      }
+      return {};
+    }
+    if (typeof raw === 'object') {
+      return raw as Record<string, string>;
+    }
+    return {};
+  })(),
   isRead: Boolean(row.is_read),
   createdAt: row.created_at ?? new Date(),
 });

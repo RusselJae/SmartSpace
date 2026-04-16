@@ -13,6 +13,7 @@ import '../../services/mysql_database_service.dart';
 import '../../widgets/toast.dart';
 import '../../widgets/underline_filter_bar.dart';
 import '../../utils/order_payment_balance.dart';
+import '../checkout/order_invoice_screen.dart';
 import '../views/sign_in.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -63,15 +64,14 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     required String userId,
     required bool download,
   }) async {
-    final url = _db.getOrderInvoiceUrl(orderId: orderId, userId: userId);
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-
-    await launchUrl(
-      uri,
-      // "View" should keep the customer inside the app, with browser controls.
-      // "Download" routes to the platform browser where they can save/share freely.
-      mode: download ? LaunchMode.externalApplication : LaunchMode.inAppWebView,
+    await Navigator.of(context).push(
+      CupertinoPageRoute(
+        builder: (_) => OrderInvoiceScreen(
+          orderId: orderId,
+          userId: userId,
+          autoDownload: download,
+        ),
+      ),
     );
   }
   
@@ -1641,15 +1641,35 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
   final TextEditingController _amountController = TextEditingController();
   bool _submitting = false;
 
+  String get _paymentStatus {
+    return widget.order.shippingAddress['paymentStatus']?.toString() ?? 'pending';
+  }
+
+  double get _downpaymentAmount {
+    return parseShippingDouble(widget.order.shippingAddress, 'downpayment') ?? 0;
+  }
+
+  bool get _isFirstDownpaymentCharge {
+    final plan = widget.order.shippingAddress['paymentPlan']?.toString();
+    return plan == 'downpayment' && _paymentStatus == 'pending';
+  }
+
   double get _remainingBalance {
     return parseShippingDouble(widget.order.shippingAddress, 'remainingBalance') ??
         widget.order.totalAmount;
   }
 
+  double get _initialChargeAmount {
+    if (_isFirstDownpaymentCharge && _downpaymentAmount > 0.01) {
+      return _downpaymentAmount;
+    }
+    return _remainingBalance;
+  }
+
   @override
   void initState() {
     super.initState();
-    _amountController.text = _remainingBalance.toStringAsFixed(2);
+    _amountController.text = _initialChargeAmount.toStringAsFixed(2);
   }
 
   @override
@@ -1666,12 +1686,16 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
     }
 
     final parsed = double.tryParse(_amountController.text.replaceAll(',', '').trim());
-    if (parsed == null || parsed <= 0) {
+    final amountToPay = widget.allowCustomAmount
+        ? (() {
+            if (parsed == null || parsed <= 0) return 0.0;
+            return parsed > _remainingBalance ? _remainingBalance : parsed;
+          })()
+        : _initialChargeAmount;
+    if (amountToPay <= 0.01) {
       Toast.warning(context, 'Enter a valid amount to pay');
       return;
     }
-
-    final amountToPay = parsed > _remainingBalance ? _remainingBalance : parsed;
     setState(() => _submitting = true);
     try {
       final url = await widget.db.createPaymongoCheckoutSession(
@@ -1841,6 +1865,7 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
                 const SizedBox(height: 6),
                 TextField(
                   controller: _amountController,
+                  readOnly: !widget.allowCustomAmount,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
                     filled: true,
@@ -1857,6 +1882,14 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
                   const SizedBox(height: 6),
                   Text(
                     'You can pay any amount up to the remaining balance.',
+                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _isFirstDownpaymentCharge
+                        ? 'Initial down payment is fixed by your selected plan.'
+                        : 'Amount is fixed for this payment step.',
                     style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade700),
                   ),
                 ],

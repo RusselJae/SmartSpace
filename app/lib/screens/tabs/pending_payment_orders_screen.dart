@@ -147,15 +147,21 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
         return;
       }
       try {
+        final paymentStatus = order.shippingAddress['paymentStatus']?.toString();
+        final isFollowUp = paymentStatus == 'downpayment_received';
         final maxPayable = _getPaymentAmount(order);
-        final selectedAmount = await _promptForPaymongoAmount(maxPesos: maxPayable);
-        if (selectedAmount == null) {
-          if (mounted) Toast.info(context, 'Payment cancelled');
-          return;
+        double? selectedAmount;
+        if (isFollowUp) {
+          selectedAmount = await _promptForPaymongoAmount(maxPesos: maxPayable);
+          if (selectedAmount == null) {
+            if (mounted) Toast.info(context, 'Payment cancelled');
+            return;
+          }
         }
         final url = await _db.createPaymongoCheckoutSession(
           orderId: order.id,
           userId: user.id,
+          // First PayMongo charge is server-fixed; follow-up allows custom amount.
           amountPesos: selectedAmount,
         );
         if (!mounted) return;

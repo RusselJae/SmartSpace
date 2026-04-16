@@ -1,10 +1,9 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/auth_service.dart';
-import '../../services/mysql_database_service.dart';
+import 'order_invoice_screen.dart';
 import '../shell/tab_shell.dart';
 
 /// Order confirmation (thank-you or PayMongo cancel).
@@ -37,14 +36,14 @@ class SuccessScreen extends StatelessWidget {
     final userId = (invoiceUserId ?? auth.currentUser?.id)?.trim();
     if (userId == null || userId.isEmpty) return;
 
-    final db = MySQLDatabaseService();
-    final url = db.getOrderInvoiceUrl(orderId: orderId.trim(), userId: userId);
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-
-    await launchUrl(
-      uri,
-      mode: download ? LaunchMode.externalApplication : LaunchMode.inAppWebView,
+    await Navigator.of(context).push(
+      CupertinoPageRoute(
+        builder: (_) => OrderInvoiceScreen(
+          orderId: orderId.trim(),
+          userId: userId,
+          autoDownload: download,
+        ),
+      ),
     );
   }
 

@@ -172,6 +172,60 @@ orderRouter.get(
 );
 
 orderRouter.get(
+  '/:id/invoice-data',
+  asyncHandler(async (req, res) => {
+    const orderId = req.params.id;
+    const normalizedUserId =
+      typeof req.query.userId === 'string' && req.query.userId.trim().length > 0
+        ? req.query.userId.trim()
+        : null;
+
+    const order = await getOrderById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    if (normalizedUserId != null && order.userId !== normalizedUserId) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+
+    const invoice = await buildUpdatedOrderInvoiceHtml(orderId);
+    return res.json({
+      success: true,
+      data: {
+        orderId,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceTitle: invoice.invoiceTitle,
+        version: invoice.version,
+        totalBalanceDue: invoice.totalBalanceDue,
+        totalLateFees: invoice.totalLateFees,
+        depositPaid: invoice.depositPaid,
+        paymentEvents: invoice.paymentEvents.map((e) => ({
+          id: e.id,
+          eventType: e.event_type,
+          amount: Number(e.amount),
+          eventTime: e.event_time,
+        })),
+        lateFeeEvents: invoice.lateFeeEvents.map((e) => ({
+          id: e.id,
+          feeDate: e.fee_date,
+          amount: Number(e.amount),
+          createdAt: e.created_at,
+        })),
+        order: {
+          userName: order.userName,
+          totalAmount: order.totalAmount,
+          status: order.status,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
+          shippingAddress: order.shippingAddress,
+          productIds: order.productIds,
+        },
+      },
+    });
+  }),
+);
+
+orderRouter.get(
   '/',
   asyncHandler(async (_req, res) => {
     const orders = await listOrders();
@@ -717,7 +771,7 @@ orderRouter.post(
     const orderStatus = order.status.toLowerCase();
     const paymentStatus = (order.shippingAddress['paymentStatus']?.toString() ?? 'pending').toLowerCase();
     const isPaymongoBalanceFollowUp =
-      paymentStatus == 'downpayment_received' && orderStatus == 'confirmed';
+      paymentStatus === 'downpayment_received' && orderStatus !== 'cancelled';
 
     if (orderStatus != 'pending' &&
         orderStatus != 'pending_payment_verification' &&

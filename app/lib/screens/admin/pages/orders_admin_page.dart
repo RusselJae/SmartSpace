@@ -969,7 +969,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       if (mounted) Toast.success(context, 'Quote saved');
       return true;
     } catch (e) {
-      if (mounted) Toast.error(context, 'Quote failed: $e');
+      if (mounted) Toast.error(context, _humanMessage(e));
       return false;
     }
   }
@@ -1105,7 +1105,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       if (mounted) Toast.success(context, 'Request declined');
       return true;
     } catch (e) {
-      if (mounted) Toast.error(context, 'Decline failed: $e');
+      if (mounted) Toast.error(context, _humanMessage(e));
       return false;
     }
   }
@@ -1347,8 +1347,29 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       await _loadOrders();
     } catch (e) {
       if (!mounted) return;
-      Toast.error(context, 'Failed to update order: $e');
+      Toast.error(context, _humanMessage(e));
     }
+  }
+
+  String _humanMessage(Object error) {
+    final raw = error.toString().trim();
+    if (raw.isEmpty) return 'Something went wrong. Please try again.';
+
+    // Most of our service exceptions are thrown as `Exception("Human message")`.
+    // Strip the Dart prefix so the UI stays clean and customer/admin-friendly.
+    var msg = raw.replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+
+    // Avoid nested prefixes like "Failed to X: <human message>" when upstream code
+    // already provides the human-facing string.
+    final colon = msg.indexOf(':');
+    if (colon > 0) {
+      final left = msg.substring(0, colon).toLowerCase();
+      if (left.startsWith('failed') || left.contains('error')) {
+        msg = msg.substring(colon + 1).trim();
+      }
+    }
+
+    return msg.isEmpty ? 'Something went wrong. Please try again.' : msg;
   }
 
   /// Shows detailed order information in a centered modal dialog following Apple's

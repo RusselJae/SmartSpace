@@ -1121,9 +1121,9 @@ class _InlineNotificationsPanel extends StatelessWidget {
                         separatorBuilder: (_, __) => const SizedBox(height: 4),
                         itemBuilder: (context, index) {
                           final section = sectionOrder[index];
-                          final items =
-                              grouped[section] ??
-                              const <AdminNotificationItem>[];
+                          final items = (grouped[section] ?? const <AdminNotificationItem>[])
+                              .toList(growable: false)
+                            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
                           if (items.isEmpty) return const SizedBox.shrink();
 
                           return Padding(

@@ -451,7 +451,8 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
                                 (grouped[section] ?? const []).isNotEmpty,
                           )
                           .map((section) {
-                            final items = grouped[section]!;
+                            final items = grouped[section]!
+                              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [

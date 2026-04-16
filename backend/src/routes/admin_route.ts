@@ -28,24 +28,6 @@ adminRouter.get(
 );
 
 /**
- * GET /api/admins/:id
- * Gets a specific admin by ID.
- * 
- * Response: { success: true, data: Admin }
- * Returns 404 if admin not found.
- */
-adminRouter.get(
-  '/:id',
-  asyncHandler(async (req, res) => {
-    const admin = await findAdminById(req.params.id);
-    if (admin == null) {
-      return res.status(404).json({ success: false, message: 'Admin not found' });
-    }
-    res.json({ success: true, data: admin });
-  }),
-);
-
-/**
  * POST /api/admins
  * Creates a new admin account.
  * 
@@ -154,6 +136,27 @@ adminRouter.get(
       to: to != null && !Number.isNaN(to.getTime()) ? to : undefined,
     });
     res.json({ success: true, data: logs });
+  }),
+);
+
+/**
+ * GET /api/admins/:id
+ * Gets a specific admin by ID.
+ * 
+ * Response: { success: true, data: Admin }
+ * Returns 404 if admin not found.
+ *
+ * IMPORTANT: This route must be registered AFTER more specific routes
+ * like `/activity-logs`, otherwise `/activity-logs` is treated as an id.
+ */
+adminRouter.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const admin = await findAdminById(req.params.id);
+    if (admin == null) {
+      return res.status(404).json({ success: false, message: 'Admin not found' });
+    }
+    res.json({ success: true, data: admin });
   }),
 );
 

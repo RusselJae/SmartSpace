@@ -4,14 +4,31 @@
  */
 import { Router } from 'express';
 import { getPool } from '../config/database';
-import { updateOrderStatus } from '../services/order_service';
+import { markOrderPaidViaPaymongo, updateOrderStatus } from '../services/order_service';
 import { buildPaymongoAppReturnUrl, paymongoReturnRedirectPage } from './paymongo_return_html';
 
 export const paymongoReturnRouter = Router();
 
 paymongoReturnRouter.get('/success', (req, res) => {
   const orderId = typeof req.query.orderId === 'string' ? req.query.orderId : undefined;
+  const amountPesos =
+    typeof req.query.amountPesos === 'string'
+      ? Number(req.query.amountPesos)
+      : undefined;
   const mtoRequestId = typeof req.query.mtoRequestId === 'string' ? req.query.mtoRequestId : undefined;
+
+  // Reconciliation safety net:
+  // If webhook is delayed/missed, the success return still advances the order payment state.
+  // This call is idempotent with webhook processing.
+  if (orderId != null && orderId.trim().length > 0) {
+    void markOrderPaidViaPaymongo(orderId.trim(), {
+      amountPesos: Number.isFinite(amountPesos ?? NaN) ? amountPesos : null,
+      eventId: `return_success_${Date.now()}`,
+    }).catch((e) => {
+      console.warn('PayMongo success return reconciliation:', e);
+    });
+  }
+
   const appUrl = buildPaymongoAppReturnUrl({ status: 'success', orderId, mtoRequestId });
   const html = paymongoReturnRedirectPage(
     appUrl,

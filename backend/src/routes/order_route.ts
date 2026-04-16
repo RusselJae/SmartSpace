@@ -859,15 +859,21 @@ orderRouter.post(
       chargePesos = total;
     }
 
-    const appendOrderIdToUrl = (baseUrl: string, id: string): string => {
-      const hasQuery = baseUrl.includes('?');
-      return hasQuery
-        ? `${baseUrl}&orderId=${encodeURIComponent(id)}`
-        : `${baseUrl}?orderId=${encodeURIComponent(id)}`;
+    const appendParamsToUrl = (baseUrl: string, params: Record<string, string>): string => {
+      const url = new URL(baseUrl);
+      for (const [k, v] of Object.entries(params)) {
+        url.searchParams.set(k, v);
+      }
+      return url.toString();
     };
 
-    const successUrl = appendOrderIdToUrl(config.paymongo.successUrl, order.id);
-    const cancelUrl = appendOrderIdToUrl(config.paymongo.cancelUrl, order.id);
+    const successUrl = appendParamsToUrl(config.paymongo.successUrl, {
+      orderId: order.id,
+      amountPesos: chargePesos.toString(),
+    });
+    const cancelUrl = appendParamsToUrl(config.paymongo.cancelUrl, {
+      orderId: order.id,
+    });
 
     try {
       const session = await createPaymongoCheckoutSession({

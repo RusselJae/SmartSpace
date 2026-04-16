@@ -155,8 +155,37 @@ export const verifyPaymongoWebhookSignature = (
  */
 export const extractOrderIdFromPaymongoEvent = (event: Record<string, unknown>): string | null => {
   const str = JSON.stringify(event);
-  const match = /"order_id"\s*:\s*"([^"]+)"/.exec(str);
-  return match?.[1] ?? null;
+
+  // 1) Preferred path: explicit metadata fields.
+  const direct =
+    /"order_id"\s*:\s*"([^"]+)"/.exec(str)?.[1] ??
+    /"orderId"\s*:\s*"([^"]+)"/.exec(str)?.[1];
+  if (direct != null && direct.trim().length > 0) {
+    return direct;
+  }
+
+  // 2) Fallback: order id embedded in success/cancel URLs query (?orderId=...).
+  const fromUrl = /[?&]orderId=([^"&]+)/.exec(str)?.[1];
+  if (fromUrl != null && fromUrl.trim().length > 0) {
+    try {
+      return decodeURIComponent(fromUrl);
+    } catch {
+      return fromUrl;
+    }
+  }
+
+  // 3) Fallback: order id embedded in checkout description strings.
+  //    Examples:
+  //    - "Order payment o177..."
+  //    - "Order o177..."
+  const fromDescription =
+    /Order payment\s+([a-zA-Z0-9_-]+)/i.exec(str)?.[1] ??
+    /Order\s+([a-zA-Z0-9_-]+)/i.exec(str)?.[1];
+  if (fromDescription != null && fromDescription.trim().length > 0) {
+    return fromDescription;
+  }
+
+  return null;
 };
 
 /**

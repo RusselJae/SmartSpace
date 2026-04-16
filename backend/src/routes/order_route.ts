@@ -345,6 +345,20 @@ orderRouter.patch(
        WHERE id = ?`,
       [quotedTotal, quotedDownpayment, quotedRemaining, adminMessage, requestId],
     );
+    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
+    if (adminId.length > 0) {
+      await logAdminActivity({
+        adminId,
+        action: 'made_to_order_quoted',
+        entityType: 'made_to_order_request',
+        entityId: requestId,
+        details: {
+          quotedTotal: String(quotedTotal),
+          quotedDownpayment: String(quotedDownpayment),
+          quotedRemaining: String(quotedRemaining),
+        },
+      });
+    }
     return res.json({ success: true, data: { id: requestId, status: 'quoted' } });
   }),
 );
@@ -380,6 +394,18 @@ orderRouter.patch(
        WHERE id = ?`,
       [adminMessage, requestId],
     );
+    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
+    if (adminId.length > 0) {
+      await logAdminActivity({
+        adminId,
+        action: 'made_to_order_declined',
+        entityType: 'made_to_order_request',
+        entityId: requestId,
+        details: {
+          adminMessage: adminMessage ?? '',
+        },
+      });
+    }
     return res.json({ success: true, data: { id: requestId, status: 'declined' } });
   }),
 );
@@ -467,6 +493,20 @@ orderRouter.post(
         `UPDATE made_to_order_requests SET order_id = ?, status = 'order_created', updated_at = NOW() WHERE id = ?`,
         [order.id, requestId],
       );
+
+      const adminId =
+        shippingAddress['adminId'] != null ? String(shippingAddress['adminId']).trim() : '';
+      if (adminId.length > 0) {
+        await logAdminActivity({
+          adminId,
+          action: 'made_to_order_order_created',
+          entityType: 'made_to_order_request',
+          entityId: requestId,
+          details: {
+            orderId: order.id,
+          },
+        });
+      }
 
       return res.status(201).json({ success: true, data: { orderId: order.id, order } });
     } catch (e) {
@@ -805,9 +845,20 @@ orderRouter.patch(
     await updateOrderStatus(req.params.id, payload.status);
     const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
     if (adminId.length > 0) {
+      const normalizedStatus = payload.status.toLowerCase();
+      const action =
+        normalizedStatus === 'cancelled'
+          ? 'order_cancelled'
+          : normalizedStatus === 'confirmed'
+              ? 'order_confirmed'
+              : normalizedStatus === 'shipped'
+                  ? 'order_shipped'
+                  : normalizedStatus === 'delivered'
+                      ? 'order_delivered'
+                      : 'order_status_updated';
       await logAdminActivity({
         adminId,
-        action: payload.status.toLowerCase() == 'cancelled' ? 'order_cancelled' : 'order_status_updated',
+        action,
         entityType: 'order',
         entityId: req.params.id,
         details: { status: payload.status },
@@ -840,6 +891,12 @@ orderRouter.post(
     }
     
     await confirmPayment(orderId, adminId);
+    await logAdminActivity({
+      adminId,
+      action: 'order_payment_confirmed',
+      entityType: 'order',
+      entityId: orderId,
+    });
     res.json({
       success: true,
       message: 'Payment confirmed successfully',

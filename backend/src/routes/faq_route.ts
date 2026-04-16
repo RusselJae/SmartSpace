@@ -8,6 +8,7 @@ import {
   type CreateFaqInput,
   type UpdateFaqInput,
 } from '../services/faq_service';
+import { logAdminActivity } from '../services/admin_activity_log_service';
 
 export const faqRouter = Router();
 
@@ -55,6 +56,13 @@ faqRouter.post(
     };
 
     const faq = await createFaq(input);
+    await logAdminActivity({
+      adminId,
+      action: 'faq_created',
+      entityType: 'faq',
+      entityId: faq.id,
+      details: { question: faq.question },
+    });
     res.status(201).json({ success: true, data: faq });
   }),
 );
@@ -87,6 +95,15 @@ faqRouter.put(
     if (faq == null) {
       return res.status(404).json({ success: false, message: 'FAQ not found' });
     }
+    await logAdminActivity({
+      adminId,
+      action: 'faq_updated',
+      entityType: 'faq',
+      entityId: faq.id,
+      details: {
+        question: faq.question,
+      },
+    });
     res.json({ success: true, data: faq });
   }),
 );
@@ -110,6 +127,12 @@ faqRouter.delete(
     if (!deleted) {
       return res.status(404).json({ success: false, message: 'FAQ not found' });
     }
+    await logAdminActivity({
+      adminId,
+      action: 'faq_deleted',
+      entityType: 'faq',
+      entityId: id,
+    });
     res.json({ success: true, message: 'FAQ deleted' });
   }),
 );

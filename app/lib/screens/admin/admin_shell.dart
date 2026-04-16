@@ -86,14 +86,20 @@ class _AdminShellState extends State<AdminShell> {
       AdminNotificationsService.instance;
   final GlobalKey _notificationsAnchorKey = GlobalKey();
 
+  int _indexForLabel(String label) {
+    final i = _destinations.indexWhere((d) => d.label == label);
+    return i < 0 ? 0 : i;
+  }
+
   Future<void> _openSupportInboxFromHeader() async {
     await _notifications.markAllSupportRead();
     if (!mounted) return;
-    _selectTab(6);
+    _selectTab(_indexForLabel('Support'));
   }
 
-  Future<void> _openNotificationsFromHeader(BuildContext context) async {
+  Future<void> _openNotificationsFromHeader() async {
     await _notifications.markLowStockSeen();
+    await _notifications.markCancelledOrdersSeen();
     if (!mounted) return;
     _showNotificationsFloatingPanel(context);
   }
@@ -264,9 +270,9 @@ class _AdminShellState extends State<AdminShell> {
       builder: (_, __) => const AdminsAdminPage(),
     ),
     _AdminDestination(
-      label: 'Support',
-      icon: Icons.support_agent_outlined,
-      builder: (_, __) => const SupportInboxAdminPage(),
+      label: 'Activity Logs',
+      icon: Icons.history_rounded,
+      builder: (_, __) => const AdminActivityLogsPage(),
     ),
     _AdminDestination(
       label: 'FAQs',
@@ -274,14 +280,14 @@ class _AdminShellState extends State<AdminShell> {
       builder: (_, __) => const FaqsAdminPage(),
     ),
     _AdminDestination(
+      label: 'Support',
+      icon: Icons.support_agent_outlined,
+      builder: (_, __) => const SupportInboxAdminPage(),
+    ),
+    _AdminDestination(
       label: 'Legal',
       icon: Icons.description_outlined,
       builder: (_, __) => const LegalContentAdminPage(),
-    ),
-    _AdminDestination(
-      label: 'Activity Logs',
-      icon: Icons.history_rounded,
-      builder: (_, __) => const AdminActivityLogsPage(),
     ),
     _AdminDestination(
       label: 'Settings',
@@ -417,10 +423,9 @@ class _AdminShellState extends State<AdminShell> {
                           : null,
                       notifications: _notifications,
                       onOpenSupport: _openSupportInboxFromHeader,
-                      onOpenSettings: () => _selectTab(10),
+                      onOpenSettings: () => _selectTab(_indexForLabel('Settings')),
                       onOpenProfile: () => _showProfileModal(context),
-                      onOpenNotifications: () =>
-                          _openNotificationsFromHeader(context),
+                      onOpenNotifications: _openNotificationsFromHeader,
                       notificationsAnchorKey: _notificationsAnchorKey,
                     ),
                     // Instant panel swap — no cross-fade / slide from AnimatedSwitcher.
@@ -453,9 +458,9 @@ class _AdminShellState extends State<AdminShell> {
                   : null,
               notifications: _notifications,
               onOpenSupport: _openSupportInboxFromHeader,
-              onOpenSettings: () => _selectTab(10),
+              onOpenSettings: () => _selectTab(_indexForLabel('Settings')),
               onOpenProfile: () => _showProfileModal(context),
-              onOpenNotifications: () => _openNotificationsFromHeader(context),
+              onOpenNotifications: _openNotificationsFromHeader,
               notificationsAnchorKey: _notificationsAnchorKey,
             ),
             Expanded(

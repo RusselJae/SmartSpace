@@ -25,7 +25,11 @@ class SalesReportsAdminPage extends StatefulWidget {
 
 class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
-  DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
+  DateTime _selectedDate = DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+    DateTime.now().day,
+  );
   AdminTrendGranularity _trendGranularity = AdminTrendGranularity.monthly;
   List<OrderRecord> _orders = const [];
   List<Product> _products = const [];
@@ -68,27 +72,67 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
-  Future<void> _pickMonth() async {
+  Future<void> _pickSelectedPeriod() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedMonth,
+      initialDate: _selectedDate,
       firstDate: DateTime(now.year - 5, 1, 1),
       lastDate: DateTime(now.year + 1, 12, 31),
-      helpText: 'Select report month',
+      helpText: _trendGranularity == AdminTrendGranularity.daily
+          ? 'Select report date'
+          : _trendGranularity == AdminTrendGranularity.monthly
+              ? 'Select report month'
+              : 'Select report year',
     );
     if (picked == null) return;
     setState(() {
-      _selectedMonth = DateTime(picked.year, picked.month, 1);
+      _selectedDate = _trendGranularity == AdminTrendGranularity.daily
+          ? DateTime(picked.year, picked.month, picked.day)
+          : _trendGranularity == AdminTrendGranularity.monthly
+              ? DateTime(picked.year, picked.month, 1)
+              : DateTime(picked.year, 1, 1);
     });
   }
 
-  DateTime get _monthStart => DateTime(_selectedMonth.year, _selectedMonth.month, 1);
-  DateTime get _monthEnd => DateTime(_selectedMonth.year, _selectedMonth.month + 1, 1);
+  DateTime get _periodStart {
+    switch (_trendGranularity) {
+      case AdminTrendGranularity.daily:
+        return DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+      case AdminTrendGranularity.monthly:
+        return DateTime(_selectedDate.year, _selectedDate.month, 1);
+      case AdminTrendGranularity.yearly:
+        return DateTime(_selectedDate.year, 1, 1);
+    }
+  }
+
+  DateTime get _periodEnd {
+    switch (_trendGranularity) {
+      case AdminTrendGranularity.daily:
+        return _periodStart.add(const Duration(days: 1));
+      case AdminTrendGranularity.monthly:
+        return DateTime(_selectedDate.year, _selectedDate.month + 1, 1);
+      case AdminTrendGranularity.yearly:
+        return DateTime(_selectedDate.year + 1, 1, 1);
+    }
+  }
+
+  String get _selectedPeriodLabel {
+    switch (_trendGranularity) {
+      case AdminTrendGranularity.daily:
+        return DateFormat.yMMMd().format(_selectedDate);
+      case AdminTrendGranularity.monthly:
+        return DateFormat.yMMM().format(_selectedDate);
+      case AdminTrendGranularity.yearly:
+        return DateFormat.y().format(_selectedDate);
+    }
+  }
 
   bool _isIncludedOrder(OrderRecord o) {
     final status = o.status.toLowerCase();
-    return status != 'cancelled' && !o.createdAt.isBefore(_monthStart) && o.createdAt.isBefore(_monthEnd);
+    return status != 'cancelled' &&
+        !o.createdAt.isBefore(_periodStart) &&
+        o.createdAt.isBefore(_periodEnd);
   }
 
   List<OrderRecord> get _monthOrders => _orders.where(_isIncludedOrder).toList()
@@ -97,8 +141,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   List<OrderRecord> get _monthCancelledOrders => _orders
       .where((o) =>
           o.status.toLowerCase() == 'cancelled' &&
-          !o.createdAt.isBefore(_monthStart) &&
-          o.createdAt.isBefore(_monthEnd))
+          !o.createdAt.isBefore(_periodStart) &&
+          o.createdAt.isBefore(_periodEnd))
       .toList()
     ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -137,7 +181,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   List<_SalesProductStat> get _topRatedInMonth {
     final productReviews = <String, List<Review>>{};
     for (final review in _reviews) {
-      if (review.createdAt.isBefore(_monthStart) || !review.createdAt.isBefore(_monthEnd)) {
+      if (review.createdAt.isBefore(_periodStart) ||
+          !review.createdAt.isBefore(_periodEnd)) {
         continue;
       }
       productReviews.putIfAbsent(review.productId, () => <Review>[]).add(review);
@@ -219,7 +264,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   List<AdminSeriesPoint> get _monthlyTrendPoints {
     final points = <AdminSeriesPoint>[];
     for (var i = 11; i >= 0; i--) {
-      final month = DateTime(_selectedMonth.year, _selectedMonth.month - i, 1);
+      final month = DateTime(_selectedDate.year, _selectedDate.month - i, 1);
       final next = DateTime(month.year, month.month + 1, 1);
       points.add(AdminSeriesPoint(x: month, y: _revenueInRange(month, next)));
     }
@@ -227,7 +272,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   }
 
   List<AdminSeriesPoint> get _yearlyTrendPoints {
-    final y0 = _selectedMonth.year;
+    final y0 = _selectedDate.year;
     final points = <AdminSeriesPoint>[];
     for (var i = 11; i >= 0; i--) {
       final year = y0 - i;
@@ -249,32 +294,43 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
-  Map<DateTime, double> get _dailySales {
-    final map = <DateTime, double>{};
-    for (final order in _monthOrders) {
-      final key = DateTime(order.createdAt.year, order.createdAt.month, order.createdAt.day);
-      map[key] = (map[key] ?? 0) + order.totalAmount;
+  String get _granularityLabel {
+    switch (_trendGranularity) {
+      case AdminTrendGranularity.daily:
+        return 'daily';
+      case AdminTrendGranularity.monthly:
+        return 'monthly';
+      case AdminTrendGranularity.yearly:
+        return 'yearly';
     }
-    final sortedKeys = map.keys.toList()..sort((a, b) => a.compareTo(b));
-    return {
-      for (final key in sortedKeys) key: map[key]!,
-    };
+  }
+
+  String _trendXAxisLabel(DateTime date) {
+    switch (_trendGranularity) {
+      case AdminTrendGranularity.daily:
+        return DateFormat.E().format(date);
+      case AdminTrendGranularity.monthly:
+        return DateFormat.MMM().format(date);
+      case AdminTrendGranularity.yearly:
+        return DateFormat.y().format(date);
+    }
   }
 
   Future<void> _exportExcelCsv() async {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
-      final csv = _buildCsv();
+      final csv = _buildCsvForGranularity();
       final bytes = Uint8List.fromList(csv.codeUnits);
-      final filename = 'sales_report_${AdminFormatters.monthKey(_selectedMonth)}.csv';
+      final filename =
+          'sales_report_${_granularityLabel}_${_selectedDate.year}_${_selectedDate.month.toString().padLeft(2, '0')}_${_selectedDate.day.toString().padLeft(2, '0')}.csv';
       final savedAt = await saveReportFile(
         filename: filename,
         bytes: bytes,
         mimeType: 'text/csv;charset=utf-8',
       );
       if (!mounted) return;
-      Toast.success(context, 'Excel-compatible report exported: $savedAt');
+      Toast.success(context, '$_granularityLabel CSV exported: $savedAt');
     } catch (e) {
       if (!mounted) return;
       Toast.error(context, 'Failed to export CSV: $e');
@@ -287,10 +343,10 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
-      final doc = await _buildPdfDocument();
+      final doc = await _buildPdfDocumentForGranularity();
       await Printing.layoutPdf(onLayout: (_) async => doc.save());
       if (!mounted) return;
-      Toast.success(context, 'PDF print dialog opened');
+      Toast.success(context, '$_granularityLabel PDF print dialog opened');
     } catch (e) {
       if (!mounted) return;
       Toast.error(context, 'Failed to generate PDF: $e');
@@ -299,11 +355,14 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
-  String _buildCsv() {
+  String _buildCsvForGranularity() {
     final buffer = StringBuffer();
     final summary = _summaryRows();
+    final trend = _activeTrendPoints;
     buffer.writeln('Wood Home Furniture Trading');
-    buffer.writeln('Sales Report,${_csv(AdminFormatters.monthYear(_selectedMonth))}');
+    buffer.writeln(
+      'Sales Report (${_granularityLabel.toUpperCase()}),${_csv(_selectedPeriodLabel)}',
+    );
     buffer.writeln('Generated At,${_csv(AdminFormatters.dateYmdHm(DateTime.now()))}');
     buffer.writeln('');
     buffer.writeln('Summary,Value');
@@ -311,10 +370,10 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
       buffer.writeln('${_csv(row.$1)},${_csv(row.$2)}');
     }
     buffer.writeln('');
-    buffer.writeln('Daily Sales Date,Amount');
-    _dailySales.forEach((date, value) {
-      buffer.writeln('${_csv(AdminFormatters.dateYmd(date))},${AdminFormatters.decimal(value)}');
-    });
+    buffer.writeln('${_granularityLabel.toUpperCase()} Revenue,Amount');
+    for (final p in trend) {
+      buffer.writeln('${_csv(_trendXAxisLabel(p.x))},${AdminFormatters.decimal(p.y)}');
+    }
     buffer.writeln('');
     buffer.writeln('Best Selling Products');
     buffer.writeln('Product,Units Sold,Estimated Revenue');
@@ -355,7 +414,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     ];
   }
 
-  Future<pw.Document> _buildPdfDocument() async {
+  Future<pw.Document> _buildPdfDocumentForGranularity() async {
     final doc = pw.Document();
     pw.MemoryImage? logo;
     try {
@@ -366,8 +425,13 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
 
     final summary = _summaryRows();
-    final dailyRows = _dailySales.entries
-        .map((e) => <String>[AdminFormatters.dateYmd(e.key), AdminFormatters.currency(e.value)])
+    final trendRows = _activeTrendPoints
+        .map(
+          (e) => <String>[
+            _trendXAxisLabel(e.x),
+            AdminFormatters.currency(e.y),
+          ],
+        )
         .toList();
     final bestRows = _bestSellingInMonth
         .map((e) => <String>[
@@ -418,7 +482,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
                     ),
                     pw.SizedBox(height: 2),
                     pw.Text(
-                      'Sales Report - ${AdminFormatters.monthYear(_selectedMonth)}',
+                      'Sales Report (${_granularityLabel.toUpperCase()}) - $_selectedPeriodLabel',
                       style: const pw.TextStyle(fontSize: 11),
                     ),
                   ],
@@ -443,11 +507,14 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
             cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           ),
           pw.SizedBox(height: 16),
-          pw.Text('Daily Sales Report', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+          pw.Text(
+            '${_granularityLabel[0].toUpperCase()}${_granularityLabel.substring(1)} Revenue Report',
+            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+          ),
           pw.SizedBox(height: 8),
           pw.TableHelper.fromTextArray(
-            headers: const <String>['Date', 'Amount'],
-            data: dailyRows,
+            headers: <String>[_granularityLabel.toUpperCase(), 'Amount'],
+            data: trendRows,
             headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
             headerDecoration: const pw.BoxDecoration(color: PdfColors.grey700),
             cellAlignment: pw.Alignment.centerLeft,
@@ -518,8 +585,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
           _SalesTrendSection(
             granularity: _trendGranularity,
             onGranularityChanged: (g) => setState(() => _trendGranularity = g),
-            selectedMonth: _selectedMonth,
-            onPickMonth: _pickMonth,
+            selectedLabel: _selectedPeriodLabel,
+            onPickDate: _pickSelectedPeriod,
             onExport: _exporting ? null : _exportExcelCsv,
             onPrint: _exporting ? null : _printPdfReport,
             points: _activeTrendPoints,
@@ -639,8 +706,8 @@ class _SalesTrendSection extends StatelessWidget {
   const _SalesTrendSection({
     required this.granularity,
     required this.onGranularityChanged,
-    required this.selectedMonth,
-    required this.onPickMonth,
+    required this.selectedLabel,
+    required this.onPickDate,
     required this.onExport,
     required this.onPrint,
     required this.points,
@@ -648,8 +715,8 @@ class _SalesTrendSection extends StatelessWidget {
 
   final AdminTrendGranularity granularity;
   final ValueChanged<AdminTrendGranularity> onGranularityChanged;
-  final DateTime selectedMonth;
-  final VoidCallback onPickMonth;
+  final String selectedLabel;
+  final VoidCallback onPickDate;
   final VoidCallback? onExport;
   final VoidCallback? onPrint;
   final List<AdminSeriesPoint> points;
@@ -664,7 +731,6 @@ class _SalesTrendSection extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Spacer(),
                 SegmentedButton<AdminTrendGranularity>(
                   segments: const [
                     ButtonSegment(value: AdminTrendGranularity.daily, label: Text('Daily')),
@@ -677,139 +743,48 @@ class _SalesTrendSection extends StatelessWidget {
                     onGranularityChanged(s.first);
                   },
                 ),
+                const Spacer(),
+                IconButton.outlined(
+                  onPressed: onPickDate,
+                  tooltip: selectedLabel,
+                  icon: const Icon(Icons.calendar_month_outlined),
+                ),
+                const SizedBox(width: 8),
+                IconButton.outlined(
+                  onPressed: onExport,
+                  tooltip: 'Export CSV',
+                  icon: const Icon(Icons.table_view_outlined),
+                ),
+                const SizedBox(width: 8),
+                IconButton.outlined(
+                  onPressed: onPrint,
+                  tooltip: 'Print PDF',
+                  icon: const Icon(Icons.picture_as_pdf_outlined),
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            if (granularity == AdminTrendGranularity.daily)
-              _SalesDailyTemplate(points: points)
-            else if (granularity == AdminTrendGranularity.monthly)
-              AdminUnifiedTrendChartCard(
-                title: 'Revenue Trend (Monthly)',
-                subtitle: 'Net revenue for each of the last 12 months.',
-                seriesLabel: 'Net revenue',
-                points: points,
-                granularity: granularity,
-                onGranularityChanged: onGranularityChanged,
-                showGranularitySelector: false,
-                valueFormatter: AdminFormatters.currency,
-              )
-            else
-              _SalesYearlyTemplate(points: points),
-            const SizedBox(height: 10),
-            Wrap(
-              alignment: WrapAlignment.end,
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                FilledButton.icon(
-                  onPressed: onPickMonth,
-                  icon: const Icon(Icons.calendar_month_outlined, size: 18),
-                  label: Text(AdminFormatters.monthYear(selectedMonth)),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onExport,
-                  icon: const Icon(Icons.table_view_outlined, size: 18),
-                  label: const Text('Export CSV'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onPrint,
-                  icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-                  label: const Text('Print PDF'),
-                ),
-              ],
+            AdminUnifiedTrendChartCard(
+              title: granularity == AdminTrendGranularity.daily
+                  ? 'Revenue Trend (Daily)'
+                  : granularity == AdminTrendGranularity.monthly
+                      ? 'Revenue Trend (Monthly)'
+                      : 'Revenue Trend (Yearly)',
+              subtitle: granularity == AdminTrendGranularity.daily
+                  ? 'Net revenue for Monday to Sunday of the current week.'
+                  : granularity == AdminTrendGranularity.monthly
+                      ? 'Net revenue for each of the last 12 months.'
+                      : 'Net revenue for each of the last 12 years.',
+              seriesLabel: 'Net revenue',
+              points: points,
+              granularity: granularity,
+              onGranularityChanged: onGranularityChanged,
+              showGranularitySelector: false,
+              valueFormatter: AdminFormatters.currency,
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _SalesDailyTemplate extends StatelessWidget {
-  const _SalesDailyTemplate({required this.points});
-  final List<AdminSeriesPoint> points;
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 220,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          for (final p in points)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(AdminFormatters.currency(p.y), style: Theme.of(context).textTheme.labelSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    const SizedBox(height: 4),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: FractionallySizedBox(
-                          heightFactor: points.isEmpty
-                              ? 0
-                              : (p.y / (points.map((e) => e.y).fold<double>(1, (a, b) => a > b ? a : b))).clamp(0.08, 1.0),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFB7B0A6),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(DateFormat.E().format(p.x), style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SalesYearlyTemplate extends StatelessWidget {
-  const _SalesYearlyTemplate({required this.points});
-  final List<AdminSeriesPoint> points;
-  @override
-  Widget build(BuildContext context) {
-    final max = points.isEmpty ? 1.0 : points.map((e) => e.y).reduce((a, b) => a > b ? a : b);
-    return Column(
-      children: [
-        for (final p in points)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              children: [
-                SizedBox(width: 50, child: Text('${p.x.year}', style: Theme.of(context).textTheme.bodySmall)),
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(99),
-                    child: LinearProgressIndicator(
-                      value: (p.y / max).clamp(0.0, 1.0),
-                      minHeight: 8,
-                      backgroundColor: AdminAnalyticsColors.neutralTrack,
-                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF8D6E63)),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  width: 110,
-                  child: Text(
-                    AdminFormatters.currency(p.y),
-                    textAlign: TextAlign.right,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
     );
   }
 }

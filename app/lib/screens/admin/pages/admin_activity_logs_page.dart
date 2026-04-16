@@ -8,6 +8,7 @@ import '../../../models/admin_activity_log.dart';
 import '../../../services/admin_auth_service.dart';
 import '../../../services/mysql_database_service.dart';
 import '../../../utils/report_file_saver.dart';
+import '../widgets/admin_anchored_popover.dart';
 
 class AdminActivityLogsPage extends StatefulWidget {
   const AdminActivityLogsPage({super.key});
@@ -22,6 +23,7 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final AdminAuthService _adminAuth = AdminAuthService();
   final TextEditingController _logSearchController = TextEditingController();
+  final GlobalKey _filterAnchorKey = GlobalKey();
 
   List<AdminActivityLog> _activityLogs = const [];
   List<Admin> _admins = const [];
@@ -97,8 +99,7 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
   }
 
   String _formatLog(AdminActivityLog log) {
-    final label = log.action.replaceAll('_', ' ');
-    return '${label[0].toUpperCase()}${label.substring(1)}';
+    return _formatActionLabel(log.action);
   }
 
   String _formatDateHeading(DateTime when) {
@@ -141,8 +142,24 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
   }
 
   String _formatActionLabel(String action) {
-    final label = action.replaceAll('_', ' ');
-    return '${label[0].toUpperCase()}${label.substring(1)}';
+    final raw = action.trim();
+    if (raw.isEmpty) return raw;
+
+    // Convert snake_case actions to title case for UI readability.
+    // Examples:
+    // - order_shipped -> Order Shipped
+    // - made_to_order_quoted -> Made To Order Quoted
+    final parts = raw
+        .replaceAll('-', '_')
+        .split('_')
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList(growable: false);
+
+    return parts.map((p) {
+      if (p.length == 1) return p.toUpperCase();
+      return '${p[0].toUpperCase()}${p.substring(1)}';
+    }).join(' ');
   }
 
   String _adminLabel(AdminActivityLog log) {
@@ -263,7 +280,7 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
     return count;
   }
 
-  void _showLogFilterSheet() {
+  void _showLogFilterPopover() {
     String tempAction = _logActionFilter;
     String tempAdmin = _logAdminFilter;
     String tempSort = _logSortBy;
@@ -290,133 +307,166 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
       });
     }
 
-    showModalBottomSheet<void>(
+    AdminAnchoredPopover.show<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final actions = <String>{..._activityLogs.map((e) => e.action)};
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text('Filter Activity Logs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                        const Spacer(),
-                        IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
-                      ],
+      anchorKey: _filterAnchorKey,
+      width: 400,
+      height: 420,
+      child: StatefulBuilder(
+        builder: (ctx, setModalState) {
+          final actions = <String>{..._activityLogs.map((e) => e.action)};
+          return Material(
+            color: Colors.white,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'Filter Activity Logs',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempSort,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                    const SizedBox(height: 8),
-                    const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: tempSort,
-                      items: const [
-                        DropdownMenuItem(value: 'newest', child: Text('Newest First')),
-                        DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setModalState(() => tempSort = v);
-                      },
+                    items: const [
+                      DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                      DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempSort = v);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('Action', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempAction,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                    const SizedBox(height: 10),
-                    const Text('Action', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: tempAction,
-                      items: [
-                        const DropdownMenuItem(value: 'all', child: Text('All Actions')),
-                        ...actions.map((a) => DropdownMenuItem(value: a, child: Text(_formatActionLabel(a)))),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setModalState(() => tempAction = v);
-                      },
+                    items: [
+                      const DropdownMenuItem(value: 'all', child: Text('All Actions')),
+                      ...actions.map(
+                        (a) => DropdownMenuItem(value: a, child: Text(_formatActionLabel(a))),
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempAction = v);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('Admin', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempAdmin,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                    const SizedBox(height: 10),
-                    const Text('Admin', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: tempAdmin,
-                      items: [
-                        const DropdownMenuItem(value: 'all', child: Text('All Admins')),
-                        ..._admins.map((a) => DropdownMenuItem(value: a.id, child: Text(a.fullName.isNotEmpty ? a.fullName : a.email))),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setModalState(() => tempAdmin = v);
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => pickDate(from: true, setModalState: setModalState),
-                            icon: const Icon(Icons.calendar_month_outlined, size: 18),
-                            label: Text(tempFrom == null ? 'From' : tempFrom!.toIso8601String().split('T').first),
+                    items: [
+                      const DropdownMenuItem(value: 'all', child: Text('All Admins')),
+                      ..._admins.map(
+                        (a) => DropdownMenuItem(
+                          value: a.id,
+                          child: Text(a.fullName.isNotEmpty ? a.fullName : a.email),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempAdmin = v);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => pickDate(from: true, setModalState: setModalState),
+                          icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                          label: Text(
+                            tempFrom == null ? 'From' : tempFrom!.toIso8601String().split('T').first,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => pickDate(from: false, setModalState: setModalState),
-                            icon: const Icon(Icons.event_available_outlined, size: 18),
-                            label: Text(tempTo == null ? 'To' : tempTo!.toIso8601String().split('T').first),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => pickDate(from: false, setModalState: setModalState),
+                          icon: const Icon(Icons.event_available_outlined, size: 18),
+                          label: Text(
+                            tempTo == null ? 'To' : tempTo!.toIso8601String().split('T').first,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        OutlinedButton(
-                          onPressed: () {
-                            setModalState(() {
-                              tempAction = 'all';
-                              tempAdmin = 'all';
-                              tempSort = 'newest';
-                              tempFrom = null;
-                              tempTo = null;
-                            });
-                          },
-                          child: const Text('Reset'),
-                        ),
-                        const Spacer(),
-                        FilledButton(
-                          onPressed: () async {
-                            setState(() {
-                              _logActionFilter = tempAction;
-                              _logAdminFilter = tempAdmin;
-                              _logSortBy = tempSort;
-                              _logDateFrom = tempFrom;
-                              _logDateTo = tempTo;
-                            });
-                            Navigator.of(sheetContext).pop();
-                            await _loadLogs();
-                          },
-                          style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
-                          child: const Text('Apply'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed: () {
+                          setModalState(() {
+                            tempAction = 'all';
+                            tempAdmin = 'all';
+                            tempSort = 'newest';
+                            tempFrom = null;
+                            tempTo = null;
+                          });
+                        },
+                        child: const Text('Reset'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () async {
+                          setState(() {
+                            _logActionFilter = tempAction;
+                            _logAdminFilter = tempAdmin;
+                            _logSortBy = tempSort;
+                            _logDateFrom = tempFrom;
+                            _logDateTo = tempTo;
+                          });
+                          Navigator.of(ctx).pop();
+                          await _loadLogs();
+                        },
+                        child: const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            );
-          },
-        );
-      },
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -463,19 +513,14 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
   @override
   Widget build(BuildContext context) {
     final groupedLogs = _groupedVisibleLogs;
+    final visibleCount = _visibleLogs.length;
 
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1160),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Flat, "orders-like" top controls: no extra header block or outer box.
-                Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(
                   children: [
                     Expanded(
                       child: TextField(
@@ -512,13 +557,16 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     Stack(
                       children: [
-                        IconButton.outlined(
-                          onPressed: _showLogFilterSheet,
-                          icon: const Icon(Icons.tune_outlined),
-                          tooltip: 'Filter',
+                        SizedBox(
+                          key: _filterAnchorKey,
+                          child: IconButton.outlined(
+                            onPressed: _showLogFilterPopover,
+                            icon: const Icon(Icons.tune_outlined),
+                            tooltip: 'Filter',
+                          ),
                         ),
                         if (_activeLogFilterCount > 0)
                           Positioned(
@@ -526,7 +574,7 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
                             top: 2,
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                              decoration: const BoxDecoration(color: Color(0xFF8D6E63), shape: BoxShape.circle),
+                              decoration: const BoxDecoration(color: Color(0xFF111827), shape: BoxShape.circle),
                               child: Text(
                                 '$_activeLogFilterCount',
                                 style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
@@ -535,7 +583,7 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
                           ),
                       ],
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     IconButton(
                       tooltip: 'Refresh Logs',
                       onPressed: _loadingLogs ? null : _loadLogs,
@@ -554,146 +602,119 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
                     ),
                   ],
                 ),
-                  const SizedBox(height: 6),
-                  if (_loadingLogs)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 22),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else if (groupedLogs.isEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: Text(
+            '$visibleCount ${visibleCount == 1 ? 'activity' : 'activities'}',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w500,
+              color: Colors.black,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Expanded(
+          child: _loadingLogs
+              ? const Center(child: CircularProgressIndicator())
+              : groupedLogs.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.history_rounded, size: 48, color: Colors.grey[400]),
+                          const SizedBox(height: 12),
+                          const Text('No activity records yet'),
+                        ],
                       ),
-                      padding: const EdgeInsets.all(16),
-                      child: const Text(
-                        'No activity records yet. Critical admin actions will appear here.',
-                      ),
                     )
-                  else
-                    ...groupedLogs.entries.map((entry) {
-                      final day = entry.key;
-                      final logs = entry.value;
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
+                  : Card(
+                      margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      child: ListView(
+                        children: [
+                          for (final entry in groupedLogs.entries) ...[
                             Padding(
-                              padding: const EdgeInsets.only(
-                                left: 2,
-                                bottom: 8,
-                              ),
+                              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
                               child: Text(
-                                _formatDateHeading(day),
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: const Color(0xFF6B7280),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                              ),
-                            ),
-                            Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: const Color(0xFFE5E7EB),
+                                _formatDateHeading(entry.key),
+                                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              child: Column(
-                                children: [
-                                  for (var i = 0; i < logs.length; i++) ...[
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
-                                      ),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.center,
-                                        children: [
-                                          Container(
-                                            width: 34,
-                                            height: 34,
-                                            decoration: BoxDecoration(
-                                              color: _iconBackgroundForLog(
-                                                logs[i],
-                                              ),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Icon(
-                                              _iconForLog(logs[i]),
-                                              size: 18,
-                                              color: _iconTintForLog(logs[i]),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  '${_formatLog(logs[i])} • ${logs[i].entityType}${logs[i].entityId != null ? ' ${logs[i].entityId}' : ''}',
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: Color(0xFF111827),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  '${_adminLabel(logs[i])} • ${_detailsSummary(logs[i])}',
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    fontSize: 12,
-                                                    color: Color(0xFF6B7280),
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          const SizedBox(width: 10),
-                                          Text(
-                                            _formatTime(logs[i].createdAt),
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              color: Color(0xFF6B7280),
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    if (i != logs.length - 1)
-                                      const Divider(
-                                        height: 1,
-                                        thickness: 1,
-                                        color: Color(0xFFF1F5F9),
-                                      ),
-                                  ],
-                                ],
-                              ),
                             ),
+                            ...List<Widget>.generate(entry.value.length, (i) {
+                              final log = entry.value[i];
+                              return Column(
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 34,
+                                          height: 34,
+                                          decoration: BoxDecoration(
+                                            color: _iconBackgroundForLog(log),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            _iconForLog(log),
+                                            size: 18,
+                                            color: _iconTintForLog(log),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                '${_formatLog(log)} • ${log.entityType}${log.entityId != null ? ' ${log.entityId}' : ''}',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Color(0xFF111827),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                '${_adminLabel(log)} • ${_detailsSummary(log)}',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Color(0xFF6B7280),
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(
+                                          _formatTime(log.createdAt),
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Color(0xFF6B7280),
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Divider(height: 1),
+                                ],
+                              );
+                            }),
                           ],
-                        ),
-                      );
-                    }),
-              ],
-            ),
-          ],
+                        ],
+                      ),
+                    ),
         ),
-      ),
+      ],
     );
   }
 }

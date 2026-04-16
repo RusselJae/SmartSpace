@@ -83,12 +83,22 @@ productRouter.put(
     const input = parseProductInput(req.body);
     const product = await updateProduct(req.params.id, input);
     if (adminId.length > 0) {
+      const action =
+        req.body.isArchived === true
+          ? 'product_archived'
+          : req.body.isArchived === false
+              ? 'product_unarchived'
+              : 'product_updated';
       await logAdminActivity({
         adminId,
-        action: 'product_updated',
+        action,
         entityType: 'product',
         entityId: product.id,
-        details: { name: product.name },
+        details: {
+          name: product.name,
+          isArchived: String(product.isArchived),
+          inStock: String(product.inStock),
+        },
       });
     }
     res.json({ success: true, data: product });

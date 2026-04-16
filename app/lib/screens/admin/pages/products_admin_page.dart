@@ -8,6 +8,7 @@ import '../../../models/product.dart';
 import '../admin_theme.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
+import '../widgets/admin_anchored_popover.dart';
 import '../../../services/backend_storage_service.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/model_path_helper.dart';
@@ -24,6 +25,7 @@ class ProductsAdminPage extends StatefulWidget {
 class _ProductsAdminPageState extends State<ProductsAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
+  final GlobalKey _filterAnchorKey = GlobalKey();
   List<Product> _products = [];
   bool _loading = true;
   String _segment = 'all';
@@ -130,97 +132,114 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
 
   int get _activeFilterCount => (_segment != 'all' ? 1 : 0) + (_sortBy != 'newest' ? 1 : 0);
 
-  void _showProductFilterSheet() {
+  void _showProductFilterPopover() {
     var tempSegment = _segment;
     var tempSort = _sortBy;
-    showModalBottomSheet<void>(
+    AdminAnchoredPopover.show<void>(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text('Filter Products', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
-                    const Spacer(),
-                    IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: tempSort,
-                  items: const [
-                    DropdownMenuItem(value: 'newest', child: Text('Newest First')),
-                    DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
-                    DropdownMenuItem(value: 'name_az', child: Text('Name A-Z')),
-                    DropdownMenuItem(value: 'name_za', child: Text('Name Z-A')),
-                    DropdownMenuItem(value: 'price_high', child: Text('Price: High to Low')),
-                    DropdownMenuItem(value: 'price_low', child: Text('Price: Low to High')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    tempSort = v;
-                  },
-                ),
-                const SizedBox(height: 10),
-                const Text('Category', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: tempSegment,
-                  items: [
-                    const DropdownMenuItem(value: 'all', child: Text('All Categories')),
-                    ..._categories.map((c) => DropdownMenuItem(value: c.toLowerCase(), child: Text(c))),
-                    const DropdownMenuItem(value: 'archived', child: Text('Archived')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    tempSegment = v;
-                  },
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    OutlinedButton(
-                      onPressed: () {
-                        tempSegment = 'all';
-                        tempSort = 'newest';
-                        setState(() {
-                          _segment = tempSegment;
-                          _sortBy = tempSort;
-                          _pageIndex = 0;
-                        });
-                        Navigator.of(sheetContext).pop();
-                      },
-                      child: const Text('Reset'),
+      anchorKey: _filterAnchorKey,
+      width: 360,
+      height: 320,
+      child: StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Material(
+            color: Colors.white,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Filter Products',
+                        style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w700),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempSort,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                    const Spacer(),
-                    FilledButton(
-                      onPressed: () {
-                        setState(() {
-                          _segment = tempSegment;
-                          _sortBy = tempSort;
-                          _pageIndex = 0;
-                        });
-                        Navigator.of(sheetContext).pop();
-                      },
-                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
-                      child: const Text('Apply'),
+                    items: const [
+                      DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                      DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                      DropdownMenuItem(value: 'name_az', child: Text('Name A–Z')),
+                      DropdownMenuItem(value: 'name_za', child: Text('Name Z–A')),
+                      DropdownMenuItem(value: 'price_high', child: Text('Price: High to Low')),
+                      DropdownMenuItem(value: 'price_low', child: Text('Price: Low to High')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempSort = v);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('Category', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempSegment,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                  ],
-                ),
-              ],
+                    items: [
+                      const DropdownMenuItem(value: 'all', child: Text('All Categories')),
+                      ..._categories.map(
+                        (c) => DropdownMenuItem(value: c.toLowerCase(), child: Text(c)),
+                      ),
+                      const DropdownMenuItem(value: 'archived', child: Text('Archived')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempSegment = v);
+                    },
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => setModalState(() {
+                          tempSegment = 'all';
+                          tempSort = 'newest';
+                        }),
+                        child: const Text('Reset'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() {
+                            _segment = tempSegment;
+                            _sortBy = tempSort;
+                            _pageIndex = 0;
+                          });
+                          Navigator.of(ctx).pop();
+                        },
+                        child: const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -463,10 +482,13 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
               const SizedBox(width: 12),
               Stack(
                 children: [
-                  IconButton.outlined(
-                    onPressed: _showProductFilterSheet,
-                    icon: const Icon(Icons.tune_outlined),
-                    tooltip: 'Filter',
+                  SizedBox(
+                    key: _filterAnchorKey,
+                    child: IconButton.outlined(
+                      onPressed: _showProductFilterPopover,
+                      icon: const Icon(Icons.tune_outlined),
+                      tooltip: 'Filter',
+                    ),
                   ),
                   if (_activeFilterCount > 0)
                     Positioned(

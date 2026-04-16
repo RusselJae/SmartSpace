@@ -103,6 +103,44 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
     }
   }
 
+  Future<void> _createFaqFromFallback({
+    required String question,
+    required String answer,
+    required int sortOrder,
+  }) async {
+    final result = await showDialog<_FaqFormData>(
+      context: context,
+      builder: (_) => _FaqFormDialog(
+        isEdit: false,
+        initialQuestion: question,
+        initialAnswer: answer,
+        initialSortOrder: sortOrder,
+      ),
+    );
+    if (result == null) return;
+
+    final adminId = _adminAuth.currentAdminId;
+    if (adminId == null) {
+      Toast.error(context, 'Admin session expired. Please sign in again.');
+      return;
+    }
+
+    try {
+      await _db.createFaq(
+        adminId: adminId,
+        question: result.question,
+        answer: result.answer,
+        sortOrder: result.sortOrder,
+      );
+      if (!mounted) return;
+      Toast.success(context, 'FAQ added');
+      await _loadFaqs();
+    } catch (e) {
+      if (!mounted) return;
+      Toast.error(context, 'Failed to add FAQ: $e');
+    }
+  }
+
   Future<void> _editFaq(Faq faq) async {
     final result = await showDialog<_FaqFormData>(
       context: context,
@@ -272,6 +310,15 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
                                 child: Text(
                                   entry.$2,
                                   style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[700]),
+                                ),
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.edit_outlined, size: 20),
+                                tooltip: 'Edit',
+                                onPressed: () => _createFaqFromFallback(
+                                  question: entry.$1,
+                                  answer: entry.$2,
+                                  sortOrder: _fallbackFaqs.indexOf(entry),
                                 ),
                               ),
                             ),

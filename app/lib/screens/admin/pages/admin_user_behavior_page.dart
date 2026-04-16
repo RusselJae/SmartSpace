@@ -270,7 +270,7 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
         entries: topSpenders,
         onSegmentSelected: (i) => setState(() => _insightSegments[0] = i),
         onOpenPanel: widget.onOpenReviews,
-        openLabel: 'Open Reviews Panel',
+        openLabel: '',
       ),
       AdminInsightColumn(
         title: 'Top Reviewers',
@@ -279,7 +279,7 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
         entries: topReviewers,
         onSegmentSelected: (i) => setState(() => _insightSegments[1] = i),
         onOpenPanel: widget.onOpenReviews,
-        openLabel: 'Open Reviews Panel',
+        openLabel: '',
       ),
       AdminInsightColumn(
         title: 'Review Statuses',
@@ -288,7 +288,7 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
         entries: statuses,
         onSegmentSelected: (i) => setState(() => _insightSegments[2] = i),
         onOpenPanel: widget.onOpenReviews,
-        openLabel: 'Open Reviews Panel',
+        openLabel: '',
       ),
     ];
   }
@@ -335,54 +335,6 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
             ),
             const SizedBox(height: 24),
             AdminInsightPanelRow(columns: _buildBottomInsightColumns(spenders)),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Text('Recent reviews', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                const Spacer(),
-                if (widget.onOpenReviews != null)
-                  TextButton(
-                    onPressed: widget.onOpenReviews,
-                    child: const Text('View All Reviews'),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (_recentReviews.isEmpty)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text('No reviews yet.', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AdminAnalyticsColors.muted)),
-                ),
-              )
-            else
-              Card(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _recentReviews.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, i) {
-                    final r = _recentReviews[i];
-                    return ListTile(
-                      title: Text(r.productName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text(
-                        '${r.userName.isEmpty ? 'User' : r.userName} · ${AdminFormatters.decimal(r.rating.toDouble(), digits: 1)}★ · ${AdminFormatters.dateYmd(r.createdAt)}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AdminAnalyticsColors.neutralTrack,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(r.status, style: Theme.of(context).textTheme.labelSmall),
-                      ),
-                    );
-                  },
-                ),
-              ),
           ],
         ),
       ),

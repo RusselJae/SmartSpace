@@ -30,10 +30,10 @@ class AdminRoutes {
     reviews,
     users,
     admins,
-    support,
-    faqs,
-    legal,
     activityLogs,
+    faqs,
+    support,
+    legal,
     settings,
   ];
 

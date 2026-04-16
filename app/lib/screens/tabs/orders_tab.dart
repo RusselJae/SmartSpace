@@ -1463,7 +1463,9 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
       final url = await widget.db.createPaymongoCheckoutSession(
         orderId: widget.order.id,
         userId: user.id,
-        amountPesos: widget.allowCustomAmount ? amountToPay : null,
+          // Always send an amount. When custom is disabled we still want to charge
+          // the exact remaining balance (instead of letting the server default).
+          amountPesos: amountToPay,
       );
       if (!mounted) return;
       await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);

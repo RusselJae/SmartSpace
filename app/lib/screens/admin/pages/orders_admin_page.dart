@@ -10,6 +10,7 @@ import '../../../models/order_record.dart';
 import '../../../services/mysql_database_service.dart';
 import '../../../config/api_config.dart';
 import '../widgets/admin_toolbar.dart';
+import '../widgets/admin_anchored_popover.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/order_payment_balance.dart';
 
@@ -25,6 +26,7 @@ class OrdersAdminPage extends StatefulWidget {
 class _OrdersAdminPageState extends State<OrdersAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
+  final GlobalKey _filterAnchorKey = GlobalKey();
   final List<String> _statuses = const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
   
   List<OrderRecord> _orders = [];
@@ -152,7 +154,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     return count;
   }
 
-  void _showOrderFilterSheet() {
+  void _showOrderFilterPopover() {
     String tempStatus = _filter;
     String tempSort = _sortBy;
     DateTime? tempFrom = _createdFrom;
@@ -178,130 +180,161 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       });
     }
 
-    showModalBottomSheet<void>(
+    AdminAnchoredPopover.show<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Filter Orders',
-                          style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700),
+      anchorKey: _filterAnchorKey,
+      width: 380,
+      height: 360,
+      child: StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Material(
+            color: Colors.white,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Filter Orders',
+                        style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w700),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Sort by',
+                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempSort,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                      DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                      DropdownMenuItem(value: 'amount_high', child: Text('Amount: High to Low')),
+                      DropdownMenuItem(value: 'amount_low', child: Text('Amount: Low to High')),
+                      DropdownMenuItem(value: 'customer_az', child: Text('Customer A–Z')),
+                      DropdownMenuItem(value: 'customer_za', child: Text('Customer Z–A')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempSort = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Status',
+                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempStatus,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem(value: 'all', child: Text('All Statuses')),
+                      ..._statuses.map(
+                        (s) => DropdownMenuItem(
+                          value: s,
+                          child: Text('${s[0].toUpperCase()}${s.substring(1)}'),
                         ),
-                        const Spacer(),
-                        IconButton(
-                          onPressed: () => Navigator.of(sheetContext).pop(),
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text('Sort by', style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54)),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: tempSort,
-                      items: const [
-                        DropdownMenuItem(value: 'newest', child: Text('Newest First')),
-                        DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
-                        DropdownMenuItem(value: 'amount_high', child: Text('Amount: High to Low')),
-                        DropdownMenuItem(value: 'amount_low', child: Text('Amount: Low to High')),
-                        DropdownMenuItem(value: 'customer_az', child: Text('Customer A-Z')),
-                        DropdownMenuItem(value: 'customer_za', child: Text('Customer Z-A')),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setModalState(() => tempSort = v);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Text('Status', style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54)),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: tempStatus,
-                      items: [
-                        const DropdownMenuItem(value: 'all', child: Text('All Statuses')),
-                        ..._statuses.map((s) => DropdownMenuItem(value: s, child: Text('${s[0].toUpperCase()}${s.substring(1)}'))),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setModalState(() => tempStatus = v);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => pickDate(isFrom: true, setModalState: setModalState),
-                            icon: const Icon(Icons.calendar_month_outlined, size: 18),
-                            label: Text(
-                              tempFrom == null ? 'Created From' : tempFrom!.toIso8601String().split('T').first,
-                            ),
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempStatus = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => pickDate(
+                            isFrom: true,
+                            setModalState: setModalState,
+                          ),
+                          icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                          label: Text(
+                            tempFrom == null
+                                ? 'Created From'
+                                : tempFrom!.toIso8601String().split('T').first,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => pickDate(isFrom: false, setModalState: setModalState),
-                            icon: const Icon(Icons.event_available_outlined, size: 18),
-                            label: Text(
-                              tempTo == null ? 'Created To' : tempTo!.toIso8601String().split('T').first,
-                            ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => pickDate(
+                            isFrom: false,
+                            setModalState: setModalState,
+                          ),
+                          icon: const Icon(Icons.event_available_outlined, size: 18),
+                          label: Text(
+                            tempTo == null
+                                ? 'Created To'
+                                : tempTo!.toIso8601String().split('T').first,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        OutlinedButton(
-                          onPressed: () {
-                            setModalState(() {
-                              tempStatus = 'all';
-                              tempSort = 'newest';
-                              tempFrom = null;
-                              tempTo = null;
-                            });
-                          },
-                          child: const Text('Reset'),
-                        ),
-                        const Spacer(),
-                        FilledButton(
-                          onPressed: () {
-                            setState(() {
-                              _filter = tempStatus;
-                              _sortBy = tempSort;
-                              _createdFrom = tempFrom;
-                              _createdTo = tempTo;
-                              _pageIndex = 0;
-                            });
-                            Navigator.of(sheetContext).pop();
-                          },
-                          style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
-                          child: const Text('Apply'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed: () {
+                          setModalState(() {
+                            tempStatus = 'all';
+                            tempSort = 'newest';
+                            tempFrom = null;
+                            tempTo = null;
+                          });
+                        },
+                        child: const Text('Reset'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() {
+                            _filter = tempStatus;
+                            _sortBy = tempSort;
+                            _createdFrom = tempFrom;
+                            _createdTo = tempTo;
+                            _pageIndex = 0;
+                          });
+                          Navigator.of(ctx).pop();
+                        },
+                        child: const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            );
-          },
-        );
-      },
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -1385,10 +1418,13 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
               const SizedBox(width: 12),
               Stack(
                 children: [
-                  IconButton.outlined(
-                    onPressed: _showOrderFilterSheet,
-                    icon: const Icon(Icons.tune_outlined),
-                    tooltip: 'Filter',
+                  SizedBox(
+                    key: _filterAnchorKey,
+                    child: IconButton.outlined(
+                      onPressed: _showOrderFilterPopover,
+                      icon: const Icon(Icons.tune_outlined),
+                      tooltip: 'Filter',
+                    ),
                   ),
                   if (_activeOrderFilterCount > 0)
                     Positioned(

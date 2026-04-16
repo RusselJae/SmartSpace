@@ -22,6 +22,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -77,4 +78,7 @@ dependencies {
     implementation("io.github.sceneview:sceneview:2.2.1")
     // ARSceneView module, which exposes io.github.sceneview.ar.ARSceneView.
     implementation("io.github.sceneview:arsceneview:2.2.1")
+
+    // Needed by flutter_local_notifications (uses java.time / newer JDK APIs on Android).
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }

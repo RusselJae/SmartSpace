@@ -8,6 +8,7 @@ import '../../../services/admin_support_inbox_navigation_service.dart';
 import '../../../services/mysql_database_service.dart';
 import '../admin_routes.dart';
 import '../widgets/admin_toolbar.dart';
+import '../widgets/admin_anchored_popover.dart';
 import '../../../widgets/toast.dart';
 
 /// User management page with search, filtering, and detailed user views.
@@ -22,6 +23,7 @@ class UsersAdminPage extends StatefulWidget {
 class _UsersAdminPageState extends State<UsersAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
+  final GlobalKey _filterAnchorKey = GlobalKey();
   
   List<User> _users = [];
   bool _loading = true;
@@ -118,85 +120,102 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
 
   int get _activeFilterCount => (_sortBy != 'newest' ? 1 : 0) + (_onlyWithOrders ? 1 : 0);
 
-  void _showUserFilterSheet() {
+  void _showUserFilterPopover() {
     var tempSort = _sortBy;
     var tempOnlyWithOrders = _onlyWithOrders;
-    showModalBottomSheet<void>(
+    AdminAnchoredPopover.show<void>(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text('Filter Customers', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
-                        const Spacer(),
-                        IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: tempSort,
-                      items: const [
-                        DropdownMenuItem(value: 'newest', child: Text('Newest First')),
-                        DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
-                        DropdownMenuItem(value: 'name_az', child: Text('Name A-Z')),
-                        DropdownMenuItem(value: 'name_za', child: Text('Name Z-A')),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setModalState(() => tempSort = v);
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    SwitchListTile.adaptive(
-                      value: tempOnlyWithOrders,
-                      onChanged: (v) => setModalState(() => tempOnlyWithOrders = v),
-                      title: const Text('Only Customers With Orders'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        OutlinedButton(
-                          onPressed: () => setModalState(() {
-                            tempSort = 'newest';
-                            tempOnlyWithOrders = false;
-                          }),
-                          child: const Text('Reset'),
+      anchorKey: _filterAnchorKey,
+      width: 360,
+      height: 280,
+      child: StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Material(
+            color: Colors.white,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Filter Customers',
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
                         ),
-                        const Spacer(),
-                        FilledButton(
-                          onPressed: () {
-                            setState(() {
-                              _sortBy = tempSort;
-                              _onlyWithOrders = tempOnlyWithOrders;
-                              _pageIndex = 0;
-                            });
-                            Navigator.of(sheetContext).pop();
-                          },
-                          style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
-                          child: const Text('Apply'),
-                        ),
-                      ],
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Sort by',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempSort,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                  ],
-                ),
+                    items: const [
+                      DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                      DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                      DropdownMenuItem(value: 'name_az', child: Text('Name A–Z')),
+                      DropdownMenuItem(value: 'name_za', child: Text('Name Z–A')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempSort = v);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  SwitchListTile.adaptive(
+                    value: tempOnlyWithOrders,
+                    onChanged: (v) => setModalState(() => tempOnlyWithOrders = v),
+                    title: const Text('Only Customers With Orders'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => setModalState(() {
+                          tempSort = 'newest';
+                          tempOnlyWithOrders = false;
+                        }),
+                        child: const Text('Reset'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() {
+                            _sortBy = tempSort;
+                            _onlyWithOrders = tempOnlyWithOrders;
+                            _pageIndex = 0;
+                          });
+                          Navigator.of(ctx).pop();
+                        },
+                        child: const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            );
-          },
-        );
-      },
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -315,10 +334,13 @@ class _UsersAdminPageState extends State<UsersAdminPage> {
               const SizedBox(width: 12),
               Stack(
                 children: [
-                  IconButton.outlined(
-                    onPressed: _showUserFilterSheet,
-                    icon: const Icon(Icons.tune_outlined),
-                    tooltip: 'Filter',
+                  SizedBox(
+                    key: _filterAnchorKey,
+                    child: IconButton.outlined(
+                      onPressed: _showUserFilterPopover,
+                      icon: const Icon(Icons.tune_outlined),
+                      tooltip: 'Filter',
+                    ),
                   ),
                   if (_activeFilterCount > 0)
                     Positioned(

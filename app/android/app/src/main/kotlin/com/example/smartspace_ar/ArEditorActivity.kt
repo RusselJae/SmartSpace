@@ -306,21 +306,149 @@ class ArEditorActivity : ComponentActivity() {
             }
         }
 
-        // Hide AR plane/point visual guides (white dots/mesh style overlays)
-        // so users see a cleaner camera feed. We do this via reflection to
-        // stay compatible across SceneView minor API variations.
+        // --------------------------------------------------------------------
+        // Anti-floating pass (1/3): depth occlusion (when supported).
+        // --------------------------------------------------------------------
+        //
+        // Depth occlusion is the biggest realism cue: real-world geometry can
+        // visually overlap the model so it doesn't read like it's hovering.
+        //
+        // SceneView exposes this on ARCameraStream, but the API name can vary,
+        // so we enable it via reflection.
         try {
-            val planeRenderer =
+            val cameraStream =
                 arSceneView.javaClass.methods
-                    .firstOrNull { it.name == "getPlaneRenderer" && it.parameterCount == 0 }
+                    .firstOrNull { it.name == "getCameraStream" && it.parameterCount == 0 }
                     ?.invoke(arSceneView)
-            if (planeRenderer != null) {
-                planeRenderer.javaClass.methods
-                    .firstOrNull { it.name == "setEnabled" && it.parameterCount == 1 }
-                    ?.invoke(planeRenderer, false)
-                planeRenderer.javaClass.methods
-                    .firstOrNull { it.name == "setVisible" && it.parameterCount == 1 }
-                    ?.invoke(planeRenderer, false)
+            if (cameraStream != null) {
+                listOf(
+                    "setDepthOcclusionEnabled",
+                    "setIsDepthOcclusionEnabled",
+                    "setDepthOcclusion"
+                ).forEach { mName ->
+                    try {
+                        cameraStream.javaClass.methods
+                            .firstOrNull { it.name == mName && it.parameterCount == 1 }
+                            ?.invoke(cameraStream, true)
+                    } catch (_: Throwable) {
+                    }
+                }
+                try {
+                    val f = cameraStream.javaClass.declaredFields.firstOrNull { it.name == "isDepthOcclusionEnabled" }
+                    if (f != null) {
+                        f.isAccessible = true
+                        if (f.type == Boolean::class.javaPrimitiveType || f.type == Boolean::class.java) {
+                            f.setBoolean(cameraStream, true)
+                        }
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        // Hide AR visual guides (plane mesh + feature-point dots).
+        //
+        // Important:
+        // - ARCore itself does NOT draw point-cloud dots; apps/libraries do.
+        // - SceneView's API surface has shifted between versions, so we use
+        //   reflection and attempt multiple known patterns.
+        //
+        // Goal: clean camera feed while keeping plane detection and hit-tests working.
+        try {
+            fun disableRenderer(obj: Any?) {
+                if (obj == null) return
+                val clazz = obj.javaClass
+                // Try common "enabled/visible" setters.
+                listOf("setEnabled", "setVisible", "setIsEnabled", "setIsVisible").forEach { name ->
+                    clazz.methods.firstOrNull { it.name == name && it.parameterCount == 1 }?.let { m ->
+                        try { m.invoke(obj, false) } catch (_: Throwable) {}
+                    }
+                }
+                // Try mutable boolean fields if present.
+                listOf("isEnabled", "enabled", "isVisible", "visible").forEach { fieldName ->
+                    try {
+                        val f = clazz.declaredFields.firstOrNull { it.name == fieldName }
+                        if (f != null) {
+                            f.isAccessible = true
+                            if (f.type == Boolean::class.javaPrimitiveType || f.type == Boolean::class.java) {
+                                f.setBoolean(obj, false)
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            }
+
+            fun tryDisableFromGetter(getterName: String) {
+                try {
+                    val target =
+                        arSceneView.javaClass.methods
+                            .firstOrNull { it.name == getterName && it.parameterCount == 0 }
+                            ?.invoke(arSceneView)
+                    disableRenderer(target)
+                } catch (_: Throwable) {
+                }
+            }
+
+            // Plane mesh renderer (common).
+            tryDisableFromGetter("getPlaneRenderer")
+            // Feature-point / point-cloud / debug renderers (varies by version).
+            tryDisableFromGetter("getPointCloudRenderer")
+            tryDisableFromGetter("getPointCloud")
+            tryDisableFromGetter("getPointCloudNode")
+            tryDisableFromGetter("getDebugRenderer")
+            tryDisableFromGetter("getArCoreDebugRenderer")
+
+            // Last-resort: scan fields on ARSceneView for any renderer/visualizer-like object
+            // (some versions expose these as properties instead of getters).
+            arSceneView.javaClass.declaredFields.forEach { f ->
+                try {
+                    f.isAccessible = true
+                    val name = f.name.lowercase()
+                    val typeName = (f.type.name ?: "").lowercase()
+                    val looksRelevant =
+                        name.contains("plane") ||
+                            name.contains("point") ||
+                            name.contains("cloud") ||
+                            name.contains("debug") ||
+                            typeName.contains("plane") ||
+                            typeName.contains("point") ||
+                            typeName.contains("cloud") ||
+                            typeName.contains("debug")
+                    if (!looksRelevant) return@forEach
+                    disableRenderer(f.get(arSceneView))
+                } catch (_: Throwable) {
+                }
+            }
+
+            // Also scan camera stream (some implementations hang visualizers off the stream).
+            try {
+                val stream =
+                    arSceneView.javaClass.methods
+                        .firstOrNull { it.name == "getCameraStream" && it.parameterCount == 0 }
+                        ?.invoke(arSceneView)
+                if (stream != null) {
+                    stream.javaClass.declaredFields.forEach { f ->
+                        try {
+                            f.isAccessible = true
+                            val name = f.name.lowercase()
+                            val typeName = (f.type.name ?: "").lowercase()
+                            val looksRelevant =
+                                name.contains("plane") ||
+                                    name.contains("point") ||
+                                    name.contains("cloud") ||
+                                    name.contains("debug") ||
+                                    typeName.contains("plane") ||
+                                    typeName.contains("point") ||
+                                    typeName.contains("cloud") ||
+                                    typeName.contains("debug")
+                            if (!looksRelevant) return@forEach
+                            disableRenderer(f.get(stream))
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
             }
         } catch (_: Throwable) {
         }
@@ -1589,6 +1717,12 @@ class ArEditorActivity : ComponentActivity() {
                 isRotationEditable = true
                 isScaleEditable = true
                 editableScaleRange = 0.3f..4.0f
+                // Anti-floating pass (2/3): allow model to cast shadows.
+                try {
+                    isShadowCaster = true
+                    isShadowReceiver = false
+                } catch (_: Throwable) {
+                }
 
                 // Preserve the user's current per-axis scaling across variants.
                 // Clamp to the same bounds as the editor to keep UX safe.
@@ -1769,6 +1903,12 @@ class ArEditorActivity : ComponentActivity() {
             isRotationEditable = true
             isScaleEditable = true
             editableScaleRange = 0.3f..4.0f
+            // Anti-floating pass (2/3): allow model to cast shadows.
+            try {
+                isShadowCaster = true
+                isShadowReceiver = false
+            } catch (_: Throwable) {
+            }
 
             // Apply the base scale (if provided by Flutter) so that the starting
             // size reflects any product‑level calibration before gestures.
@@ -1942,9 +2082,12 @@ class ArEditorActivity : ComponentActivity() {
             return Position(0f, 0f, 0f)
         }
         val lim = 8f
+        // Anti-floating pass (3/3): keep the model seated on the plane.
+        // We still allow X/Z drag, but collapse small Y drift back to 0.
+        val y = if (kotlin.math.abs(p.y) < 0.05f) 0f else p.y.coerceIn(-0.05f, 0.05f)
         return Position(
             x = p.x.coerceIn(-lim, lim),
-            y = p.y.coerceIn(-lim, lim),
+            y = y,
             z = p.z.coerceIn(-lim, lim)
         )
     }

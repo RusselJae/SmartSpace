@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../../models/admin.dart';
 import '../../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
+import '../widgets/admin_anchored_popover.dart';
 import '../../../../widgets/toast.dart';
 
 /// Admin management page for viewing and creating admin accounts.
@@ -25,6 +26,7 @@ class AdminsAdminPage extends StatefulWidget {
 class _AdminsAdminPageState extends State<AdminsAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
+  final GlobalKey _filterAnchorKey = GlobalKey();
   
   List<Admin> _admins = const [];
   bool _loading = true;
@@ -99,66 +101,81 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
 
   int get _activeFilterCount => _sortBy == 'newest' ? 0 : 1;
 
-  void _showAdminFilterSheet() {
+  void _showAdminFilterPopover() {
     var tempSort = _sortBy;
-    showModalBottomSheet<void>(
+    AdminAnchoredPopover.show<void>(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text('Filter Admins', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
-                    const Spacer(),
-                    IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: tempSort,
-                  items: const [
-                    DropdownMenuItem(value: 'newest', child: Text('Newest First')),
-                    DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
-                    DropdownMenuItem(value: 'name_az', child: Text('Name A-Z')),
-                    DropdownMenuItem(value: 'name_za', child: Text('Name Z-A')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    tempSort = v;
-                  },
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => setState(() => _sortBy = 'newest'),
-                      child: const Text('Reset'),
+      anchorKey: _filterAnchorKey,
+      width: 360,
+      height: 220,
+      child: StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Material(
+            color: Colors.white,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Filter Admins',
+                        style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w700),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempSort,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                    const Spacer(),
-                    FilledButton(
-                      onPressed: () {
-                        setState(() => _sortBy = tempSort);
-                        Navigator.of(sheetContext).pop();
-                      },
-                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
-                      child: const Text('Apply'),
-                    ),
-                  ],
-                ),
-              ],
+                    items: const [
+                      DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                      DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                      DropdownMenuItem(value: 'name_az', child: Text('Name A–Z')),
+                      DropdownMenuItem(value: 'name_za', child: Text('Name Z–A')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempSort = v);
+                    },
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => setModalState(() => tempSort = 'newest'),
+                        child: const Text('Reset'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() => _sortBy = tempSort);
+                          Navigator.of(ctx).pop();
+                        },
+                        child: const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -268,10 +285,13 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
               const SizedBox(width: 12),
               Stack(
                 children: [
-                  IconButton.outlined(
-                    onPressed: _showAdminFilterSheet,
-                    icon: const Icon(Icons.tune_outlined),
-                    tooltip: 'Filter',
+                  SizedBox(
+                    key: _filterAnchorKey,
+                    child: IconButton.outlined(
+                      onPressed: _showAdminFilterPopover,
+                      icon: const Icon(Icons.tune_outlined),
+                      tooltip: 'Filter',
+                    ),
                   ),
                   if (_activeFilterCount > 0)
                     Positioned(

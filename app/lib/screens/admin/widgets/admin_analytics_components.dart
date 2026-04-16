@@ -751,28 +751,27 @@ class _AdminInsightColumnCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            column.title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.1,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  column.title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.1,
+                      ),
                 ),
+              ),
+              if (column.onOpenPanel != null)
+                IconButton(
+                  onPressed: column.onOpenPanel,
+                  tooltip: column.openLabel.trim().isEmpty
+                      ? 'Open'
+                      : column.openLabel,
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                ),
+            ],
           ),
-          if (column.onOpenPanel != null)
-            Align(
-              alignment: Alignment.centerRight,
-              child: column.openLabel.trim().isEmpty
-                  ? IconButton(
-                      onPressed: column.onOpenPanel,
-                      tooltip: 'Open',
-                      icon: const Icon(Icons.open_in_new, size: 16),
-                    )
-                  : TextButton.icon(
-                      onPressed: column.onOpenPanel,
-                      icon: const Icon(Icons.open_in_new, size: 16),
-                      label: Text(column.openLabel),
-                    ),
-            ),
           if (column.segmentLabels.isNotEmpty) ...[
             const SizedBox(height: 12),
             Container(

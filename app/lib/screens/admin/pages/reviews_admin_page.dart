@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../models/review.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
+import '../widgets/admin_anchored_popover.dart';
 
 /// Reviews management page with moderation, search, and status filtering.
 /// Follows Apple HIG with clean layouts and smooth animations.
@@ -18,6 +19,7 @@ class ReviewsAdminPage extends StatefulWidget {
 class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
+  final GlobalKey _filterAnchorKey = GlobalKey();
   
   List<Review> _reviews = [];
   bool _loading = true;
@@ -113,98 +115,113 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
 
   int get _activeFilterCount => (_filter != 'all' ? 1 : 0) + (_sortBy != 'rating_low' ? 1 : 0);
 
-  void _showReviewFilterSheet() {
+  void _showReviewFilterPopover() {
     var tempFilter = _filter;
     var tempSort = _sortBy;
-    showModalBottomSheet<void>(
+    AdminAnchoredPopover.show<void>(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text('Filter Reviews', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
-                    const Spacer(),
-                    IconButton(onPressed: () => Navigator.of(sheetContext).pop(), icon: const Icon(Icons.close)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: tempSort,
-                  items: const [
-                    DropdownMenuItem(value: 'rating_low', child: Text('Rating: Low to High')),
-                    DropdownMenuItem(value: 'rating_high', child: Text('Rating: High to Low')),
-                    DropdownMenuItem(value: 'newest', child: Text('Newest First')),
-                    DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    tempSort = v;
-                  },
-                ),
-                const SizedBox(height: 10),
-                const Text('Rating', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  initialValue: tempFilter,
-                  items: const [
-                    DropdownMenuItem(value: 'all', child: Text('All Ratings')),
-                    DropdownMenuItem(value: '1', child: Text('1 Star')),
-                    DropdownMenuItem(value: '2', child: Text('2 Stars')),
-                    DropdownMenuItem(value: '3', child: Text('3 Stars')),
-                    DropdownMenuItem(value: '4', child: Text('4 Stars')),
-                    DropdownMenuItem(value: '5', child: Text('5 Stars')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    tempFilter = v;
-                  },
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    OutlinedButton(
-                      onPressed: () {
-                        tempFilter = 'all';
-                        tempSort = 'rating_low';
-                        setState(() {
-                          _filter = tempFilter;
-                          _sortBy = tempSort;
-                          _pageIndex = 0;
-                        });
-                        Navigator.of(sheetContext).pop();
-                      },
-                      child: const Text('Reset'),
+      anchorKey: _filterAnchorKey,
+      width: 360,
+      height: 320,
+      child: StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Material(
+            color: Colors.white,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Filter Reviews',
+                        style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w700),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Sort by', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempSort,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                    const Spacer(),
-                    FilledButton(
-                      onPressed: () {
-                        setState(() {
-                          _filter = tempFilter;
-                          _sortBy = tempSort;
-                          _pageIndex = 0;
-                        });
-                        Navigator.of(sheetContext).pop();
-                      },
-                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF5C4033)),
-                      child: const Text('Apply'),
+                    items: const [
+                      DropdownMenuItem(value: 'rating_low', child: Text('Rating: Low to High')),
+                      DropdownMenuItem(value: 'rating_high', child: Text('Rating: High to Low')),
+                      DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                      DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempSort = v);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('Rating', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: tempFilter,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: Color(0xFFF8F8F8),
+                      border: OutlineInputBorder(),
                     ),
-                  ],
-                ),
-              ],
+                    items: const [
+                      DropdownMenuItem(value: 'all', child: Text('All Ratings')),
+                      DropdownMenuItem(value: '1', child: Text('1 Star')),
+                      DropdownMenuItem(value: '2', child: Text('2 Stars')),
+                      DropdownMenuItem(value: '3', child: Text('3 Stars')),
+                      DropdownMenuItem(value: '4', child: Text('4 Stars')),
+                      DropdownMenuItem(value: '5', child: Text('5 Stars')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setModalState(() => tempFilter = v);
+                    },
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => setModalState(() {
+                          tempFilter = 'all';
+                          tempSort = 'rating_low';
+                        }),
+                        child: const Text('Reset'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() {
+                            _filter = tempFilter;
+                            _sortBy = tempSort;
+                            _pageIndex = 0;
+                          });
+                          Navigator.of(ctx).pop();
+                        },
+                        child: const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -304,10 +321,13 @@ class _ReviewsAdminPageState extends State<ReviewsAdminPage> {
               const SizedBox(width: 8),
               Stack(
                 children: [
-                  IconButton.outlined(
-                    onPressed: _showReviewFilterSheet,
-                    icon: const Icon(Icons.tune_outlined),
-                    tooltip: 'Filter',
+                  SizedBox(
+                    key: _filterAnchorKey,
+                    child: IconButton.outlined(
+                      onPressed: _showReviewFilterPopover,
+                      icon: const Icon(Icons.tune_outlined),
+                      tooltip: 'Filter',
+                    ),
                   ),
                   if (_activeFilterCount > 0)
                     Positioned(

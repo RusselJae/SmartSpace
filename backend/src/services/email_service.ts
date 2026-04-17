@@ -585,12 +585,19 @@ ${isCOD ? `<p style="margin:0;font-size:18px;line-height:1.45;color:#333;">Remai
       const invoice = await buildUpdatedOrderInvoiceHtml(orderId);
       const shortId = orderId.substring(0, 8).toUpperCase();
 
-      const htmlBody = buildWoodHomeTemplate({
-        heading: invoice.invoiceTitle,
-        greeting: `Hi ${user.full_name},`,
-        intro: `Updated Invoice for Order #${shortId} • ${escapeHtml(invoice.version.split('_').join(' '))}`,
-        bodyHtml: invoice.bodyHtml,
-      });
+      const htmlBody = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(invoice.invoiceTitle)}</title>
+</head>
+<body style="margin:0;padding:18px;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#111827;">
+  <div style="max-width:920px;margin:0 auto;background:#fff;border-radius:20px;padding:20px;box-shadow:0 10px 32px rgba(0,0,0,.08);">
+    ${invoice.bodyHtml}
+  </div>
+</body>
+</html>`;
 
       await sendEmail({
         to: user.email,

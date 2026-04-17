@@ -27,6 +27,10 @@ export type OrderLateFeeEventRow = RowDataPacket & {
 };
 
 type InvoiceVersion = 'deposit_version' | 'progress_version' | 'paid_final';
+type InvoiceLineItem = {
+  readonly description: string;
+  readonly amount: number;
+};
 
 export type InvoiceBuildResult = {
   readonly version: InvoiceVersion;
@@ -85,10 +89,16 @@ const buildInvoiceBodyHtml = (params: {
   readonly version: InvoiceVersion;
   readonly orderId: string;
   readonly invoiceTitle: string;
+  readonly customerName: string;
+  readonly line1: string;
+  readonly city: string;
+  readonly invoiceDate: Date;
+  readonly customerId: string;
   readonly totalPrice: number;
   readonly depositPaid: number;
   readonly totalBalanceDue: number;
   readonly totalLateFees: number;
+  readonly lineItems: readonly InvoiceLineItem[];
   readonly paymentEvents: OrderPaymentEventRow[];
   readonly lateFeeEvents: OrderLateFeeEventRow[];
 }): string => {
@@ -96,138 +106,75 @@ const buildInvoiceBodyHtml = (params: {
     version,
     orderId,
     invoiceTitle,
+    customerName,
+    line1,
+    city,
+    invoiceDate,
+    customerId,
     totalPrice,
     depositPaid,
     totalBalanceDue,
     totalLateFees,
+    lineItems,
     paymentEvents,
     lateFeeEvents,
   } = params;
   const invoiceNumber = orderId;
-
-  const paymentRowsHtml =
-    paymentEvents.length === 0
-      ? `<tr><td colspan="3" style="padding:10px 8px;color:#6b7280;">No payments recorded.</td></tr>`
-      : paymentEvents
+  const dateLabel = invoiceDate.toISOString().slice(0, 10);
+  const lineRows =
+    lineItems.length === 0
+      ? `<tr><td style="padding:8px 0;color:#4b5563;">Order item</td><td style="padding:8px 0;text-align:right;">${escapeHtml(formatPesos(totalPrice))}</td></tr>`
+      : lineItems
           .map(
-            (p) => `
+            (line) => `
           <tr>
-            <td style="padding:8px;color:#374151;">${escapeHtml(p.event_time.toISOString().slice(0, 10))}</td>
-            <td style="padding:8px;color:#374151;">${escapeHtml(p.event_type.replace(/_/g, ' '))}</td>
-            <td style="padding:8px;text-align:right;color:#111827;font-weight:600;">${escapeHtml(formatPesos(Number(p.amount)))}</td>
+            <td style="padding:8px 0;color:#111827;">${escapeHtml(line.description)}</td>
+            <td style="padding:8px 0;text-align:right;color:#111827;font-weight:600;">${escapeHtml(formatPesos(line.amount))}</td>
           </tr>`,
           )
           .join('');
-
-  const lateFeeRowsHtml =
-    lateFeeEvents.length === 0
-      ? `<tr><td colspan="2" style="padding:10px 8px;color:#6b7280;">No late fees applied yet.</td></tr>`
-      : lateFeeEvents
-          .map((f) => {
-            const d = f.fee_date.toISOString().slice(0, 10);
-            return `
-              <tr>
-                <td style="padding:8px;color:#374151;">${escapeHtml(d)}</td>
-                <td style="padding:8px;text-align:right;color:#111827;font-weight:600;">${escapeHtml(formatPesos(Number(f.amount)))}</td>
-              </tr>`;
-          })
-          .join('');
-
-  const paidStamp =
-    version === 'paid_final'
-      ? `<div style="position:absolute;top:18px;right:18px;background:#16a34a;color:#fff;padding:10px 14px;border-radius:14px;transform:rotate(8deg);font-weight:800;letter-spacing:1px;font-size:22px;">
-            PAID
-          </div>`
-      : '';
-
-  const versionBadge =
-    version === 'deposit_version'
-      ? `Deposit Version (Initial)`
-      : version === 'paid_final'
-        ? 'Paid Version (Final)'
-        : 'Progress Version (Middle)';
+  const paidStamp = version === 'paid_final' ? `<div style="margin-top:6px;font-weight:700;color:#16a34a;">PAID</div>` : '';
 
   return `
-      <div style="position:relative;">
-        ${paidStamp}
-        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px;">
-          <div style="display:flex;gap:12px;flex-wrap:wrap;">
-            <div style="flex:1;min-width:220px;">
-              <div style="font-size:12px;color:#6b7280;font-weight:700;letter-spacing:.02em;">Total Price</div>
-              <div style="font-size:20px;font-weight:900;color:#111827;margin-top:6px;">${escapeHtml(formatPesos(totalPrice))}</div>
-            </div>
-            <div style="flex:1;min-width:220px;">
-              <div style="font-size:12px;color:#6b7280;font-weight:700;letter-spacing:.02em;">Deposit Paid</div>
-              <div style="font-size:20px;font-weight:800;color:#7b5a4f;margin-top:6px;">${escapeHtml(formatPesos(depositPaid))}</div>
-            </div>
-            <div style="flex:1;min-width:220px;">
-              <div style="font-size:12px;color:#6b7280;font-weight:700;letter-spacing:.02em;">Total Late Fees</div>
-              <div style="font-size:20px;font-weight:800;color:#7b5a4f;margin-top:6px;">${escapeHtml(formatPesos(totalLateFees))}</div>
-            </div>
+      <div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;background:#fff;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+          <div>
+            <div style="font-size:30px;font-weight:800;line-height:1.1;color:#111827;">Wood Home Furniture Trading</div>
+            <div style="margin-top:10px;font-size:14px;color:#111827;">${escapeHtml(customerName)}</div>
+            <div style="font-size:14px;color:#111827;">${escapeHtml(line1)}</div>
+            <div style="font-size:14px;color:#111827;">${escapeHtml(city)}</div>
+            ${paidStamp}
+          </div>
+          <div style="min-width:280px;text-align:left;">
+            <div style="font-size:44px;font-weight:800;line-height:1;color:#111827;">Invoice</div>
+            <div style="margin-top:10px;font-size:14px;color:#111827;">Invoice #: ${escapeHtml(invoiceNumber)}</div>
+            <div style="font-size:14px;color:#111827;">Invoice Date: ${escapeHtml(dateLabel)}</div>
+            <div style="font-size:14px;color:#111827;">Invoice Amount: ${escapeHtml(formatPesos(totalPrice))}</div>
+            <div style="font-size:14px;color:#111827;">Customer ID: ${escapeHtml(customerId)}</div>
           </div>
         </div>
 
-        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
-          <div style="padding:12px 14px;background:#111827;color:#fff;font-weight:800;">Invoice Summary</div>
-          <div style="padding:14px;">
-            <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-              <div>
-                <div style="font-size:12px;color:#6b7280;font-weight:700;letter-spacing:.02em;">Total Balance Due</div>
-                <div style="font-size:34px;font-weight:900;color:#111827;margin-top:6px;">${escapeHtml(formatPesos(totalBalanceDue))}</div>
-                <div style="font-size:12px;color:#6b7280;margin-top:4px;">This amount updates automatically after each payment and late-fee charge.</div>
-              </div>
-              <div style="min-width:260px;max-width:320px;">
-                <div style="font-size:12px;color:#6b7280;font-weight:700;letter-spacing:.02em;">What’s included</div>
-                <div style="margin-top:8px;font-size:14px;color:#374151;line-height:1.5;">
-                  <div>• All payments made</div>
-                  <div>• Every ₱100/day late-fee charge after the 3-month window</div>
-                </div>
-              </div>
-            </div>
+        <div style="margin-top:14px;border-top:1px solid #d1d5db;"></div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th align="left" style="font-size:14px;color:#111827;font-weight:700;padding:6px 0;">DESCRIPTION</th>
+              <th align="right" style="font-size:14px;color:#111827;font-weight:700;padding:6px 0;">AMOUNT</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${lineRows}
+          </tbody>
+        </table>
+
+        <div style="margin-top:12px;display:flex;justify-content:flex-end;">
+          <div style="text-align:right;">
+            <div style="font-size:15px;color:#111827;">Total: ${escapeHtml(formatPesos(totalPrice))}</div>
+            <div style="font-size:24px;font-weight:800;color:#111827;line-height:1.2;">Amount Due: ${escapeHtml(formatPesos(totalBalanceDue))}</div>
           </div>
         </div>
 
-        <div style="height:12px;"></div>
-
-        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;margin-bottom:14px;">
-          <div style="padding:12px 14px;background:#f3f4f6;color:#111827;font-weight:800;">Payments</div>
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-            <thead>
-              <tr>
-                <th align="left" style="padding:8px;color:#6b7280;font-size:12px;font-weight:700;border-top:1px solid #e5e7eb;">Date</th>
-                <th align="left" style="padding:8px;color:#6b7280;font-size:12px;font-weight:700;border-top:1px solid #e5e7eb;">Type</th>
-                <th align="right" style="padding:8px;color:#6b7280;font-size:12px;font-weight:700;border-top:1px solid #e5e7eb;">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${paymentRowsHtml}
-            </tbody>
-          </table>
-        </div>
-
-        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
-          <div style="padding:12px 14px;background:#f3f4f6;color:#111827;font-weight:800;">Late Fees (₱100/day)</div>
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-            <thead>
-              <tr>
-                <th align="left" style="padding:8px;color:#6b7280;font-size:12px;font-weight:700;border-top:1px solid #e5e7eb;">Date</th>
-                <th align="right" style="padding:8px;color:#6b7280;font-size:12px;font-weight:700;border-top:1px solid #e5e7eb;">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${lateFeeRowsHtml}
-            </tbody>
-          </table>
-        </div>
-
-        <div style="height:18px;"></div>
-        <div style="background:#111827;border-radius:18px;padding:18px;position:relative;overflow:hidden;">
-          <div style="font-size:12px;color:#cbd5e1;font-weight:800;letter-spacing:.12em;text-transform:uppercase;">Balance Due</div>
-          <div style="font-size:38px;font-weight:900;color:#fff;margin-top:8px;letter-spacing:.01em;">${escapeHtml(formatPesos(totalBalanceDue))}</div>
-          <div style="font-size:12px;color:#cbd5e1;margin-top:6px;line-height:1.4;">This invoice updates automatically as payments and daily late fees are recorded.</div>
-        </div>
-
-        <div style="margin-top:14px;background:#F0EEF9;border-radius:14px;padding:14px;color:#4B5563;font-size:12px;line-height:1.4;">
+        <div style="margin-top:10px;background:#f3f4f6;border-radius:8px;padding:8px 10px;color:#4b5563;font-size:12px;line-height:1.4;">
           Notes: Please pay your invoice within 6 months of receiving it
         </div>
       </div>
@@ -245,7 +192,12 @@ export const buildUpdatedOrderInvoiceHtml = async (orderId: string): Promise<Inv
       downpayment_amount,
       remaining_balance,
       payment_status,
-      payment_plan
+      payment_plan,
+      user_id,
+      contact_name,
+      shipping_line1,
+      shipping_region,
+      created_at
      FROM orders
      WHERE id = ?
      LIMIT 1`,
@@ -283,6 +235,17 @@ export const buildUpdatedOrderInvoiceHtml = async (orderId: string): Promise<Inv
 
   const paidSum = paymentEvents.reduce((sum, p) => sum + Number(p.amount), 0);
   const totalLateFees = lateFeeEvents.reduce((sum, f) => sum + Number(f.amount), 0);
+  const [itemRows] = await pool.query<RowDataPacket[]>(
+    `SELECT product_name, quantity, line_total
+     FROM order_items
+     WHERE order_id = ?
+     ORDER BY id ASC`,
+    [orderId],
+  );
+  const lineItems: InvoiceLineItem[] = itemRows.map((r) => ({
+    description: `${String(r.product_name ?? 'Item')} x${Number(r.quantity ?? 1)}`,
+    amount: Number(r.line_total ?? 0),
+  }));
 
   // Remaining balance is the authoritative amount customers still owe.
   const totalBalanceDue = remainingBalance > 0 ? remainingBalance : 0;
@@ -310,10 +273,16 @@ export const buildUpdatedOrderInvoiceHtml = async (orderId: string): Promise<Inv
     version,
     orderId,
     invoiceTitle,
+    customerName: String(order.contact_name ?? 'Customer'),
+    line1: String(order.shipping_line1 ?? ''),
+    city: String(order.shipping_region ?? ''),
+    invoiceDate: order.created_at instanceof Date ? order.created_at : new Date(order.created_at),
+    customerId: String(order.user_id ?? ''),
     totalPrice: totalAmount,
     depositPaid: depositPaid > 0 ? depositPaid : downpaymentAmount,
     totalBalanceDue,
     totalLateFees,
+    lineItems,
     paymentEvents,
     lateFeeEvents,
   });

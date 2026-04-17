@@ -158,6 +158,25 @@ const reconcileFulfillmentStatusForOutstandingBalance = async (
   );
 };
 
+const notifyAdminsOrderFullyPaid = async (params: {
+  readonly orderId: string;
+  readonly paidAmount: number;
+  readonly previousRemaining: number;
+}): Promise<void> => {
+  if (params.previousRemaining <= 0.01) {
+    return;
+  }
+  await EmailService.sendAdminEventEmail({
+    title: 'Order Fully Paid',
+    message: `Order #${params.orderId.substring(0, 8).toUpperCase()} has been fully paid.`,
+    details: [
+      { label: 'Order ID', value: params.orderId },
+      { label: 'Payment Received', value: `₱${params.paidAmount.toFixed(2)}` },
+      { label: 'Previous Remaining Balance', value: `₱${params.previousRemaining.toFixed(2)}` },
+    ],
+  });
+};
+
 export const listOrders = async (): Promise<OrderRecord[]> => {
   const pool = getPool();
   // Auto-heal rows before returning them to admin/user apps.
@@ -488,6 +507,11 @@ export const markOrderPaidViaPaymongo = async (
     }
     // Lay-away / one-shot full pay: ETA starts at full settlement (Hulugan one-shot included).
     await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+    await notifyAdminsOrderFullyPaid({
+      orderId,
+      paidAmount: paidAmount ?? orderTotal,
+      previousRemaining: rem,
+    });
     console.log(`✅ PayMongo full payment recorded for order ${orderId}`);
 
     // Invoice updates only apply to PayMongo downpayment plans.
@@ -594,6 +618,11 @@ export const markOrderPaidViaPaymongo = async (
         );
         await persistEventId();
         await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        await notifyAdminsOrderFullyPaid({
+          orderId,
+          paidAmount,
+          previousRemaining: rem,
+        });
         console.log(`✅ PayMongo balance settled for order ${orderId} (pending row matched remaining)`);
 
         if (isDownPlan) {
@@ -653,6 +682,11 @@ export const markOrderPaidViaPaymongo = async (
           [orderId],
         );
         await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        await notifyAdminsOrderFullyPaid({
+          orderId,
+          paidAmount,
+          previousRemaining: rem,
+        });
         console.log(`✅ PayMongo balance settled for order ${orderId} (pending single-shot overpay)`);
       }
 
@@ -702,6 +736,11 @@ export const markOrderPaidViaPaymongo = async (
       }
       // Lay-away second tranche (or non-hulugan): ETA from final payment; hulugan keeps DP-based ETA.
       await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+      await notifyAdminsOrderFullyPaid({
+        orderId,
+        paidAmount,
+        previousRemaining: rem,
+      });
       console.log(`✅ PayMongo balance settled for order ${orderId}`);
 
       if (isDownPlan) {
@@ -769,6 +808,11 @@ export const markOrderPaidViaPaymongo = async (
           [orderId],
         );
         await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        await notifyAdminsOrderFullyPaid({
+          orderId,
+          paidAmount,
+          previousRemaining: rem,
+        });
         console.log(`✅ PayMongo balance settled for order ${orderId} (rounding during partial)`);
       }
 
@@ -807,6 +851,11 @@ export const markOrderPaidViaPaymongo = async (
         [orderId],
       );
       await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+      await notifyAdminsOrderFullyPaid({
+        orderId,
+        paidAmount,
+        previousRemaining: rem,
+      });
       console.log(`✅ PayMongo full payment (amount matched total) for order ${orderId}`);
       if (previousStatus !== 'confirmed') {
         EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
@@ -850,6 +899,11 @@ export const markOrderPaidViaPaymongo = async (
     [orderId],
   );
   await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+  await notifyAdminsOrderFullyPaid({
+    orderId,
+    paidAmount: paidAmount ?? orderTotal,
+    previousRemaining: rem,
+  });
   console.log(`✅ PayMongo full payment recorded for order ${orderId} (fallback tail)`);
   if (previousStatus !== 'confirmed') {
     EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
@@ -1477,6 +1531,21 @@ export const confirmPayment = async (
   EmailService.sendPaymentConfirmationEmail(userId, orderId, orderTotal, paymentMethod).catch((error) => {
     console.error('Failed to send payment confirmation email:', error);
   });
+
+  if (paymentStatus === 'completed') {
+    EmailService.sendAdminEventEmail({
+      title: 'Order Fully Paid',
+      message: `Order #${orderId.substring(0, 8).toUpperCase()} was fully paid and verified by admin.`,
+      details: [
+        { label: 'Order ID', value: orderId },
+        { label: 'Admin ID', value: adminId },
+        { label: 'Amount', value: `₱${orderTotal.toFixed(2)}` },
+        { label: 'Method', value: paymentMethod },
+      ],
+    }).catch((error) => {
+      console.error('Failed to send admin full-payment alert email:', error);
+    });
+  }
 };
 
 const parseEnvPositiveInt = (key: string, fallback: number): number => {

@@ -118,7 +118,14 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
     final shipping = (order['shippingAddress'] as Map<String, dynamic>? ?? const {});
     final items = _lineItems();
 
-    final pdf = pw.Document();
+    final baseFont = await PdfGoogleFonts.notoSansRegular();
+    final boldFont = await PdfGoogleFonts.notoSansBold();
+    final pdf = pw.Document(
+      theme: pw.ThemeData.withFont(
+        base: baseFont,
+        bold: boldFont,
+      ),
+    );
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -182,7 +189,7 @@ class _OrderInvoiceScreenState extends State<OrderInvoiceScreen> {
                   ),
                 );
               }),
-              pw.Spacer(),
+              pw.SizedBox(height: 10),
               pw.Align(
                 alignment: pw.Alignment.centerRight,
                 child: pw.Column(

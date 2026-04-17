@@ -127,8 +127,41 @@ const mapOrder = async (row: OrderRow): Promise<OrderRecord> => {
   };
 };
 
+/**
+ * Safety net for legacy / stale rows:
+ * If fulfillment status says shipped/delivered but money is still owed,
+ * force it back to confirmed so fulfillment cannot continue early.
+ */
+const reconcileFulfillmentStatusForOutstandingBalance = async (
+  pool: Pool,
+  orderId?: string,
+): Promise<void> => {
+  if (orderId != null) {
+    await pool.query(
+      `UPDATE orders
+       SET status = 'confirmed',
+           updated_at = NOW()
+       WHERE id = ?
+         AND LOWER(TRIM(COALESCE(status, ''))) IN ('shipped', 'delivered')
+         AND COALESCE(remaining_balance, 0) > 0.01`,
+      [orderId],
+    );
+    return;
+  }
+
+  await pool.query(
+    `UPDATE orders
+     SET status = 'confirmed',
+         updated_at = NOW()
+     WHERE LOWER(TRIM(COALESCE(status, ''))) IN ('shipped', 'delivered')
+       AND COALESCE(remaining_balance, 0) > 0.01`,
+  );
+};
+
 export const listOrders = async (): Promise<OrderRecord[]> => {
   const pool = getPool();
+  // Auto-heal rows before returning them to admin/user apps.
+  await reconcileFulfillmentStatusForOutstandingBalance(pool);
   const [rows] = await pool.query<OrderRow[]>(
     `
     SELECT o.*, u.full_name AS user_name
@@ -164,6 +197,8 @@ export const updateOrderValidIdProofUrl = async (orderId: string, proofUrl: stri
 
 export const getOrderById = async (orderId: string): Promise<OrderRecord | null> => {
   const pool = getPool();
+  // Keep single-order reads consistent with list reads.
+  await reconcileFulfillmentStatusForOutstandingBalance(pool, orderId);
   const [rows] = await pool.query<OrderRow[]>(
     `SELECT o.*, u.full_name AS user_name
      FROM orders o
@@ -1207,15 +1242,21 @@ export const updateOrderStatus = async (orderId: string, status: string): Promis
 
   // Delivery gating for admin-managed transitions.
   if (status === 'shipped' || status === 'delivered') {
-    // Shipping and delivery must wait until the order is fully settled.
-    // A down payment is enough for confirmation, but not for fulfillment.
-    if (!paymentCompleted) {
+    // Hard rule requested: shipping is only allowed when remaining balance is fully cleared.
+    // We intentionally key this to `remaining_balance`, not just `payment_status`, so stale
+    // status labels can never bypass fulfillment gating.
+    if (remaining > 0.01) {
       if (isLayaway) {
-        throw new Error('Lay-away orders can only be shipped/delivered after full payment.');
+        throw new Error('Lay-away orders can only be shipped/delivered when remaining balance is ₱0.');
       }
       if (isHulugan) {
-        throw new Error('Hulugan orders can only be shipped/delivered after the remaining balance is fully paid.');
+        throw new Error('Installment orders can only be shipped/delivered when remaining balance is ₱0.');
       }
+      throw new Error('Orders can only be shipped/delivered when remaining balance is ₱0.');
+    }
+
+    // Extra safety for older rows where remaining might be 0 but payment status is still stale.
+    if (!paymentCompleted) {
       throw new Error('Orders can only be shipped/delivered after payment is completed.');
     }
   }

@@ -1296,6 +1296,17 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
 
   /// Updates order status with a smooth animation and user feedback.
   Future<void> _updateStatus(OrderRecord order, String status) async {
+    final remainingBalance = parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? 0.0;
+    final normalizedTarget = status.toLowerCase();
+    if ((normalizedTarget == 'shipped' || normalizedTarget == 'delivered') &&
+        remainingBalance > 0.01) {
+      Toast.warning(
+        context,
+        'Cannot mark as $normalizedTarget while remaining balance is not zero.',
+      );
+      return;
+    }
+
     // Show confirmation dialog for order confirmation
     if (status == 'confirmed' && order.status != 'confirmed') {
       final confirmed = await showDialog<bool>(

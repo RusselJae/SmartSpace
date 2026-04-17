@@ -761,15 +761,12 @@ orderRouter.post(
       return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 
-    const requestedAmountPesos = req.body.amountPesos as number | undefined;
-
     const pm = order.shippingAddress['paymentMethod'];
     if (pm !== 'paymongo') {
       return res.status(400).json({ success: false, message: 'Order is not PayMongo' });
     }
 
     const orderStatus = order.status.toLowerCase();
-    const paymentStatus = (order.shippingAddress['paymentStatus']?.toString() ?? 'pending').toLowerCase();
     if (orderStatus === 'cancelled') {
       return res.status(400).json({
         success: false,
@@ -781,7 +778,9 @@ orderRouter.post(
     const pool = getPool();
     const [payRows] = await pool.query<RowDataPacket[]>(
       `SELECT payment_plan AS paymentPlan, payment_status AS paymentStatus,
-              downpayment_amount AS downpaymentAmount, remaining_balance AS remainingBalance
+              downpayment_amount AS downpaymentAmount, remaining_balance AS remainingBalance,
+              payment_proof_url AS paymentProofUrl,
+              first_installment_paid_at AS firstInstallmentPaidAt
        FROM orders WHERE id = ? LIMIT 1`,
       [orderId],
     );
@@ -791,13 +790,47 @@ orderRouter.post(
           paymentStatus: string;
           downpaymentAmount: number | null;
           remainingBalance: number | null;
+          paymentProofUrl: string | null;
+          firstInstallmentPaidAt: Date | string | null;
         }
       | undefined;
 
     const plan = pr?.paymentPlan ?? (order.shippingAddress['paymentPlan'] as string | undefined);
-    const ps = pr?.paymentStatus ?? 'pending';
+    const psRaw = pr?.paymentStatus ?? 'pending';
+    const ps = psRaw.toString().toLowerCase();
     const rem = Number(pr?.remainingBalance ?? order.shippingAddress['remainingBalance'] ?? 0);
     const dp = Number(pr?.downpaymentAmount ?? order.shippingAddress['downpayment'] ?? 0);
+
+    // -------------------------------------------------------------------------
+    // First PayMongo tranche vs "pay again" (installment / balance) detection
+    // -------------------------------------------------------------------------
+    // We used to key only on `payment_status === 'pending'`. If the first GCash
+    // payment succeeded but webhooks/ENUM left `payment_status` stuck on `pending`,
+    // the route still forced the original DP amount → 400 when the user paid any
+    // other amount toward `remaining_balance`. Treat a stored webhook id
+    // (`payment_proof_url`) or `first_installment_paid_at` as proof the first
+    // tranche already landed so follow-up amounts are allowed.
+    // -------------------------------------------------------------------------
+    const proofTrimmed = (pr?.paymentProofUrl ?? '').toString().trim();
+    const hasFirstInstallmentAnchor =
+      pr?.firstInstallmentPaidAt != null && String(pr?.firstInstallmentPaidAt).length > 0;
+    const hasPaymongoWebhookId = proofTrimmed.length > 0;
+    const paidOrPastFirstTranche =
+      ps === 'downpayment_received' ||
+      ps === 'completed' ||
+      hasFirstInstallmentAnchor ||
+      hasPaymongoWebhookId;
+
+    const expectLockedDownPaymentOnly =
+      plan === 'downpayment' && ps === 'pending' && !paidOrPastFirstTranche;
+
+    const amountRaw = req.body.amountPesos;
+    let requestedAmountPesos: number | undefined;
+    if (amountRaw !== undefined && amountRaw !== null && amountRaw !== '') {
+      const n =
+        typeof amountRaw === 'number' ? amountRaw : Number(String(amountRaw).replace(/,/g, ''));
+      requestedAmountPesos = Number.isFinite(n) ? n : undefined;
+    }
 
     // Allow follow-up payments for down-payment plans as long as there's a remaining balance,
     // even if the admin already moved `order.status` to `confirmed`.
@@ -815,9 +848,9 @@ orderRouter.post(
       });
     }
 
-    /** Full payment vs down-payment first charge vs balance settlement (second PayMongo session). */
+    /** Full payment vs down-payment first charge vs balance settlement (later PayMongo sessions). */
     let chargePesos: number;
-    if (plan === 'downpayment' && ps === 'pending') {
+    if (expectLockedDownPaymentOnly) {
       // First tranche (down payment) must remain fixed at DP.
       if (requestedAmountPesos != null) {
         // Enforce a strict match to avoid messing up the 3-month policy window.
@@ -829,8 +862,8 @@ orderRouter.post(
         }
       }
       chargePesos = dp;
-    } else if (plan === 'downpayment' && rem > 0.01 && ps !== 'pending') {
-      // Pay-again stage: allow user-chosen amount (partial payments allowed).
+    } else if (plan === 'downpayment' && rem > 0.01) {
+      // Pay-again stage: custom partial payments (requires past first tranche or webhook evidence above).
       if (requestedAmountPesos != null) {
         if (!Number.isFinite(requestedAmountPesos) || requestedAmountPesos <= 0.01) {
           return res.status(400).json({
@@ -848,6 +881,11 @@ orderRouter.post(
       } else {
         chargePesos = rem;
       }
+    } else if (plan === 'downpayment') {
+      return res.status(400).json({
+        success: false,
+        message: 'No remaining balance for this order.',
+      });
     } else {
       // Full one-shot payments must remain fixed.
       if (requestedAmountPesos != null && Math.abs(requestedAmountPesos - total) > 0.01) {

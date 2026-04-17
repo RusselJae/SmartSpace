@@ -942,7 +942,15 @@ class MySQLDatabaseService {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       developer.log('❌ PayMongo HTTP ${response.statusCode}: ${response.body}');
-      throw Exception('PayMongo checkout failed (${response.statusCode})');
+      var detail = response.body;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          final m = decoded['message']?.toString();
+          if (m != null && m.isNotEmpty) detail = m;
+        }
+      } catch (_) {}
+      throw Exception('PayMongo checkout failed (${response.statusCode}): $detail');
     }
 
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;

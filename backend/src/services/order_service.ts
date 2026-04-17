@@ -520,6 +520,130 @@ export const markOrderPaidViaPaymongo = async (
       return;
     }
 
+    /**
+     * `payment_status` still `pending` but PayMongo captured **more than the DP** and at most the
+     * current `remaining_balance`. Typical causes: first GCash tranche succeeded while ENUM /
+     * webhook left the row on `pending`, or the customer paid DP + part of the balance in one
+     * session. Without this branch those webhooks logged "did not match expected phase".
+     */
+    if (
+      row.payment_status === 'pending' &&
+      isDownPlan &&
+      rem > 0.01 &&
+      dp > 0.01 &&
+      paidAmount > dp + 0.01 &&
+      paidAmount <= rem + 0.01
+    ) {
+      const persistEventId = async (): Promise<void> => {
+        if (eventId != null) {
+          try {
+            await pool.query(`UPDATE orders SET payment_proof_url = ?, updated_at = NOW() WHERE id = ?`, [
+              eventId,
+              orderId,
+            ]);
+          } catch {
+            // ignore
+          }
+        }
+      };
+
+      // Paying essentially all of `remaining_balance` while the row still says `pending`:
+      // treat as the final tranche (stale state after an earlier DP).
+      if (approxEqualPesos(paidAmount, rem)) {
+        await pool.query(
+          `UPDATE orders
+           SET status = 'confirmed',
+               payment_status = 'completed',
+               remaining_balance = 0,
+               updated_at = NOW()
+           WHERE id = ?`,
+          [orderId],
+        );
+        await persistEventId();
+        await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        console.log(`✅ PayMongo balance settled for order ${orderId} (pending row matched remaining)`);
+
+        if (isDownPlan) {
+          await ensureInvoiceTables();
+          const safePrefix = orderId.substring(0, 8);
+          const safeSuffix = (eventId ?? Date.now().toString())
+            .replace(/[^a-zA-Z0-9]/g, '')
+            .slice(0, 16);
+          const paymentEventId = `pe_${safePrefix}_${safeSuffix}`;
+
+          await pool.query(
+            `INSERT INTO order_payment_events (id, order_id, event_type, amount, paymongo_event_id)
+             VALUES (?, ?, 'installment', ?, ?)`,
+            [paymentEventId, orderId, paidAmount, eventId],
+          );
+          await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
+        }
+
+        if (previousStatus !== 'confirmed') {
+          EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
+            console.error('Failed to send order confirmation email (PayMongo balance):', error);
+          });
+        }
+        return;
+      }
+
+      // Larger-than-DP payment that only clears part of `remaining_balance` in one checkout.
+      const towardBalance = paidAmount - dp;
+      const newRemaining = Math.max(0, rem - towardBalance);
+      await pool.query(
+        `UPDATE orders
+         SET payment_status = 'downpayment_received',
+             remaining_balance = ?,
+             updated_at = NOW()
+         WHERE id = ?`,
+        [newRemaining, orderId],
+      );
+      if (normalizeOrderOption(row.order_option) === 'hulugan') {
+        await trySetHuluganEstimatedDeliveryAfterDownPayment(pool, orderId);
+      }
+      await persistEventId();
+      console.log(
+        `✅ PayMongo pending plan payment for ${orderId}: paid=${paidAmount}, newRemaining=${newRemaining}`,
+      );
+
+      if (newRemaining <= 0.01) {
+        await pool.query(
+          `UPDATE orders
+           SET status = 'confirmed',
+               payment_status = 'completed',
+               remaining_balance = 0,
+               updated_at = NOW()
+           WHERE id = ?`,
+          [orderId],
+        );
+        await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        console.log(`✅ PayMongo balance settled for order ${orderId} (pending single-shot overpay)`);
+      }
+
+      if (isDownPlan) {
+        await ensureInvoiceTables();
+        const safePrefix = orderId.substring(0, 8);
+        const safeSuffix = (eventId ?? Date.now().toString())
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .slice(0, 16);
+        const paymentEventId = `pe_${safePrefix}_${safeSuffix}`;
+
+        await pool.query(
+          `INSERT INTO order_payment_events (id, order_id, event_type, amount, paymongo_event_id)
+           VALUES (?, ?, 'installment', ?, ?)`,
+          [paymentEventId, orderId, paidAmount, eventId],
+        );
+        await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
+      }
+
+      if (newRemaining <= 0.01 && previousStatus !== 'confirmed') {
+        EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
+          console.error('Failed to send order confirmation email (PayMongo balance):', error);
+        });
+      }
+      return;
+    }
+
     if (row.payment_status === 'downpayment_received' && approxEqualPesos(paidAmount, rem)) {
       await pool.query(
         `UPDATE orders

@@ -801,6 +801,14 @@ orderRouter.post(
     const rem = Number(pr?.remainingBalance ?? order.shippingAddress['remainingBalance'] ?? 0);
     const dp = Number(pr?.downpaymentAmount ?? order.shippingAddress['downpayment'] ?? 0);
 
+    const amountRaw = req.body.amountPesos;
+    let requestedAmountPesos: number | undefined;
+    if (amountRaw !== undefined && amountRaw !== null && amountRaw !== '') {
+      const n =
+        typeof amountRaw === 'number' ? amountRaw : Number(String(amountRaw).replace(/,/g, ''));
+      requestedAmountPesos = Number.isFinite(n) ? n : undefined;
+    }
+
     // -------------------------------------------------------------------------
     // First PayMongo tranche vs "pay again" (installment / balance) detection
     // -------------------------------------------------------------------------
@@ -815,22 +823,38 @@ orderRouter.post(
     const hasFirstInstallmentAnchor =
       pr?.firstInstallmentPaidAt != null && String(pr?.firstInstallmentPaidAt).length > 0;
     const hasPaymongoWebhookId = proofTrimmed.length > 0;
+    let hasDownpaymentLedgerEvent = false;
+    try {
+      const [evRows] = await pool.query<RowDataPacket[]>(
+        `SELECT 1 AS ok FROM order_payment_events
+         WHERE order_id = ? AND event_type = 'downpayment' LIMIT 1`,
+        [orderId],
+      );
+      hasDownpaymentLedgerEvent = Array.isArray(evRows) && evRows.length > 0;
+    } catch (e) {
+      console.warn('paymongo-checkout: order_payment_events lookup failed (table missing?):', e);
+    }
+
     const paidOrPastFirstTranche =
       ps === 'downpayment_received' ||
       ps === 'completed' ||
       hasFirstInstallmentAnchor ||
-      hasPaymongoWebhookId;
+      hasPaymongoWebhookId ||
+      hasDownpaymentLedgerEvent;
+
+    // If the row is still `pending` but the user is clearly paying toward `remaining_balance`
+    // (not the required DP), the first GCash tranche likely succeeded while the DB stayed
+    // stuck — allow checkout so PayMongo can complete and webhooks can reconcile.
+    const stalePendingFlexibleAmount =
+      requestedAmountPesos != null &&
+      requestedAmountPesos > dp + 0.01 &&
+      requestedAmountPesos <= rem + 0.01;
 
     const expectLockedDownPaymentOnly =
-      plan === 'downpayment' && ps === 'pending' && !paidOrPastFirstTranche;
-
-    const amountRaw = req.body.amountPesos;
-    let requestedAmountPesos: number | undefined;
-    if (amountRaw !== undefined && amountRaw !== null && amountRaw !== '') {
-      const n =
-        typeof amountRaw === 'number' ? amountRaw : Number(String(amountRaw).replace(/,/g, ''));
-      requestedAmountPesos = Number.isFinite(n) ? n : undefined;
-    }
+      plan === 'downpayment' &&
+      ps === 'pending' &&
+      !paidOrPastFirstTranche &&
+      !stalePendingFlexibleAmount;
 
     // Allow follow-up payments for down-payment plans as long as there's a remaining balance,
     // even if the admin already moved `order.status` to `confirmed`.

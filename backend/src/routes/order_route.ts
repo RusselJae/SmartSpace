@@ -842,18 +842,20 @@ orderRouter.post(
       hasPaymongoWebhookId ||
       hasDownpaymentLedgerEvent;
 
-    // If the row is still `pending` but the user is clearly paying toward `remaining_balance`
-    // (not the required DP), the first GCash tranche likely succeeded while the DB stayed
-    // stuck — allow checkout so PayMongo can complete and webhooks can reconcile.
+    // DB-level remaining balance already reduced => at least one payment was applied.
+    const hasAlreadyPaidSomething = rem < total - 0.01;
+
+    // If the row is still `pending` but user is paying toward remaining balance, first
+    // tranche likely succeeded while payment_status stayed stale.
     const stalePendingFlexibleAmount =
       requestedAmountPesos != null &&
-      requestedAmountPesos > dp + 0.01 &&
+      requestedAmountPesos > 0.01 &&
       requestedAmountPesos <= rem + 0.01;
 
     const expectLockedDownPaymentOnly =
       plan === 'downpayment' &&
       ps === 'pending' &&
-      !paidOrPastFirstTranche &&
+      !(paidOrPastFirstTranche || hasAlreadyPaidSomething) &&
       !stalePendingFlexibleAmount;
 
     // Allow follow-up payments for down-payment plans as long as there's a remaining balance,

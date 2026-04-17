@@ -521,17 +521,15 @@ export const markOrderPaidViaPaymongo = async (
     }
 
     /**
-     * `payment_status` still `pending` but PayMongo captured **more than the DP** and at most the
-     * current `remaining_balance`. Typical causes: first GCash tranche succeeded while ENUM /
-     * webhook left the row on `pending`, or the customer paid DP + part of the balance in one
-     * session. Without this branch those webhooks logged "did not match expected phase".
+     * `payment_status` still `pending` but payment amount clearly targets remaining balance.
+     * This handles stale rows where first tranche was already applied, plus larger one-shot
+     * payments that include DP and part/all of the balance.
      */
     if (
       row.payment_status === 'pending' &&
       isDownPlan &&
       rem > 0.01 &&
-      dp > 0.01 &&
-      paidAmount > dp + 0.01 &&
+      paidAmount > 0.01 &&
       paidAmount <= rem + 0.01
     ) {
       const persistEventId = async (): Promise<void> => {
@@ -587,8 +585,11 @@ export const markOrderPaidViaPaymongo = async (
         return;
       }
 
-      // Larger-than-DP payment that only clears part of `remaining_balance` in one checkout.
-      const towardBalance = paidAmount - dp;
+      // If remaining is already lower than order total, prior payment has been applied and this
+      // amount should reduce remaining directly. Otherwise, a pending one-shot that still includes
+      // the required DP should only reduce balance by the portion above DP.
+      const hasAlreadyPaidSomething = rem < orderTotal - 0.01;
+      const towardBalance = hasAlreadyPaidSomething ? paidAmount : Math.max(0, paidAmount - dp);
       const newRemaining = Math.max(0, rem - towardBalance);
       await pool.query(
         `UPDATE orders

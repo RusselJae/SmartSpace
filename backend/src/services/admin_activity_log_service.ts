@@ -8,10 +8,41 @@ type AdminActivityRow = RowDataPacket & {
   readonly action: string;
   readonly entity_type: string;
   readonly entity_id: string | null;
-  readonly details_json: string | null;
+  /** mysql2 may return JSON columns as string, Buffer, or already-parsed object */
+  readonly details_json: string | Buffer | Record<string, unknown> | null;
   readonly created_at: Date;
   readonly admin_email: string | null;
   readonly admin_full_name: string | null;
+};
+
+/**
+ * Normalizes `details_json` from MySQL — never pass straight to JSON.parse(object) or it throws.
+ */
+const parseDetailsJson = (raw: string | Buffer | Record<string, unknown> | null | undefined): Record<string, string> => {
+  if (raw == null) {
+    return {};
+  }
+  if (typeof raw === 'object' && !Buffer.isBuffer(raw) && raw !== null && !Array.isArray(raw)) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      out[k] = v == null ? '' : String(v);
+    }
+    return out;
+  }
+  const s = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+  if (s.trim() === '') {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(s) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      out[k] = v == null ? '' : String(v);
+    }
+    return out;
+  } catch {
+    return {};
+  }
 };
 
 export type AdminActivityLogItem = {
@@ -122,7 +153,7 @@ export const listAdminActivityLogs = async (
     action: row.action,
     entityType: row.entity_type,
     entityId: row.entity_id ?? null,
-    details: row.details_json ? (JSON.parse(row.details_json) as Record<string, string>) : {},
+    details: parseDetailsJson(row.details_json ?? null),
     createdAt: row.created_at ?? new Date(),
     adminEmail: row.admin_email ?? null,
     adminFullName: row.admin_full_name ?? null,

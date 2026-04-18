@@ -16,14 +16,22 @@ class Toast {
     Duration duration = const Duration(seconds: 4),
     Color? accentColor,
   }) {
-    final overlay = Overlay.of(context);
+    // Dialogs and nested navigators: prefer root overlay; fall back so validation toasts are never silent.
+    final OverlayState? overlayState =
+        Overlay.maybeOf(context, rootOverlay: true) ?? Overlay.maybeOf(context);
+    if (overlayState == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      return;
+    }
+
     late OverlayEntry overlayEntry;
-    
-    // Dismiss callback that removes the overlay entry
+
     void dismiss() {
       overlayEntry.remove();
     }
-    
+
     overlayEntry = OverlayEntry(
       builder: (context) => _ToastWidget(
         message: message,
@@ -34,7 +42,7 @@ class Toast {
       ),
     );
 
-    overlay.insert(overlayEntry);
+    overlayState.insert(overlayEntry);
 
     Future.delayed(duration, () {
       if (overlayEntry.mounted) {

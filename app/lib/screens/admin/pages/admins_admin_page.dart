@@ -197,6 +197,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
     final allowRolePick = (_adminAuth.currentRole ?? '').trim() == 'super_admin';
     final data = await showDialog<_AdminFormData>(
       context: context,
+      useRootNavigator: true,
       builder: (_) => _AdminFormDialog(allowRolePick: allowRolePick),
     );
     if (data == null) return;
@@ -213,7 +214,13 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
       await _loadAdmins();
     } catch (e) {
       if (!mounted) return;
-      Toast.error(context, 'Failed to create admin: $e');
+      final msg = e.toString();
+      final friendly = msg.contains('401') || msg.contains('sign in again')
+          ? 'Session expired or missing token. Sign out and sign in again, then retry.'
+          : msg.contains('ADMIN_JWT_SECRET') || msg.contains('500')
+              ? 'Server is not configured for admin API (ADMIN_JWT_SECRET). Check backend .env.'
+              : 'Failed to create admin: $e';
+      Toast.error(context, friendly);
     }
   }
 
@@ -703,7 +710,6 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
   final TextEditingController _fullName = TextEditingController();
   String _pickedRole = 'operations_admin';
   bool _obscurePassword = true;
-  bool _submitting = false;
 
   @override
   void dispose() {
@@ -714,27 +720,28 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
   }
 
   void _submit() {
-    if (_submitting) return;
-    if (_email.text.trim().isEmpty ||
-        _password.text.isEmpty ||
-        _fullName.text.trim().isEmpty) {
+    final email = _email.text.trim();
+    final password = _password.text.trim();
+    final fullName = _fullName.text.trim();
+    if (email.isEmpty || password.isEmpty || fullName.isEmpty) {
       Toast.warning(context, 'All fields are required');
       return;
     }
 
-    final passwordError = PasswordPolicy.validateStrongPassword(_password.text);
+    final passwordError = PasswordPolicy.validateStrongPassword(password);
     if (passwordError != null) {
       Toast.warning(context, passwordError);
       return;
     }
 
     final data = _AdminFormData(
-      email: _email.text.trim(),
-      password: _password.text,
-      fullName: _fullName.text.trim(),
+      email: email,
+      password: password,
+      fullName: fullName,
       role: widget.allowRolePick ? _pickedRole : null,
     );
-    Navigator.of(context).pop(data);
+    // Root navigator matches [showDialog(..., useRootNavigator: true)] so the dialog always closes.
+    Navigator.of(context, rootNavigator: true).pop(data);
   }
 
   Widget _buildField(
@@ -918,24 +925,12 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                     ),
                     const SizedBox(width: 12),
                     FilledButton(
-                      onPressed: _submitting
-                          ? null
-                          : () async {
-                              setState(() => _submitting = true);
-                              try {
-                                _submit();
-                              } finally {
-                                if (mounted) setState(() => _submitting = false);
-                              }
-                            },
+                      onPressed: () {
+                        FocusScope.of(context).unfocus();
+                        _submit();
+                      },
                       style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
-                      child: _submitting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Create'),
+                      child: const Text('Create'),
                     ),
                   ],
                 ),

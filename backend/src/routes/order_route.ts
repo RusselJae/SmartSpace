@@ -26,6 +26,8 @@ import { findUserById } from '../services/user_service';
 import { getLegalContent } from '../services/legal_content_service';
 import { logAdminActivity } from '../services/admin_activity_log_service';
 import { buildUpdatedOrderInvoiceHtml } from '../services/order_invoice_service';
+import { requireAdminAuth, requireAdminPermission, requireAdminForGlobalMadeToOrderList } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 const validIdStorage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -87,9 +89,12 @@ const mtoUpload = multer({
   },
 });
 
-const statusSchema = z.object({
-  status: z.string().min(1),
-});
+const statusSchema = z
+  .object({
+    status: z.string().min(1),
+    userId: z.string().optional(),
+  })
+  .passthrough();
 
 export const orderRouter = Router();
 
@@ -227,8 +232,25 @@ orderRouter.get(
 
 orderRouter.get(
   '/',
-  asyncHandler(async (_req, res) => {
+  (req, res, next) => {
+    const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
+    if (userId.length > 0) {
+      return next();
+    }
+    return requireAdminAuth(req, res, () =>
+      requireAdminPermission(ADMIN_PERMISSIONS.ordersRead)(req, res, next),
+    );
+  },
+  asyncHandler(async (req, res) => {
+    const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
     const orders = await listOrders();
+    if (userId.length > 0) {
+      res.json({
+        success: true,
+        data: orders.filter((o) => o.userId === userId),
+      });
+      return;
+    }
     res.json({ success: true, data: orders });
   }),
 );
@@ -356,6 +378,7 @@ orderRouter.post(
 
 orderRouter.get(
   '/made-to-order/requests',
+  requireAdminForGlobalMadeToOrderList,
   asyncHandler(async (req, res) => {
     await ensureMadeToOrderRequestsTable();
     const pool = getPool();
@@ -389,6 +412,8 @@ orderRouter.get(
  */
 orderRouter.patch(
   '/made-to-order/requests/:requestId/quote',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.madeToOrderWrite),
   asyncHandler(async (req, res) => {
     const requestId = req.params.requestId;
     const quotedTotal = Number(req.body.quotedTotal);
@@ -439,20 +464,17 @@ orderRouter.patch(
        WHERE id = ?`,
       [quotedTotal, quotedDownpayment, quotedRemaining, adminMessage, requestId],
     );
-    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
-    if (adminId.length > 0) {
-      await logAdminActivity({
-        adminId,
-        action: 'made_to_order_quoted',
-        entityType: 'made_to_order_request',
-        entityId: requestId,
-        details: {
-          quotedTotal: String(quotedTotal),
-          quotedDownpayment: String(quotedDownpayment),
-          quotedRemaining: String(quotedRemaining),
-        },
-      });
-    }
+    await logAdminActivity({
+      adminId: req.adminAuth!.id,
+      action: 'made_to_order_quoted',
+      entityType: 'made_to_order_request',
+      entityId: requestId,
+      details: {
+        quotedTotal: String(quotedTotal),
+        quotedDownpayment: String(quotedDownpayment),
+        quotedRemaining: String(quotedRemaining),
+      },
+    });
     return res.json({ success: true, data: { id: requestId, status: 'quoted' } });
   }),
 );
@@ -463,6 +485,8 @@ orderRouter.patch(
  */
 orderRouter.patch(
   '/made-to-order/requests/:requestId/decline',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.madeToOrderWrite),
   asyncHandler(async (req, res) => {
     const requestId = req.params.requestId;
     const adminMessage =
@@ -488,18 +512,15 @@ orderRouter.patch(
        WHERE id = ?`,
       [adminMessage, requestId],
     );
-    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
-    if (adminId.length > 0) {
-      await logAdminActivity({
-        adminId,
-        action: 'made_to_order_declined',
-        entityType: 'made_to_order_request',
-        entityId: requestId,
-        details: {
-          adminMessage: adminMessage ?? '',
-        },
-      });
-    }
+    await logAdminActivity({
+      adminId: req.adminAuth!.id,
+      action: 'made_to_order_declined',
+      entityType: 'made_to_order_request',
+      entityId: requestId,
+      details: {
+        adminMessage: adminMessage ?? '',
+      },
+    });
     return res.json({ success: true, data: { id: requestId, status: 'declined' } });
   }),
 );
@@ -587,20 +608,6 @@ orderRouter.post(
         `UPDATE made_to_order_requests SET order_id = ?, status = 'order_created', updated_at = NOW() WHERE id = ?`,
         [order.id, requestId],
       );
-
-      const adminId =
-        shippingAddress['adminId'] != null ? String(shippingAddress['adminId']).trim() : '';
-      if (adminId.length > 0) {
-        await logAdminActivity({
-          adminId,
-          action: 'made_to_order_order_created',
-          entityType: 'made_to_order_request',
-          entityId: requestId,
-          details: {
-            orderId: order.id,
-          },
-        });
-      }
 
       return res.status(201).json({ success: true, data: { orderId: order.id, order } });
     } catch (e) {
@@ -1022,30 +1029,46 @@ orderRouter.post(
 
 orderRouter.patch(
   '/:id/status',
+  asyncHandler(async (req, res, next) => {
+    const payload = statusSchema.parse(req.body);
+    const order = await getOrderById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    const userIdBody = req.body.userId != null ? String(req.body.userId).trim() : '';
+    if (
+      userIdBody.length > 0 &&
+      order.userId === userIdBody &&
+      payload.status.toLowerCase() === 'cancelled'
+    ) {
+      await updateOrderStatus(req.params.id, payload.status);
+      return res.status(204).send();
+    }
+    next();
+  }),
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.ordersWrite),
   asyncHandler(async (req, res) => {
     const payload = statusSchema.parse(req.body);
     await updateOrderStatus(req.params.id, payload.status);
-    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
-    if (adminId.length > 0) {
-      const normalizedStatus = payload.status.toLowerCase();
-      const action =
-        normalizedStatus === 'cancelled'
-          ? 'order_cancelled'
-          : normalizedStatus === 'confirmed'
-              ? 'order_confirmed'
-              : normalizedStatus === 'shipped'
-                  ? 'order_shipped'
-                  : normalizedStatus === 'delivered'
-                      ? 'order_delivered'
-                      : 'order_status_updated';
-      await logAdminActivity({
-        adminId,
-        action,
-        entityType: 'order',
-        entityId: req.params.id,
-        details: { status: payload.status },
-      });
-    }
+    const normalizedStatus = payload.status.toLowerCase();
+    const action =
+      normalizedStatus === 'cancelled'
+        ? 'order_cancelled'
+        : normalizedStatus === 'confirmed'
+            ? 'order_confirmed'
+            : normalizedStatus === 'shipped'
+                ? 'order_shipped'
+                : normalizedStatus === 'delivered'
+                    ? 'order_delivered'
+                    : 'order_status_updated';
+    await logAdminActivity({
+      adminId: req.adminAuth!.id,
+      action,
+      entityType: 'order',
+      entityId: req.params.id,
+      details: { status: payload.status },
+    });
     res.status(204).send();
   }),
 );
@@ -1053,25 +1076,15 @@ orderRouter.patch(
 /**
  * POST /api/orders/:id/confirm-payment
  * Admin endpoint to confirm payment proof and update order status
- * 
- * Body:
- * {
- *   adminId: string
- * }
  */
 orderRouter.post(
   '/:id/confirm-payment',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.ordersWrite),
   asyncHandler(async (req, res) => {
     const orderId = req.params.id;
-    const adminId = req.body.adminId as string;
-    
-    if (!adminId) {
-      return res.status(400).json({
-        success: false,
-        message: 'adminId is required',
-      });
-    }
-    
+    const adminId = req.adminAuth!.id;
+
     await confirmPayment(orderId, adminId);
     await logAdminActivity({
       adminId,

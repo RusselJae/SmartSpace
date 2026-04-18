@@ -65,8 +65,8 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     }
 
     try {
-      final reviewsFuture = _db.getAllReviews();
-      final ordersFuture = _db.getAllOrders();
+      final reviewsFuture = _db.getAllReviews(forUserId: user.id);
+      final ordersFuture = _db.getAllOrders(forUserId: user.id);
       final productsFuture = _db.getAllProducts();
 
       final reviews = (await reviewsFuture)

@@ -51,7 +51,7 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
     });
 
     try {
-      final allOrders = await _db.getAllOrders();
+      final allOrders = await _db.getAllOrders(forUserId: user.id);
       
       // Filter orders that need payment:
       // 1. Status is 'pending' or 'pending_payment_verification'

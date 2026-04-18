@@ -387,6 +387,56 @@ class AuthService {
     await _persistUser(user);
     return user;
   }
+
+  /// Request a password reset email (always succeeds from the client’s perspective if the API returns 200).
+  Future<void> requestPasswordReset({required String email}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/users/auth/forgot-password');
+    final response = await _client
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'email': email.trim()}),
+        )
+        .timeout(ApiConfig.timeout);
+    if (response.statusCode != 200) {
+      try {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final message = decoded['message'] as String?;
+        if (message != null && message.isNotEmpty) {
+          throw Exception(message);
+        }
+      } catch (_) {}
+      throw Exception('Could not start password reset. Try again later.');
+    }
+  }
+
+  /// Completes password reset using the token from the email link.
+  Future<void> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/users/auth/reset-password');
+    final response = await _client
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'token': token.trim(),
+            'newPassword': newPassword,
+          }),
+        )
+        .timeout(ApiConfig.timeout);
+    if (response.statusCode != 200) {
+      try {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final message = decoded['message'] as String?;
+        if (message != null && message.isNotEmpty) {
+          throw Exception(message);
+        }
+      } catch (_) {}
+      throw Exception('Could not reset password. The link may have expired.');
+    }
+  }
 }
 
 

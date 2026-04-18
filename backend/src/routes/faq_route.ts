@@ -9,6 +9,8 @@ import {
   type UpdateFaqInput,
 } from '../services/faq_service';
 import { logAdminActivity } from '../services/admin_activity_log_service';
+import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 export const faqRouter = Router();
 
@@ -31,17 +33,15 @@ faqRouter.get(
  */
 faqRouter.post(
   '/admin',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.faqsWrite),
   asyncHandler(async (req, res) => {
-    const { adminId, question, answer, sortOrder } = req.body as {
-      adminId?: string;
+    const { question, answer, sortOrder } = req.body as {
       question?: string;
       answer?: string;
       sortOrder?: number;
     };
 
-    if (!adminId) {
-      return res.status(400).json({ success: false, message: 'adminId is required' });
-    }
     if (!question || !question.trim()) {
       return res.status(400).json({ success: false, message: 'question is required' });
     }
@@ -57,7 +57,7 @@ faqRouter.post(
 
     const faq = await createFaq(input);
     await logAdminActivity({
-      adminId,
+      adminId: req.adminAuth!.id,
       action: 'faq_created',
       entityType: 'faq',
       entityId: faq.id,
@@ -73,18 +73,15 @@ faqRouter.post(
  */
 faqRouter.put(
   '/admin/:id',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.faqsWrite),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { adminId, question, answer, sortOrder } = req.body as {
-      adminId?: string;
+    const { question, answer, sortOrder } = req.body as {
       question?: string;
       answer?: string;
       sortOrder?: number;
     };
-
-    if (!adminId) {
-      return res.status(400).json({ success: false, message: 'adminId is required' });
-    }
 
     const input: UpdateFaqInput = {};
     if (question !== undefined) input.question = String(question).trim();
@@ -96,7 +93,7 @@ faqRouter.put(
       return res.status(404).json({ success: false, message: 'FAQ not found' });
     }
     await logAdminActivity({
-      adminId,
+      adminId: req.adminAuth!.id,
       action: 'faq_updated',
       entityType: 'faq',
       entityId: faq.id,
@@ -115,20 +112,17 @@ faqRouter.put(
  */
 faqRouter.delete(
   '/admin/:id',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.faqsWrite),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const adminId = (req.query.adminId as string) || (req.body?.adminId as string);
-
-    if (!adminId) {
-      return res.status(400).json({ success: false, message: 'adminId is required (query or body)' });
-    }
 
     const deleted = await deleteFaq(id);
     if (!deleted) {
       return res.status(404).json({ success: false, message: 'FAQ not found' });
     }
     await logAdminActivity({
-      adminId,
+      adminId: req.adminAuth!.id,
       action: 'faq_deleted',
       entityType: 'faq',
       entityId: id,

@@ -138,7 +138,11 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
   /// Check if payment has already been confirmed
   Future<void> _checkPaymentStatus() async {
     try {
-      final orders = await _db.getAllOrders();
+      final uid = _auth.currentUser?.id;
+      if (uid == null || uid.isEmpty) {
+        return;
+      }
+      final orders = await _db.getAllOrders(forUserId: uid);
       final order = orders.firstWhere(
         (o) => o.id == widget.orderId,
         orElse: () => throw Exception('Order not found'),

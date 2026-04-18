@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../../models/admin.dart';
+import '../../../../services/admin_auth_service.dart';
 import '../../../../services/mysql_database_service.dart';
+import '../../../../utils/password_policy.dart';
 import '../../../../widgets/toast.dart';
 
 import '../admin_theme.dart';
@@ -19,6 +22,86 @@ class _AdminSignupPageState extends State<AdminSignupPage> {
   final TextEditingController email = TextEditingController();
   final TextEditingController password = TextEditingController();
   bool isLoading = false;
+
+  Future<void> _showVerificationDialog(Admin admin) async {
+    final codeController = TextEditingController();
+    var verifying = false;
+    var resending = false;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Verify admin email'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('We sent a verification code to ${admin.email}.'),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: codeController,
+                    textCapitalization: TextCapitalization.characters,
+                    maxLength: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'Verification code',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: resending
+                      ? null
+                      : () async {
+                          setDialogState(() => resending = true);
+                          try {
+                            await MySQLDatabaseService().resendAdminVerification(adminId: admin.id);
+                            if (!mounted) return;
+                            Toast.success(this.context, 'Verification email sent');
+                          } catch (e) {
+                            if (!mounted) return;
+                            Toast.error(this.context, e.toString().replaceFirst('Exception: ', ''));
+                          } finally {
+                            if (mounted) setDialogState(() => resending = false);
+                          }
+                        },
+                  child: resending ? const Text('Sending...') : const Text('Resend email'),
+                ),
+                FilledButton(
+                  onPressed: verifying
+                      ? null
+                      : () async {
+                          final code = codeController.text.trim();
+                          if (code.isEmpty) {
+                            Toast.warning(context, 'Please enter the verification code');
+                            return;
+                          }
+                          setDialogState(() => verifying = true);
+                          try {
+                            await AdminAuthService().verifyEmailWithCode(code);
+                            if (!mounted || !dialogContext.mounted) return;
+                            Navigator.of(dialogContext).pop();
+                            Toast.success(this.context, 'Email verified. You can now sign in.');
+                          } catch (e) {
+                            if (!mounted) return;
+                            Toast.error(this.context, e.toString().replaceFirst('Exception: ', ''));
+                            setDialogState(() => verifying = false);
+                          }
+                        },
+                  child: verifying ? const Text('Verifying...') : const Text('Verify'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    codeController.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -158,7 +241,7 @@ class _AdminSignupPageState extends State<AdminSignupPage> {
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'Password must be at least 6 characters',
+                                        PasswordPolicy.strongPasswordMessage,
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: Colors.blue[900],
@@ -243,22 +326,24 @@ class _AdminSignupPageState extends State<AdminSignupPage> {
       return;
     }
 
-    if (passwordText.length < 6) {
-      Toast.warning(context, 'Password must be at least 6 characters long');
+    final policyError = PasswordPolicy.validateStrongPassword(passwordText);
+    if (policyError != null) {
+      Toast.warning(context, policyError);
       return;
     }
 
     setState(() => isLoading = true);
     try {
       final db = MySQLDatabaseService();
-      await db.createAdmin(
+      final admin = await db.createAdmin(
         email: emailText,
         password: passwordText,
         fullName: nameText,
       );
       if (!mounted) return;
-      Toast.success(context, 'Admin account created successfully');
-      // Navigate to login page after successful signup
+      Toast.success(context, 'Admin account created. Verify email before first login.');
+      await _showVerificationDialog(admin);
+      if (!mounted) return;
       Navigator.of(context).pushReplacementNamed('/admin/login');
     } catch (e) {
       if (!mounted) return;

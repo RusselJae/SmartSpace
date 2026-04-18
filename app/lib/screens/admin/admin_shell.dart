@@ -14,6 +14,7 @@ import 'pages/admin_activity_logs_page.dart';
 import 'pages/settings_admin_page.dart';
 import 'pages/support_inbox_admin_page.dart';
 import 'pages/users_admin_page.dart';
+import '../../auth/admin_permissions.dart';
 import '../../services/admin_auth_service.dart';
 import '../../services/admin_notifications_service.dart';
 import '../../widgets/loading_screen.dart';
@@ -87,7 +88,7 @@ class _AdminShellState extends State<AdminShell> {
   final GlobalKey _notificationsAnchorKey = GlobalKey();
 
   int _indexForLabel(String label) {
-    final i = _destinations.indexWhere((d) => d.label == label);
+    final i = _visibleDestinations.indexWhere((d) => d.label == label);
     return i < 0 ? 0 : i;
   }
 
@@ -238,7 +239,7 @@ class _AdminShellState extends State<AdminShell> {
     );
   }
 
-  late final List<_AdminDestination> _destinations = [
+  late final List<_AdminDestination> _allDestinations = [
     _AdminDestination(
       label: 'Dashboard',
       icon: Icons.dashboard_outlined,
@@ -296,13 +297,33 @@ class _AdminShellState extends State<AdminShell> {
     ),
   ];
 
+  /// Maps each visible sidebar index → full tab index (see [AdminRoutes.pathsByIndex] order).
+  List<int> _visibleToFull =
+      List<int>.generate(AdminPermissions.shellTabCount, (i) => i);
+
+  List<_AdminDestination> get _visibleDestinations =>
+      _visibleToFull.map((i) => _allDestinations[i]).toList();
+
+  bool get _onDashboard => _visibleToFull[_index] == 0;
+
+  void _recomputeShellVisibility() {
+    final auth = AdminAuthService();
+    final allowed = <int>[
+      for (var i = 0; i < AdminPermissions.shellTabCount; i++)
+        if (AdminPermissions.canAccessShellTabIndex(i, auth.currentRole)) i,
+    ];
+    _visibleToFull = allowed.isEmpty ? <int>[0] : allowed;
+  }
+
+  int _visibleIndexForFull(int fullIdx) {
+    final c = fullIdx.clamp(0, AdminPermissions.shellTabCount - 1);
+    return _visibleToFull.indexOf(c);
+  }
+
   @override
   void initState() {
     super.initState();
-    // Align tab with the named route (e.g. `/admin/orders`) set by [buildAdminShellRoutes].
-    final max = _destinations.length - 1;
-    _index = widget.initialIndex.clamp(0, max);
-    _dashboardSubTabIndex = _index == 0
+    _dashboardSubTabIndex = widget.initialIndex == 0
         ? widget.initialDashboardTab.clamp(0, 2)
         : 0;
     _verifyAdminSession();
@@ -311,23 +332,22 @@ class _AdminShellState extends State<AdminShell> {
   @override
   void didUpdateWidget(covariant AdminShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final max = _destinations.length - 1;
-    final prevShellIndex = oldWidget.initialIndex.clamp(0, max);
-    final nextShellIndex = widget.initialIndex.clamp(0, max);
+    final cap = AdminPermissions.shellTabCount - 1;
+    final prevFull = oldWidget.initialIndex.clamp(0, cap);
+    final nextFull = widget.initialIndex.clamp(0, cap);
 
-    // Switching main rail tab (e.g. Products → Dashboard): honor the new route’s dashboard sub-tab.
-    if (nextShellIndex != prevShellIndex) {
+    if (nextFull != prevFull) {
+      final v = _visibleIndexForFull(nextFull);
       setState(() {
-        _index = nextShellIndex;
-        _dashboardSubTabIndex = widget.initialIndex == 0
+        _index = v >= 0 ? v : 0;
+        _dashboardSubTabIndex = nextFull == 0
             ? widget.initialDashboardTab.clamp(0, 2)
             : 0;
       });
       return;
     }
 
-    // Same shell tab but deep link / route args changed (e.g. /admin/dashboard → /admin/user-behavior).
-    if (widget.initialIndex == 0 &&
+    if (nextFull == 0 &&
         oldWidget.initialDashboardTab != widget.initialDashboardTab) {
       final nextSub = widget.initialDashboardTab.clamp(0, 2);
       if (_dashboardSubTabIndex != nextSub) {
@@ -347,8 +367,11 @@ class _AdminShellState extends State<AdminShell> {
         Navigator.of(context).pushReplacementNamed('/admin/login');
       });
     } else {
+      _recomputeShellVisibility();
+      final v = _visibleIndexForFull(widget.initialIndex);
       setState(() {
         _authChecked = true;
+        _index = v >= 0 ? v : 0;
       });
       _notifications.startPolling();
     }
@@ -363,11 +386,11 @@ class _AdminShellState extends State<AdminShell> {
       );
     }
     final bool wide = MediaQuery.of(context).size.width >= 1100;
-    final Widget currentPage = _index == 0
+    final Widget currentPage = _onDashboard
         ? AdminDashboardContainerPage(
             initialSubTab: widget.initialDashboardTab.clamp(0, 2),
-            onOpenOrders: () => _selectTab(2),
-            onOpenReviews: () => _selectTab(3),
+            onOpenOrders: () => _selectTabByFullIndex(2),
+            onOpenReviews: () => _selectTabByFullIndex(3),
             onDashboardSubTabChanged: (i) {
               final next = i.clamp(0, 2);
               if (_dashboardSubTabIndex != next) {
@@ -375,9 +398,9 @@ class _AdminShellState extends State<AdminShell> {
               }
             },
           )
-        : _destinations[_index].builder(
-            () => _selectTab(3),
-            () => _selectTab(2),
+        : _visibleDestinations[_index].builder(
+            () => _selectTabByFullIndex(3),
+            () => _selectTabByFullIndex(2),
           );
 
     return Theme(
@@ -398,7 +421,7 @@ class _AdminShellState extends State<AdminShell> {
         child: Row(
           children: [
             _SideRail(
-              destinations: _destinations,
+              destinations: _visibleDestinations,
               selectedIndex: _index,
               onSelect: _selectTab,
             ),
@@ -414,8 +437,8 @@ class _AdminShellState extends State<AdminShell> {
                 child: Column(
                   children: [
                     _AdminHeader(
-                      title: _destinations[_index].label,
-                      subtitle: _index == 0
+                      title: _visibleDestinations[_index].label,
+                      subtitle: _onDashboard
                           ? _dashboardSubTabLabels[_dashboardSubTabIndex.clamp(
                               0,
                               2,
@@ -452,8 +475,8 @@ class _AdminShellState extends State<AdminShell> {
         child: Column(
           children: [
             _AdminHeader(
-              title: _destinations[_index].label,
-              subtitle: _index == 0
+              title: _visibleDestinations[_index].label,
+              subtitle: _onDashboard
                   ? _dashboardSubTabLabels[_dashboardSubTabIndex.clamp(0, 2)]
                   : null,
               notifications: _notifications,
@@ -472,7 +495,7 @@ class _AdminShellState extends State<AdminShell> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: _selectTab,
-        destinations: _destinations
+        destinations: _visibleDestinations
             .map(
               (dest) => NavigationDestination(
                 icon: Icon(dest.icon),
@@ -484,10 +507,19 @@ class _AdminShellState extends State<AdminShell> {
     );
   }
 
+  void _selectTabByFullIndex(int fullIndex) {
+    final v = _visibleIndexForFull(fullIndex);
+    if (v < 0) {
+      return;
+    }
+    _selectTab(v);
+  }
+
   void _selectTab(int value) {
-    final max = _destinations.length - 1;
+    final max = _visibleDestinations.length - 1;
     final i = value.clamp(0, max);
-    final targetPath = AdminRoutes.pathForIndex(i);
+    final fullIdx = _visibleToFull[i];
+    final targetPath = AdminRoutes.pathForIndex(fullIdx);
     final currentName = ModalRoute.of(context)?.settings.name;
     if (currentName != targetPath) {
       Navigator.of(context).pushReplacementNamed(targetPath);

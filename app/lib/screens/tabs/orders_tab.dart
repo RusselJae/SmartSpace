@@ -173,7 +173,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
 
     try {
       // Fetch orders and products in parallel for better performance
-      final ordersFuture = _db.getAllOrders();
+      final ordersFuture = _db.getAllOrders(forUserId: user.id);
       final productsFuture = _db.getAllProducts();
       
       final allOrders = await ordersFuture;
@@ -476,7 +476,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   Future<void> _cancelExpiredOrder(OrderRecord order) async {
     try {
       // Set order status to cancelled
-      await _db.updateOrderStatus(order.id, 'cancelled');
+      await _db.updateOrderStatus(order.id, 'cancelled', customerUserId: order.userId);
       
       // Reload orders to reflect the change
       await _loadOrders();

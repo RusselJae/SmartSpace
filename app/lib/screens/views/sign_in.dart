@@ -9,6 +9,7 @@ import '../../widgets/toast.dart';
 import '../../widgets/loading_screen.dart';
 import '../shell/tab_shell.dart';
 import 'sign_up.dart';
+import 'password_reset_screen.dart';
 import '../profile/terms_and_conditions_screen.dart';
 import '../profile/privacy_policy_screen.dart';
 
@@ -36,6 +37,68 @@ class _SignInScreenState extends State<SignInScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _loading = false;
+
+  Future<void> _showForgotPasswordDialog() async {
+    final emailController = TextEditingController(text: _emailController.text.trim());
+    var sending = false;
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return CupertinoAlertDialog(
+              title: const Text('Forgot password?'),
+              content: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  const Text('Enter your account email and we will send a reset link.'),
+                  const SizedBox(height: 12),
+                  CupertinoTextField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    placeholder: 'you@example.com',
+                  ),
+                ],
+              ),
+              actions: [
+                CupertinoDialogAction(
+                  onPressed: sending ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                CupertinoDialogAction(
+                  onPressed: sending
+                      ? null
+                      : () async {
+                          final email = emailController.text.trim();
+                          if (email.isEmpty) {
+                            Toast.warning(context, 'Please enter your email');
+                            return;
+                          }
+                          setStateDialog(() => sending = true);
+                          try {
+                            await _auth.requestPasswordReset(email: email);
+                            if (!mounted || !dialogContext.mounted) return;
+                            Navigator.of(dialogContext).pop();
+                            Toast.success(this.context, 'If the account exists, a reset email is on the way.');
+                            Navigator.of(this.context).pushNamed(PasswordResetScreen.route);
+                          } catch (e) {
+                            if (!mounted) return;
+                            Toast.error(this.context, e.toString().replaceFirst('Exception: ', ''));
+                            setStateDialog(() => sending = false);
+                          }
+                        },
+                  child: sending
+                      ? const CupertinoActivityIndicator()
+                      : const Text('Send reset link'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    emailController.dispose();
+  }
 
   @override
   void dispose() {
@@ -225,8 +288,24 @@ class _SignInScreenState extends State<SignInScreen> {
                     ),
                   ),
 
-                  SizedBox(height: isSmallScreen ? 20 : 24),
-                  SizedBox(height: isSmallScreen ? 20 : 24),
+                  SizedBox(height: isSmallScreen ? 12 : 14),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: _loading ? null : _showForgotPasswordDialog,
+                      child: Text(
+                        'Forgot password?',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: kBrown,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: isSmallScreen ? 12 : 14),
 
                   // ------------------------------
                   // Legal text: Terms & Privacy

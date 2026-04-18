@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 
 import '../../../models/support_conversation.dart';
 import '../../../models/support_message.dart';
-import '../../../models/user.dart';
 import '../../../services/admin_auth_service.dart';
 import '../../../services/admin_support_inbox_navigation_service.dart';
 import '../../../utils/file_mime_utils.dart';
@@ -190,8 +189,11 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
 
   Future<void> _sendAdminMessage(String body, PlatformFile? attachment) async {
     final conv = _selected;
-    final adminId = _adminAuth.currentAdminId;
-    if (conv == null || adminId == null) return;
+    if (conv == null ||
+        _adminAuth.adminAccessToken == null ||
+        _adminAuth.adminAccessToken!.isEmpty) {
+      return;
+    }
     final trimmedBody = body.trim();
     if (trimmedBody.isEmpty && attachment == null) return;
 
@@ -199,12 +201,10 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
       final msg = attachment == null
           ? await _db.sendSupportMessageAsAdmin(
               conversationId: conv.id,
-              adminId: adminId,
               body: trimmedBody,
             )
           : await _db.sendSupportMessageAsAdminWithAttachment(
               conversationId: conv.id,
-              adminId: adminId,
               body: trimmedBody,
               attachmentBytes: attachment.bytes!,
               fileName: attachment.name.isNotEmpty ? attachment.name : 'attachment',

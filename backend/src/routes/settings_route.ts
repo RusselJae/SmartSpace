@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
 import { asyncHandler } from '../utils/async_handler';
+import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 export const settingsRouter = Router();
 
@@ -48,6 +50,8 @@ settingsRouter.get(
 
 settingsRouter.put(
   '/',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.settingsWrite),
   asyncHandler(async (req, res) => {
     await ensureAppSettingsTable();
     const pool = getPool();

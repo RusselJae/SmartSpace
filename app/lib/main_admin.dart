@@ -11,6 +11,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'screens/admin/admin_shell.dart';
 import 'screens/admin/auth/admin_login_page.dart';
 import 'screens/admin/auth/admin_signup_page.dart';
+import 'screens/admin/auth/admin_password_reset_screen.dart';
 import 'screens/views/verify_email_screen.dart';
 import 'screens/profile/how_to_order_screen.dart';
 import 'screens/profile/terms_and_conditions_screen.dart';
@@ -191,6 +192,11 @@ class WoodHomeAdminApp extends StatelessWidget {
           final uri = Uri.base;
           final token = uri.queryParameters['token'];
           return VerifyEmailScreen(token: token);
+        },
+        AdminPasswordResetScreen.route: (context) {
+          final uri = Uri.base;
+          final token = uri.queryParameters['token'];
+          return AdminPasswordResetScreen(token: token);
         },
         TermsAndConditionsScreen.route: (_) => const TermsAndConditionsScreen(),
         HowToOrderScreen.route: (_) => const HowToOrderScreen(),

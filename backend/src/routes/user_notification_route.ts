@@ -8,6 +8,8 @@ import {
   registerUserDeviceToken,
 } from '../services/user_notification_service';
 import { logAdminActivity } from '../services/admin_activity_log_service';
+import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 export const userNotificationRouter = Router();
 
@@ -57,15 +59,17 @@ userNotificationRouter.post(
 
 userNotificationRouter.post(
   '/admin/broadcast',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.notificationsSend),
   asyncHandler(async (req, res) => {
-    const adminId = String(req.body.adminId ?? '').trim();
+    const adminId = req.adminAuth!.id;
     const type = String(req.body.type ?? 'admin_broadcast').trim();
     const title = String(req.body.title ?? '').trim();
     const body = String(req.body.body ?? '').trim();
-    if (!adminId || !title || !body) {
+    if (!title || !body) {
       return res.status(400).json({
         success: false,
-        message: 'adminId, title, and body are required',
+        message: 'title and body are required',
       });
     }
     await createNotificationForAllUsers({

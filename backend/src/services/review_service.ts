@@ -67,6 +67,18 @@ export const listReviews = async (): Promise<Review[]> => {
 };
 
 /**
+ * Reviews authored by one user (storefront profile — no admin token).
+ */
+export const listReviewsForUser = async (userId: string): Promise<Review[]> => {
+  const pool = getPool();
+  const [rows] = await pool.query<ReviewRow[]>(
+    'SELECT * FROM reviews WHERE user_id = ? ORDER BY created_at DESC',
+    [userId.trim()],
+  );
+  return rows.map(mapReview);
+};
+
+/**
  * Get all reviews for a specific product.
  * Returns all published reviews from ALL users who have reviewed this product.
  * 

@@ -122,17 +122,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         // Fallback: if the productId-filtered query returns nothing but the user claims
         // they've reviewed, attempt a broader fetch and filter on the client.
         // This makes the UI robust against any backend query/filter mismatch.
-        List<Review> reviews = reviewsByProductId;
-        if (reviews.isEmpty) {
-          developer.log(
-            '⚠️ No reviews returned for productId=$productId. Falling back to getAllReviews() filter.',
-          );
-          final allReviews = await _db.getAllReviews();
-          reviews = allReviews.where((r) => r.productId == productId).toList();
-          developer.log(
-            '✅ Fallback found ${reviews.length} reviews for productId=$productId',
-          );
-        }
+        final List<Review> reviews = reviewsByProductId;
       
       // Log review details for debugging
       if (reviews.isNotEmpty) {

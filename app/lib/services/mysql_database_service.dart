@@ -187,7 +187,20 @@ class MySQLDatabaseService {
     );
   }
 
-  Map<String, String> get _jsonHeaders => {'Content-Type': 'application/json'};
+  /// JSON and optional admin Bearer token (sent whenever an admin session has a JWT).
+  Future<Map<String, String>> _httpHeaders({required bool jsonBody}) async {
+    final headers = <String, String>{};
+    if (jsonBody) {
+      headers['Content-Type'] = 'application/json';
+    }
+    final auth = AdminAuthService();
+    await auth.initialize();
+    final token = auth.adminAccessToken;
+    if (token != null && token.trim().isNotEmpty) {
+      headers['Authorization'] = 'Bearer ${token.trim()}';
+    }
+    return headers;
+  }
 
   Future<dynamic> _sendRequest({
     required String method,
@@ -196,30 +209,34 @@ class MySQLDatabaseService {
   }) async {
     final uri = _buildUri(path);
     final encodedBody = body == null ? null : jsonEncode(body);
-    
+    final wantsJson =
+        method == 'POST' || method == 'PUT' || method == 'PATCH' || method == 'DELETE';
+    final headers = await _httpHeaders(jsonBody: wantsJson);
+
     // Log request details for debugging
     developer.log('📤 API Request: $method $uri');
-    
+
     late http.Response response;
     try {
       switch (method) {
         case 'GET':
-          response = await _client.get(uri).timeout(ApiConfig.timeout);
+          response = await _client.get(uri, headers: headers).timeout(ApiConfig.timeout);
           break;
         case 'POST':
-          response =
-              await _client.post(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+          response = await _client
+              .post(uri, headers: headers, body: encodedBody)
+              .timeout(ApiConfig.timeout);
           break;
         case 'PUT':
           response =
-              await _client.put(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+              await _client.put(uri, headers: headers, body: encodedBody).timeout(ApiConfig.timeout);
           break;
         case 'PATCH':
           response =
-              await _client.patch(uri, headers: _jsonHeaders, body: encodedBody).timeout(ApiConfig.timeout);
+              await _client.patch(uri, headers: headers, body: encodedBody).timeout(ApiConfig.timeout);
           break;
         case 'DELETE':
-          response = await _client.delete(uri, headers: _jsonHeaders).timeout(ApiConfig.timeout);
+          response = await _client.delete(uri, headers: headers).timeout(ApiConfig.timeout);
           break;
         default:
           throw UnsupportedError('Unsupported HTTP method $method');
@@ -336,7 +353,6 @@ class MySQLDatabaseService {
     int? inventoryQty,
     required bool inStock,
     bool isArchived = false,
-    String? adminId,
     // Note: isPopular and isNewArrival are now calculated automatically by the backend
   }) {
     return {
@@ -357,7 +373,6 @@ class MySQLDatabaseService {
       if (inventoryQty != null) 'inventoryQty': inventoryQty,
       'inStock': inStock,
       'isArchived': isArchived,
-      if (adminId != null && adminId.isNotEmpty) 'adminId': adminId,
     };
   }
 
@@ -474,9 +489,6 @@ class MySQLDatabaseService {
     // - isNewArrival: Products created within the last week
     // - isPopular: Products with orders
   }) async {
-    final adminAuth = AdminAuthService();
-    await adminAuth.initialize();
-    final adminId = adminAuth.currentAdminId;
     if (!_useApi) {
       developer.log('⚠️ Creating product in MOCK MODE - data will NOT be saved to database!');
       developer.log('💡 Make sure your backend is running at ${ApiConfig.baseUrl}');
@@ -527,7 +539,6 @@ class MySQLDatabaseService {
       imageUrls: imageUrls,
       inventoryQty: inventoryQty,
       inStock: inStock,
-      adminId: adminId,
     );
     final data = await _sendRequest(method: 'POST', path: '/products', body: payload);
     final map = _asMap(data, 'product');
@@ -535,9 +546,6 @@ class MySQLDatabaseService {
   }
 
   Future<Product?> updateProduct(Product product) async {
-    final adminAuth = AdminAuthService();
-    await adminAuth.initialize();
-    final adminId = adminAuth.currentAdminId;
     if (!_useApi) {
       final index = _mockProducts.indexWhere((item) => item.id == product.id);
       if (index != -1) {
@@ -564,7 +572,6 @@ class MySQLDatabaseService {
       inventoryQty: product.inventoryQty,
       inStock: product.inStock,
       isArchived: product.isArchived,
-      adminId: adminId,
     );
     final data = await _sendRequest(method: 'PUT', path: '/products/${product.id}', body: payload);
     final map = _asMap(data, 'product');
@@ -572,17 +579,11 @@ class MySQLDatabaseService {
   }
 
   Future<void> deleteProduct(String id) async {
-    final adminAuth = AdminAuthService();
-    await adminAuth.initialize();
-    final adminId = adminAuth.currentAdminId;
     if (!_useApi) {
       _mockProducts.removeWhere((product) => product.id == id);
       return;
     }
-    final path = adminId != null && adminId.isNotEmpty
-        ? '/products/$id?adminId=${Uri.encodeComponent(adminId)}'
-        : '/products/$id';
-    await _sendRequest(method: 'DELETE', path: path);
+    await _sendRequest(method: 'DELETE', path: '/products/$id');
   }
 
   Future<List<User>> getAllUsers() async {
@@ -836,21 +837,30 @@ class MySQLDatabaseService {
     await _sendRequest(method: 'DELETE', path: '/cart/$userId');
   }
 
-  Future<List<OrderRecord>> getAllOrders() async {
+  /// When [forUserId] is set, requests only that user's orders (storefront; no admin JWT required).
+  Future<List<OrderRecord>> getAllOrders({String? forUserId}) async {
     if (!_useApi) {
       developer.log('⚠️ Using MOCK data for orders (API not connected)');
       _initializeMockData();
       return List.unmodifiable(_mockOrders);
     }
     developer.log('📡 Fetching orders from API...');
-    final data = await _sendRequest(method: 'GET', path: '/orders');
+    final path = forUserId != null && forUserId.trim().isNotEmpty
+        ? '/orders?userId=${Uri.encodeComponent(forUserId.trim())}'
+        : '/orders';
+    final data = await _sendRequest(method: 'GET', path: path);
     final list = _asMapList(data, 'orders');
     final orders = list.map(OrderRecord.fromJson).toList();
     developer.log('✅ Loaded ${orders.length} orders from database');
     return orders;
   }
 
-  Future<void> updateOrderStatus(String orderId, String status) async {
+  /// [customerUserId] — when the **customer** cancels their own order (no admin JWT). Omit for admin updates.
+  Future<void> updateOrderStatus(
+    String orderId,
+    String status, {
+    String? customerUserId,
+  }) async {
     if (!_useApi) {
       final index = _mockOrders.indexWhere((order) => order.id == orderId);
       if (index != -1) {
@@ -869,16 +879,14 @@ class MySQLDatabaseService {
       }
       return;
     }
-    final adminAuth = AdminAuthService();
-    await adminAuth.initialize();
-    final adminId = adminAuth.currentAdminId;
+    final body = <String, dynamic>{
+      'status': status,
+      if (customerUserId != null && customerUserId.trim().isNotEmpty) 'userId': customerUserId.trim(),
+    };
     await _sendRequest(
       method: 'PATCH',
       path: '/orders/$orderId/status',
-      body: {
-        'status': status,
-        if (adminId != null && adminId.isNotEmpty) 'adminId': adminId,
-      },
+      body: body,
     );
   }
 
@@ -932,7 +940,7 @@ class MySQLDatabaseService {
     final response = await http
         .post(
           uri,
-          headers: _jsonHeaders,
+          headers: await _httpHeaders(jsonBody: true),
           body: jsonEncode({
             'userId': userId,
             if (amountPesos != null) 'amountPesos': amountPesos,
@@ -1004,7 +1012,7 @@ class MySQLDatabaseService {
     final response = await http
         .post(
           uri,
-          headers: _jsonHeaders,
+          headers: await _httpHeaders(jsonBody: true),
           body: jsonEncode({
             'amountPesos': amountPesos,
             'itemName': itemName,
@@ -1046,7 +1054,7 @@ class MySQLDatabaseService {
     final response = await http
         .post(
           uri,
-          headers: _jsonHeaders,
+          headers: await _httpHeaders(jsonBody: true),
           body: jsonEncode({
             'userId': userId,
             'userName': userName,
@@ -1099,9 +1107,6 @@ class MySQLDatabaseService {
     if (!_useApi) {
       throw Exception('Made-to-order quote requires API mode.');
     }
-    final adminAuth = AdminAuthService();
-    await adminAuth.initialize();
-    final adminId = adminAuth.currentAdminId;
     await _sendRequest(
       method: 'PATCH',
       path: '/orders/made-to-order/requests/$requestId/quote',
@@ -1109,7 +1114,6 @@ class MySQLDatabaseService {
         'quotedTotal': quotedTotal,
         'quotedDownpayment': quotedDownpayment,
         'quotedRemaining': quotedRemaining,
-        if (adminId != null && adminId.trim().isNotEmpty) 'adminId': adminId.trim(),
         if (adminMessage != null && adminMessage.trim().isNotEmpty) 'adminMessage': adminMessage.trim(),
       },
     );
@@ -1123,14 +1127,10 @@ class MySQLDatabaseService {
     if (!_useApi) {
       throw Exception('Made-to-order decline requires API mode.');
     }
-    final adminAuth = AdminAuthService();
-    await adminAuth.initialize();
-    final adminId = adminAuth.currentAdminId;
     await _sendRequest(
       method: 'PATCH',
       path: '/orders/made-to-order/requests/$requestId/decline',
       body: {
-        if (adminId != null && adminId.trim().isNotEmpty) 'adminId': adminId.trim(),
         if (adminMessage != null && adminMessage.trim().isNotEmpty) 'adminMessage': adminMessage.trim(),
       },
     );
@@ -1492,14 +1492,18 @@ class MySQLDatabaseService {
     );
   }
 
-  Future<List<Review>> getAllReviews() async {
+  /// Full list requires admin JWT. With [forUserId], loads that user's reviews (storefront).
+  Future<List<Review>> getAllReviews({String? forUserId}) async {
     if (!_useApi) {
       developer.log('⚠️ Using MOCK data for reviews (API not connected)');
       _initializeMockData();
       return List.unmodifiable(_mockReviews);
     }
     developer.log('📡 Fetching reviews from API...');
-    final data = await _sendRequest(method: 'GET', path: '/reviews');
+    final path = forUserId != null && forUserId.trim().isNotEmpty
+        ? '/reviews?userId=${Uri.encodeComponent(forUserId.trim())}'
+        : '/reviews';
+    final data = await _sendRequest(method: 'GET', path: path);
     final list = _asMapList(data, 'reviews');
     final reviews = list.map(Review.fromJson).toList();
     developer.log('✅ Loaded ${reviews.length} reviews from database');
@@ -1633,15 +1637,12 @@ class MySQLDatabaseService {
   Future<bool> hasUserPurchasedProduct(String userId, String productId) async {
     if (!_useApi) {
       // In mock mode, assume user has purchased if they have any orders
-      final orders = await getAllOrders();
-      final userOrders = orders.where((order) => order.userId == userId).toList();
-      return userOrders.any((order) => order.productIds.contains(productId));
+      final orders = await getAllOrders(forUserId: userId);
+      return orders.any((order) => order.productIds.contains(productId));
     }
     try {
-      // Fetch user's orders and check if any contain this product
-      final orders = await getAllOrders();
-      final userOrders = orders.where((order) => order.userId == userId).toList();
-      return userOrders.any((order) => order.productIds.contains(productId));
+      final orders = await getAllOrders(forUserId: userId);
+      return orders.any((order) => order.productIds.contains(productId));
     } catch (e) {
       developer.log('❌ Error checking purchase status: $e');
       return false;
@@ -1910,7 +1911,8 @@ class MySQLDatabaseService {
       if (status != null) 'status': status,
     };
     final uri = _buildUri('/support/admin/conversations').replace(queryParameters: query);
-    final response = await _client.get(uri).timeout(ApiConfig.timeout);
+    final response =
+        await _client.get(uri, headers: await _httpHeaders(jsonBody: false)).timeout(ApiConfig.timeout);
     if (response.statusCode != 200) {
       throw Exception('Failed to load support conversations: ${response.body}');
     }
@@ -1933,7 +1935,8 @@ class MySQLDatabaseService {
     };
     final uri = _buildUri('/support/admin/conversation/$conversationId/messages')
         .replace(queryParameters: query);
-    final response = await _client.get(uri).timeout(ApiConfig.timeout);
+    final response =
+        await _client.get(uri, headers: await _httpHeaders(jsonBody: false)).timeout(ApiConfig.timeout);
     if (response.statusCode != 200) {
       throw Exception('Failed to load support messages (admin): ${response.body}');
     }
@@ -1950,9 +1953,11 @@ class MySQLDatabaseService {
 
   Future<SupportMessage> sendSupportMessageAsAdmin({
     required String conversationId,
-    required String adminId,
     required String body,
   }) async {
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId ?? '';
     if (!_useApi) {
       return SupportMessage(
         id: _generateId('sm'),
@@ -1967,7 +1972,6 @@ class MySQLDatabaseService {
       method: 'POST',
       path: '/support/admin/conversation/$conversationId/messages',
       body: {
-        'adminId': adminId,
         'body': body,
       },
     );
@@ -1981,12 +1985,14 @@ class MySQLDatabaseService {
 
   Future<SupportMessage> sendSupportMessageAsAdminWithAttachment({
     required String conversationId,
-    required String adminId,
     required String body,
     required Uint8List attachmentBytes,
     required String fileName,
     required String mimeType,
   }) async {
+    final adminAuth = AdminAuthService();
+    await adminAuth.initialize();
+    final adminId = adminAuth.currentAdminId ?? '';
     if (attachmentBytes.length > _maxSupportAttachmentBytes) {
       throw Exception('Attachment exceeds 30MB limit');
     }
@@ -2009,7 +2015,8 @@ class MySQLDatabaseService {
       '/support/admin/conversation/$conversationId/messages/attachment',
     );
     final request = http.MultipartRequest('POST', uri);
-    request.fields['adminId'] = adminId;
+    final authHeaders = await _httpHeaders(jsonBody: false);
+    request.headers.addAll(authHeaders);
     request.fields['body'] = body;
     // Kept for debugging/traceability; backend stores the file mimetype from multer.
     request.fields['mimeType'] = mimeType;
@@ -2057,9 +2064,8 @@ class MySQLDatabaseService {
     }
   }
 
-  /// Creates a new FAQ (admin). Requires adminId.
+  /// Creates a new FAQ (admin). Uses admin JWT from [AdminAuthService].
   Future<Faq> createFaq({
-    required String adminId,
     required String question,
     required String answer,
     int? sortOrder,
@@ -2068,7 +2074,6 @@ class MySQLDatabaseService {
       method: 'POST',
       path: '/faqs/admin',
       body: {
-        'adminId': adminId,
         'question': question,
         'answer': answer,
         if (sortOrder != null) 'sortOrder': sortOrder,
@@ -2080,13 +2085,12 @@ class MySQLDatabaseService {
 
   /// Updates an existing FAQ (admin).
   Future<Faq> updateFaq({
-    required String adminId,
     required String id,
     String? question,
     String? answer,
     int? sortOrder,
   }) async {
-    final body = <String, dynamic>{'adminId': adminId};
+    final body = <String, dynamic>{};
     if (question != null) body['question'] = question;
     if (answer != null) body['answer'] = answer;
     if (sortOrder != null) body['sortOrder'] = sortOrder;
@@ -2101,11 +2105,10 @@ class MySQLDatabaseService {
   }
 
   /// Deletes an FAQ (admin).
-  Future<void> deleteFaq({required String adminId, required String id}) async {
-    final uri = _buildUri('/faqs/admin/$id').replace(
-      queryParameters: {'adminId': adminId},
-    );
-    final response = await _client.delete(uri).timeout(ApiConfig.timeout);
+  Future<void> deleteFaq({required String id}) async {
+    final uri = _buildUri('/faqs/admin/$id');
+    final response =
+        await _client.delete(uri, headers: await _httpHeaders(jsonBody: false)).timeout(ApiConfig.timeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Failed to delete FAQ: ${response.body}');
     }
@@ -2140,7 +2143,6 @@ class MySQLDatabaseService {
 
   /// Updates legal page content (admin).
   Future<String?> updateLegalContent({
-    required String adminId,
     required String key,
     required String content,
   }) async {
@@ -2150,7 +2152,7 @@ class MySQLDatabaseService {
     final data = await _sendRequest(
       method: 'PATCH',
       path: '/content/admin/legal/$key',
-      body: {'adminId': adminId, 'content': content},
+      body: {'content': content},
     );
     final map = _asMap(data, 'legal content');
     return map['content'] as String?;
@@ -2195,7 +2197,6 @@ class MySQLDatabaseService {
   }
 
   Future<void> sendAdminBroadcastNotification({
-    required String adminId,
     required String type,
     required String title,
     required String body,
@@ -2205,7 +2206,6 @@ class MySQLDatabaseService {
       method: 'POST',
       path: '/user-notifications/admin/broadcast',
       body: {
-        'adminId': adminId,
         'type': type,
         'title': title,
         'body': body,
@@ -2462,6 +2462,7 @@ class MySQLDatabaseService {
     required String email,
     required String password,
     required String fullName,
+    String? role,
   }) async {
     if (!_useApi) {
       throw Exception('Admin creation requires API connection');
@@ -2470,10 +2471,19 @@ class MySQLDatabaseService {
       'email': email.trim(),
       'password': password,
       'fullName': fullName.trim(),
+      if (role != null && role.trim().isNotEmpty) 'role': role.trim(),
     };
     final data = await _sendRequest(method: 'POST', path: '/admins', body: payload);
     final map = _asMap(data, 'admin');
     return Admin.fromJson(map);
+  }
+
+  /// Re-sends the admin email verification message (after creating an account).
+  Future<void> resendAdminVerification({required String adminId}) async {
+    if (!_useApi) {
+      throw Exception('This action requires API connection');
+    }
+    await _sendRequest(method: 'POST', path: '/admins/$adminId/resend-verification');
   }
 
   /// Updates an admin's information.

@@ -148,10 +148,10 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
   }
 
   Future<void> _sendBroadcast() async {
-    final adminId = _adminAuth.currentAdminId;
     final title = _titleController.text.trim();
     final body = _bodyController.text.trim();
-    if (adminId == null || adminId.isEmpty) {
+    final token = _adminAuth.adminAccessToken;
+    if (token == null || token.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Sign in as admin again to send broadcasts.'),
@@ -168,7 +168,6 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
     setState(() => _sending = true);
     try {
       await _db.sendAdminBroadcastNotification(
-        adminId: adminId,
         type: _broadcastType.value,
         title: title,
         body: body,

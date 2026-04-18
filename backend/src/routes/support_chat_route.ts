@@ -20,6 +20,8 @@ import {
 } from '../services/cloudinary_service';
 import { isSupabaseStorageEnabled, uploadToSupabaseStorage } from '../services/supabase_storage_service';
 import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
+import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 export const supportChatRouter = Router();
 
@@ -269,6 +271,8 @@ supportChatRouter.post(
 
 supportChatRouter.get(
   '/admin/conversations',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.supportWrite),
   asyncHandler(async (req, res) => {
     const { status } = req.query as { status?: string };
     const statusFilter =
@@ -281,6 +285,8 @@ supportChatRouter.get(
 
 supportChatRouter.get(
   '/admin/conversation/:id/messages',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.supportWrite),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { before, limit } = req.query as { before?: string; limit?: string };
@@ -294,13 +300,12 @@ supportChatRouter.get(
 
 supportChatRouter.post(
   '/admin/conversation/:id/messages',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.supportWrite),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { adminId, body } = req.body as { adminId?: string; body?: string };
+    const { body } = req.body as { body?: string };
 
-    if (!adminId) {
-      return res.status(400).json({ success: false, message: 'adminId is required' });
-    }
     if (!body || !body.trim()) {
       return res.status(400).json({ success: false, message: 'Message body is required' });
     }
@@ -308,7 +313,7 @@ supportChatRouter.post(
     const message = await createSupportMessage({
       conversationId: id,
       senderType: 'admin',
-      senderAdminId: adminId,
+      senderAdminId: req.adminAuth!.id,
       body,
     });
 
@@ -319,14 +324,13 @@ supportChatRouter.post(
 // Admin: send message with attachment (image or file)
 supportChatRouter.post(
   '/admin/conversation/:id/messages/attachment',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.supportWrite),
   supportChatAttachmentUpload.single('attachment'),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { adminId, body } = req.body as { adminId?: string; body?: string };
+    const { body } = req.body as { body?: string };
 
-    if (!adminId) {
-      return res.status(400).json({ success: false, message: 'adminId is required' });
-    }
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'attachment file is required' });
     }
@@ -341,7 +345,7 @@ supportChatRouter.post(
     const message = await createSupportMessage({
       conversationId,
       senderType: 'admin',
-      senderAdminId: adminId,
+      senderAdminId: req.adminAuth!.id,
       body: body ?? '',
       attachmentUrl,
       attachmentType,
@@ -355,6 +359,8 @@ supportChatRouter.post(
 
 supportChatRouter.patch(
   '/admin/conversation/:id/status',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.supportWrite),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { status } = req.body as { status?: string };

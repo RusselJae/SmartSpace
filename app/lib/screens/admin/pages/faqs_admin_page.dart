@@ -81,15 +81,13 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
     );
     if (result == null) return;
 
-    final adminId = _adminAuth.currentAdminId;
-    if (adminId == null) {
+    if (_adminAuth.adminAccessToken == null || _adminAuth.adminAccessToken!.isEmpty) {
       Toast.error(context, 'Admin session expired. Please sign in again.');
       return;
     }
 
     try {
       await _db.createFaq(
-        adminId: adminId,
         question: result.question,
         answer: result.answer,
         sortOrder: result.sortOrder,
@@ -119,15 +117,13 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
     );
     if (result == null) return;
 
-    final adminId = _adminAuth.currentAdminId;
-    if (adminId == null) {
+    if (_adminAuth.adminAccessToken == null || _adminAuth.adminAccessToken!.isEmpty) {
       Toast.error(context, 'Admin session expired. Please sign in again.');
       return;
     }
 
     try {
       await _db.createFaq(
-        adminId: adminId,
         question: result.question,
         answer: result.answer,
         sortOrder: result.sortOrder,
@@ -153,15 +149,13 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
     );
     if (result == null) return;
 
-    final adminId = _adminAuth.currentAdminId;
-    if (adminId == null) {
+    if (_adminAuth.adminAccessToken == null || _adminAuth.adminAccessToken!.isEmpty) {
       Toast.error(context, 'Admin session expired. Please sign in again.');
       return;
     }
 
     try {
       await _db.updateFaq(
-        adminId: adminId,
         id: faq.id,
         question: result.question,
         answer: result.answer,
@@ -201,14 +195,13 @@ class _FaqsAdminPageState extends State<FaqsAdminPage> {
     );
     if (confirmed != true) return;
 
-    final adminId = _adminAuth.currentAdminId;
-    if (adminId == null) {
+    if (_adminAuth.adminAccessToken == null || _adminAuth.adminAccessToken!.isEmpty) {
       Toast.error(context, 'Admin session expired. Please sign in again.');
       return;
     }
 
     try {
-      await _db.deleteFaq(adminId: adminId, id: faq.id);
+      await _db.deleteFaq(id: faq.id);
       if (!mounted) return;
       Toast.success(context, 'FAQ deleted');
       await _loadFaqs();

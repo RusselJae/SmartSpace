@@ -99,6 +99,11 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                       _InfoRow(label: 'Email', value: email.isEmpty ? '—' : email),
                       const SizedBox(height: 8),
                       _InfoRow(label: 'Admin ID', value: adminId.isEmpty ? '—' : adminId),
+                      const SizedBox(height: 8),
+                      _InfoRow(
+                        label: 'Role',
+                        value: (_auth.currentRole ?? '—').replaceAll('_', ' '),
+                      ),
                       if (signedInAt != null) ...[
                         const SizedBox(height: 8),
                         _InfoRow(label: 'Signed in', value: signedInAt.toLocal().toString()),

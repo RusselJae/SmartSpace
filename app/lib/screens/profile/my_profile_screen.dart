@@ -70,8 +70,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     // Try to load from server first - this ensures we get the most up-to-date data
     // including dateOfBirth that was saved during signup or profile updates
     try {
-      final serverUsers = await _db.getAllUsers();
-      final serverUser = serverUsers.firstWhere((u) => u.id == user.id, orElse: () => user);
+      final serverUser = await _db.getUserById(user.id) ?? user;
       _usernameController.text = serverUser.username;
       _nameController.text = serverUser.fullName;
       _emailController.text = serverUser.email;

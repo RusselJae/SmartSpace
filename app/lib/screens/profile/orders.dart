@@ -65,7 +65,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
 
     try {
-      final ordersFuture = _db.getAllOrders();
+      final ordersFuture = _db.getAllOrders(forUserId: user.id);
       final productsFuture = _db.getAllProducts();
       final allOrders = await ordersFuture;
       developer.log('📦 Loaded ${allOrders.length} total orders from database');

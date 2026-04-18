@@ -5,6 +5,7 @@ import 'package:smartspace_ar/utils/admin_post_login_path.dart';
 import 'package:smartspace_ar/widgets/toast.dart';
 
 import '../admin_theme.dart';
+import 'admin_password_reset_screen.dart';
 
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});
@@ -256,24 +257,73 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   Future<void> _showForgotPasswordDialog() async {
     setState(() => _showPasswordHelp = true);
     try {
+      final resetEmail = TextEditingController(text: email.text.trim());
+      var sending = false;
       await showDialog<void>(
         context: context,
         builder: (context) {
-          return AlertDialog(
-            title: const Text('Forgot your password?'),
-            content: const Text(
-              'Password resets for admin accounts are handled by an administrator.\n\n'
-              'Reach out to your team admin and ask them to reset your access.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Done'),
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Forgot your password?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Enter your admin email to receive a reset link.'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: resetEmail,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
               ),
-            ],
+              actions: [
+                TextButton(
+                  onPressed: sending ? null : () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: sending
+                      ? null
+                      : () async {
+                          final targetEmail = resetEmail.text.trim();
+                          if (targetEmail.isEmpty) {
+                            Toast.warning(context, 'Please enter your email');
+                            return;
+                          }
+                          setDialogState(() => sending = true);
+                          try {
+                            await AdminAuthService().requestPasswordReset(email: targetEmail);
+                            if (!mounted || !context.mounted) return;
+                            Navigator.of(context).pop();
+                            Toast.success(this.context, 'If the account exists, a reset email is on the way.');
+                            Navigator.of(this.context).pushNamed(AdminPasswordResetScreen.route);
+                          } catch (e) {
+                            if (!mounted) return;
+                            Toast.error(this.context, e.toString().replaceFirst('Exception: ', ''));
+                            setDialogState(() => sending = false);
+                          }
+                        },
+                  child: sending
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Send reset link'),
+                ),
+              ],
+            ),
           );
         },
       );
+      resetEmail.dispose();
     } finally {
       if (mounted) setState(() => _showPasswordHelp = false);
     }

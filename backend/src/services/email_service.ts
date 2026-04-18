@@ -846,6 +846,113 @@ ${isCOD ? `<p style="margin:0;font-size:18px;line-height:1.45;color:#333;">Remai
       // Don't throw - email failure shouldn't break signup, but log it clearly
     }
   }
+
+  /**
+   * Customer self-service password reset — link targets the storefront Flutter route.
+   */
+  static async sendUserPasswordResetEmail(
+    userName: string,
+    userEmail: string,
+    resetLink: string,
+  ): Promise<void> {
+    try {
+      const subject = 'Reset your Wood Home password';
+      const safeLink = escapeHtml(resetLink);
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Password reset',
+        greeting: `Hi ${userName},`,
+        intro:
+          'We received a request to reset your password. Use the button below within one hour. If you did not ask for this, ignore this email.',
+        bodyHtml: `<p style="margin:0;text-align:center;"><a href="${safeLink}" style="display:inline-block;padding:14px 28px;background:#5D4037;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;">Choose a new password</a></p>
+<p style="margin:16px 0 0;font-size:13px;color:#888;word-break:break-all;">${safeLink}</p>`,
+        footerNote: 'This link expires in one hour.',
+      });
+      await sendEmail({
+        to: userEmail,
+        subject,
+        html: htmlBody,
+        text: `Reset your Wood Home password:\n${resetLink}\n`,
+      });
+      console.log(`✅ Sent customer password reset email to ${userEmail}`);
+    } catch (error) {
+      console.error('❌ Failed to send customer password reset email:', error);
+    }
+  }
+
+  /**
+   * Admin password reset — link opens admin Flutter entry (hash route).
+   */
+  static async sendAdminPasswordResetEmail(
+    adminName: string,
+    adminEmail: string,
+    resetLink: string,
+  ): Promise<void> {
+    try {
+      const subject = 'Reset your Wood Home admin password';
+      const safeLink = escapeHtml(resetLink);
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Admin password reset',
+        greeting: `Hi ${adminName},`,
+        intro:
+          'Use the link below to set a new admin password. It expires in one hour. If you did not request this, contact your super admin.',
+        bodyHtml: `<p style="margin:0;text-align:center;"><a href="${safeLink}" style="display:inline-block;padding:14px 28px;background:#5D4037;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;">Reset admin password</a></p>
+<p style="margin:16px 0 0;font-size:13px;color:#888;word-break:break-all;">${safeLink}</p>`,
+        footerNote: 'This link expires in one hour.',
+      });
+      await sendEmail({
+        to: adminEmail,
+        subject,
+        html: htmlBody,
+        text: `Reset your Wood Home admin password:\n${resetLink}\n`,
+      });
+      console.log(`✅ Sent admin password reset email to ${adminEmail}`);
+    } catch (error) {
+      console.error('❌ Failed to send admin password reset email:', error);
+    }
+  }
+
+  /**
+   * Sent when a new admin account is created; includes code + API verify link for webmail.
+   */
+  static async sendAdminVerificationEmail(
+    adminName: string,
+    adminEmail: string,
+    verificationToken: string,
+    verificationCode: string,
+  ): Promise<void> {
+    try {
+      const apiBase = config.publicApiBaseUrl.replace(/\/$/, '');
+      const verifyUrl = `${apiBase}/api/admin-auth/verify-email?token=${encodeURIComponent(verificationToken)}&ui=1`;
+      const safeCode = escapeHtml(verificationCode);
+      const safeVerifyUrl = escapeHtml(verifyUrl);
+      const subject = 'Verify your Wood Home admin email';
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Verify admin email',
+        greeting: `Hi ${adminName},`,
+        intro:
+          'Your administrator account was created. Confirm this email to activate sign-in. You can tap the link or enter the code in the admin app.',
+        bodyHtml: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f8f8f8;border:1px dashed #9a7f72;border-radius:8px;margin:8px 0 4px;">
+<tr><td style="padding:18px 14px;text-align:center;">
+<p style="margin:0 0 8px;font-size:14px;color:#7b5a4f;font-weight:600;">Your verification code:</p>
+<p style="margin:0;font-family:'Courier New',Courier,monospace;font-size:34px;letter-spacing:0.24em;color:#7b5a4f;font-weight:700;white-space:nowrap;">${safeCode}</p>
+<p style="margin:14px 0 0;font-size:12px;color:#999;">Or verify in the browser:</p>
+<p style="margin:8px 0 0;text-align:center;"><a href="${safeVerifyUrl}" style="display:inline-block;padding:12px 22px;background:#5D4037;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;">Verify email</a></p>
+</td></tr>
+</table>`,
+        footerNote:
+          'This code and link expire in 24 hours. If you did not expect this email, ignore it.',
+      });
+      await sendEmail({
+        to: adminEmail,
+        subject,
+        html: htmlBody,
+        text: `Verify your Wood Home admin email.\nCode: ${verificationCode}\nLink: ${verifyUrl}\n`,
+      });
+      console.log(`✅ Sent admin verification email to ${adminEmail}`);
+    } catch (error) {
+      console.error('❌ Failed to send admin verification email:', error);
+    }
+  }
 }
 
 

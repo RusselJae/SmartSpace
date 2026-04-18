@@ -127,8 +127,7 @@ This Privacy Policy explains how SmartSpace collects, uses, and protects persona
   }
 
   Future<void> _save() async {
-    final adminId = _adminAuth.currentAdminId;
-    if (adminId == null) {
+    if (_adminAuth.adminAccessToken == null || _adminAuth.adminAccessToken!.isEmpty) {
       Toast.error(context, 'Admin session expired. Please sign in again.');
       return;
     }
@@ -142,7 +141,6 @@ This Privacy Policy explains how SmartSpace collects, uses, and protects persona
               : _privacyController.text;
 
       await _db.updateLegalContent(
-        adminId: adminId,
         key: key,
         content: content,
       );

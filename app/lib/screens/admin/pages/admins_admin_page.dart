@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../models/admin.dart';
+import '../../../../services/admin_auth_service.dart';
 import '../../../../services/mysql_database_service.dart';
+import '../../../../utils/password_policy.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
 import '../../../../widgets/toast.dart';
@@ -25,6 +27,7 @@ class AdminsAdminPage extends StatefulWidget {
 
 class _AdminsAdminPageState extends State<AdminsAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
+  final AdminAuthService _adminAuth = AdminAuthService();
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey _filterAnchorKey = GlobalKey();
   
@@ -191,9 +194,10 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
 
   /// Opens the "Add admin" dialog and creates a new admin if confirmed.
   Future<void> _createAdmin() async {
+    final allowRolePick = (_adminAuth.currentRole ?? '').trim() == 'super_admin';
     final data = await showDialog<_AdminFormData>(
       context: context,
-      builder: (_) => const _AdminFormDialog(),
+      builder: (_) => _AdminFormDialog(allowRolePick: allowRolePick),
     );
     if (data == null) return;
     
@@ -202,6 +206,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
         email: data.email,
         password: data.password,
         fullName: data.fullName,
+        role: data.role,
       );
       if (!mounted) return;
       Toast.success(context, 'Admin created successfully');
@@ -408,6 +413,7 @@ class _AdminsHeaderRow extends StatelessWidget {
         children: [
           Expanded(flex: 3, child: Text('Name', style: style)),
           Expanded(flex: 3, child: Text('Email', style: style)),
+          Expanded(flex: 2, child: Text('Role', style: style)),
           Expanded(flex: 2, child: Text('Created', style: style)),
           Expanded(flex: 2, child: Text('Last Login', style: style)),
           const SizedBox(width: 80),
@@ -456,6 +462,18 @@ class _AdminsTableRow extends StatelessWidget {
                   color: Colors.black,
                   fontSize: 14,
                   fontWeight: FontWeight.normal,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                admin.role.replaceAll('_', ' '),
+                style: GoogleFonts.poppins(
+                  color: Colors.black,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
                   decoration: TextDecoration.none,
                 ),
               ),
@@ -565,6 +583,11 @@ class _AdminDetailsDialog extends StatelessWidget {
                     _DetailRow(label: 'Email', value: admin.email),
                     const SizedBox(height: 12),
                     _DetailRow(
+                      label: 'Role',
+                      value: admin.role.replaceAll('_', ' '),
+                    ),
+                    const SizedBox(height: 12),
+                    _DetailRow(
                       label: 'Created',
                       value: _formatDateTime(admin.createdAt),
                     ),
@@ -654,16 +677,21 @@ class _AdminFormData {
     required this.email,
     required this.password,
     required this.fullName,
+    this.role,
   });
 
   final String email;
   final String password;
   final String fullName;
+  /// When non-null, only [super_admin] should send this; server validates.
+  final String? role;
 }
 
 /// Dialog form for creating a new admin account.
 class _AdminFormDialog extends StatefulWidget {
-  const _AdminFormDialog();
+  const _AdminFormDialog({this.allowRolePick = false});
+
+  final bool allowRolePick;
 
   @override
   State<_AdminFormDialog> createState() => _AdminFormDialogState();
@@ -673,6 +701,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
   final TextEditingController _email = TextEditingController();
   final TextEditingController _password = TextEditingController();
   final TextEditingController _fullName = TextEditingController();
+  String _pickedRole = 'operations_admin';
   bool _obscurePassword = true;
   bool _submitting = false;
 
@@ -693,8 +722,9 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
       return;
     }
 
-    if (_password.text.length < 6) {
-      Toast.warning(context, 'Password must be at least 6 characters long');
+    final passwordError = PasswordPolicy.validateStrongPassword(_password.text);
+    if (passwordError != null) {
+      Toast.warning(context, passwordError);
       return;
     }
 
@@ -702,6 +732,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
       email: _email.text.trim(),
       password: _password.text,
       fullName: _fullName.text.trim(),
+      role: widget.allowRolePick ? _pickedRole : null,
     );
     Navigator.of(context).pop(data);
   }
@@ -814,6 +845,38 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                         ),
                       ),
                       _buildField(_fullName, 'Full name *'),
+                      if (widget.allowRolePick) ...[
+                        const SizedBox(height: 4),
+                        DropdownButtonFormField<String>(
+                          value: _pickedRole,
+                          decoration: InputDecoration(
+                            labelText: 'Role',
+                            filled: true,
+                            fillColor: const Color(0xFFF8F8F8),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'operations_admin',
+                              child: Text('Operations'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'support_admin',
+                              child: Text('Support'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'social_admin',
+                              child: Text('Social / content'),
+                            ),
+                          ],
+                          onChanged: (v) {
+                            if (v == null) return;
+                            setState(() => _pickedRole = v);
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -827,7 +890,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'Password must be at least 6 characters. Credentials cannot be changed after creation.',
+                                '${PasswordPolicy.strongPasswordMessage} New admin accounts must verify email before first login.',
                                 style: GoogleFonts.poppins(
                                   fontSize: 12,
                                   color: Colors.blue[900],

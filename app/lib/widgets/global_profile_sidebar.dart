@@ -112,8 +112,7 @@ class _GlobalProfileSidebarOverlayState extends State<GlobalProfileSidebarOverla
 
     if (mounted) setState(() => _loading = true);
     try {
-      final serverUsers = await MySQLDatabaseService().getAllUsers();
-      final serverUser = serverUsers.firstWhere((u) => u.id == user.id, orElse: () => user);
+      final serverUser = await MySQLDatabaseService().getUserById(user.id) ?? user;
       final extras = await _storage.loadExtras(serverUser);
 
       Uint8List? avatarBytes;

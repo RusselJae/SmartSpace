@@ -15,6 +15,9 @@ import {
   verifyUserCredentials,
   changeUserPassword,
   recordTermsAcceptance,
+  requestUserPasswordReset,
+  resetUserPasswordWithToken,
+  FORGOT_PASSWORD_USER_ACK,
 } from '../services/user_service';
 import { EmailService } from '../services/email_service';
 import { avatarsDir, ensureUploadsDirectories } from '../utils/uploads';
@@ -24,6 +27,8 @@ import { isCloudinaryUploadsEnabled, uploadImageBuffer } from '../services/cloud
 import { isSupabaseStorageEnabled, uploadToSupabaseStorage } from '../services/supabase_storage_service';
 import { shouldUseMemoryBufferUpload } from '../services/storage_mode';
 import { getLegalContent } from '../services/legal_content_service';
+import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 /** Escape text embedded in minimal HTML landing pages (verification errors, etc.). */
 function escapeHtmlVerificationPage(value: string): string {
@@ -111,6 +116,8 @@ const avatarUpload = multer({
 
 userRouter.get(
   '/',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.usersRead),
   asyncHandler(async (_req, res) => {
     const users = await listUsers();
     res.json({ success: true, data: users });
@@ -289,6 +296,38 @@ userRouter.post(
       // Use 401 for auth failures, 403 for verification-related blocks.
       const status = message.toLowerCase().includes('verify your email') ? 403 : 401;
       res.status(status).json({ success: false, message });
+    }
+  }),
+);
+
+/**
+ * POST /api/users/auth/forgot-password
+ * Body: { email: string }
+ */
+userRouter.post(
+  '/auth/forgot-password',
+  asyncHandler(async (req, res) => {
+    const email = (req.body.email as string | undefined) ?? '';
+    await requestUserPasswordReset(email);
+    res.json({ success: true, message: FORGOT_PASSWORD_USER_ACK });
+  }),
+);
+
+/**
+ * POST /api/users/auth/reset-password
+ * Body: { token: string, newPassword: string }
+ */
+userRouter.post(
+  '/auth/reset-password',
+  asyncHandler(async (req, res) => {
+    const token = (req.body.token as string | undefined) ?? '';
+    const newPassword = (req.body.newPassword as string | undefined) ?? '';
+    try {
+      await resetUserPasswordWithToken(token, newPassword);
+      res.json({ success: true, message: 'Password updated. You can sign in now.' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to reset password';
+      res.status(400).json({ success: false, message });
     }
   }),
 );

@@ -9,6 +9,8 @@ import {
 } from '../services/product_service';
 import { asyncHandler } from '../utils/async_handler';
 import { logAdminActivity } from '../services/admin_activity_log_service';
+import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 const productComponentSchema = z.object({
   name: z.string().min(1),
@@ -59,65 +61,62 @@ productRouter.get(
 
 productRouter.post(
   '/',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.productsWrite),
   asyncHandler(async (req, res) => {
-    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
     const input = parseProductInput(req.body);
     const product = await createProduct(input);
-    if (adminId.length > 0) {
-      await logAdminActivity({
-        adminId,
-        action: 'product_created',
-        entityType: 'product',
-        entityId: product.id,
-        details: { name: product.name },
-      });
-    }
+    await logAdminActivity({
+      adminId: req.adminAuth!.id,
+      action: 'product_created',
+      entityType: 'product',
+      entityId: product.id,
+      details: { name: product.name },
+    });
     res.status(201).json({ success: true, data: product });
   }),
 );
 
 productRouter.put(
   '/:id',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.productsWrite),
   asyncHandler(async (req, res) => {
-    const adminId = req.body.adminId != null ? String(req.body.adminId).trim() : '';
     const input = parseProductInput(req.body);
     const product = await updateProduct(req.params.id, input);
-    if (adminId.length > 0) {
-      const action =
-        req.body.isArchived === true
-          ? 'product_archived'
-          : req.body.isArchived === false
-              ? 'product_unarchived'
-              : 'product_updated';
-      await logAdminActivity({
-        adminId,
-        action,
-        entityType: 'product',
-        entityId: product.id,
-        details: {
-          name: product.name,
-          isArchived: String(product.isArchived),
-          inStock: String(product.inStock),
-        },
-      });
-    }
+    const action =
+      req.body.isArchived === true
+        ? 'product_archived'
+        : req.body.isArchived === false
+            ? 'product_unarchived'
+            : 'product_updated';
+    await logAdminActivity({
+      adminId: req.adminAuth!.id,
+      action,
+      entityType: 'product',
+      entityId: product.id,
+      details: {
+        name: product.name,
+        isArchived: String(product.isArchived),
+        inStock: String(product.inStock),
+      },
+    });
     res.json({ success: true, data: product });
   }),
 );
 
 productRouter.delete(
   '/:id',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.productsWrite),
   asyncHandler(async (req, res) => {
-    const adminId = req.query.adminId != null ? String(req.query.adminId).trim() : '';
     await deleteProduct(req.params.id);
-    if (adminId.length > 0) {
-      await logAdminActivity({
-        adminId,
-        action: 'product_deleted',
-        entityType: 'product',
-        entityId: req.params.id,
-      });
-    }
+    await logAdminActivity({
+      adminId: req.adminAuth!.id,
+      action: 'product_deleted',
+      entityType: 'product',
+      entityId: req.params.id,
+    });
     res.status(204).send();
   }),
 );

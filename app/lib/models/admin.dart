@@ -10,6 +10,8 @@ class Admin {
     required this.createdAt,
     required this.updatedAt,
     this.lastLoginAt,
+    this.emailVerified = true,
+    this.role = 'operations_admin',
   });
 
   final String id;
@@ -18,6 +20,11 @@ class Admin {
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? lastLoginAt;
+  /// False until the admin completes email verification (new accounts).
+  final bool emailVerified;
+
+  /// RBAC role from the API (`super_admin`, `operations_admin`, `support_admin`, `social_admin`).
+  final String role;
 
   /// Creates an Admin from a JSON map (typically from the API).
   factory Admin.fromJson(Map<String, dynamic> json) {
@@ -30,6 +37,8 @@ class Admin {
       lastLoginAt: json['lastLoginAt'] != null
           ? DateTime.parse(json['lastLoginAt'] as String)
           : null,
+      emailVerified: json['emailVerified'] as bool? ?? true,
+      role: json['role'] as String? ?? 'operations_admin',
     );
   }
 
@@ -42,6 +51,8 @@ class Admin {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'lastLoginAt': lastLoginAt?.toIso8601String(),
+      'emailVerified': emailVerified,
+      'role': role,
     };
   }
 }

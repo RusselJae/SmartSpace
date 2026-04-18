@@ -7,6 +7,8 @@ import {
   type LegalContentKey,
 } from '../services/legal_content_service';
 import { logAdminActivity } from '../services/admin_activity_log_service';
+import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
+import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
 export const legalContentRouter = Router();
 
@@ -39,13 +41,12 @@ legalContentRouter.get(
  */
 legalContentRouter.patch(
   '/admin/legal/:key',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.legalWrite),
   asyncHandler(async (req, res) => {
     const { key } = req.params;
-    const { adminId, content } = req.body as { adminId?: string; content?: string };
+    const { content } = req.body as { content?: string };
 
-    if (!adminId) {
-      return res.status(400).json({ success: false, message: 'adminId is required' });
-    }
     if (!isValidLegalKey(key)) {
       return res.status(400).json({
         success: false,
@@ -59,7 +60,7 @@ legalContentRouter.patch(
     await updateLegalContent(key as LegalContentKey, String(content));
     const updated = await getLegalContent(key as LegalContentKey);
     await logAdminActivity({
-      adminId,
+      adminId: req.adminAuth!.id,
       action: 'legal_content_updated',
       entityType: 'legal_content',
       entityId: key,

@@ -69,6 +69,11 @@ type EnvironmentConfig = {
   readonly firebase: {
     readonly serviceAccountJson: string;
   };
+  /** HS256 secret for admin API Bearer tokens (set ADMIN_JWT_SECRET in production). */
+  readonly adminJwt: {
+    readonly secret: string;
+    readonly expiresIn: string;
+  };
 };
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -164,6 +169,21 @@ export const config: EnvironmentConfig = {
   },
   firebase: {
     serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON ?? '',
+  },
+  adminJwt: {
+    secret: (() => {
+      const fromEnv = (process.env.ADMIN_JWT_SECRET ?? '').trim();
+      if (fromEnv.length > 0) return fromEnv;
+      const envName = process.env.APP_ENV ?? 'development';
+      if (envName === 'production') {
+        console.warn(
+          '⚠️ ADMIN_JWT_SECRET is not set — admin login will fail until you set a strong secret in production.',
+        );
+        return '';
+      }
+      return 'dev-insecure-admin-jwt-change-me';
+    })(),
+    expiresIn: (process.env.ADMIN_JWT_EXPIRES_IN ?? '7d').trim(),
   },
 };
 

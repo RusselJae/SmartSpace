@@ -2,8 +2,11 @@ import { RowDataPacket } from 'mysql2';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { getPool } from '../config/database';
+import { config } from '../config/env';
 import { User } from '../models/user';
 import { generateId } from '../utils/id_generator';
+import { assertStrongPassword } from '../utils/password_policy';
+import { EmailService } from './email_service';
 
 type UserRow = RowDataPacket & {
   readonly id: string;
@@ -52,6 +55,33 @@ const ensureUserLegalColumns = async (): Promise<void> => {
   }
   _userLegalSchemaEnsured = true;
 };
+
+let _userPasswordResetEnsured = false;
+
+const ensureUserPasswordResetColumns = async (): Promise<void> => {
+  if (_userPasswordResetEnsured) return;
+  const pool = getPool();
+  try {
+    await pool.query('ALTER TABLE users ADD COLUMN password_reset_token VARCHAR(255) NULL');
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.toLowerCase().includes('duplicate column')) {
+      throw e;
+    }
+  }
+  try {
+    await pool.query('ALTER TABLE users ADD COLUMN password_reset_expires DATETIME NULL');
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.toLowerCase().includes('duplicate column')) {
+      throw e;
+    }
+  }
+  _userPasswordResetEnsured = true;
+};
+
+export const FORGOT_PASSWORD_USER_ACK =
+  'If an account exists for this email, you will receive password reset instructions.';
 
 const mapUser = (row: UserRow): User => {
   return {
@@ -391,6 +421,64 @@ export const changeUserPassword = async (
   await pool.query(
     'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?',
     [newHash, userId],
+  );
+};
+
+/**
+ * Starts a password reset for storefront users. Does not reveal whether the email exists.
+ */
+export const requestUserPasswordReset = async (emailRaw: string): Promise<void> => {
+  await ensureUserLegalColumns();
+  await ensureUserPasswordResetColumns();
+  const normalized = emailRaw.trim().toLowerCase();
+  if (!normalized) {
+    return;
+  }
+  const pool = getPool();
+  const [rows] = await pool.query<Array<RowDataPacket & { id: string; full_name: string; email: string }>>(
+    `SELECT id, full_name, email FROM users WHERE LOWER(email) = ? LIMIT 1`,
+    [normalized],
+  );
+  if (rows.length === 0) {
+    return;
+  }
+  const row = rows[0];
+  const token = crypto.randomBytes(32).toString('base64url');
+  const exp = new Date();
+  exp.setHours(exp.getHours() + 1);
+  await pool.query(
+    `UPDATE users SET password_reset_token = ?, password_reset_expires = ?, updated_at = NOW() WHERE id = ?`,
+    [token, exp, row.id],
+  );
+  const base = config.frontend.url.replace(/\/$/, '');
+  const resetLink = `${base}/#/auth/reset-password?token=${encodeURIComponent(token)}`;
+  await EmailService.sendUserPasswordResetEmail(row.full_name, row.email, resetLink);
+};
+
+/**
+ * Completes password reset using the emailed token; enforces strong password rules.
+ */
+export const resetUserPasswordWithToken = async (token: string, newPassword: string): Promise<void> => {
+  await ensureUserLegalColumns();
+  await ensureUserPasswordResetColumns();
+  const t = (token ?? '').trim();
+  if (!t) {
+    throw new Error('Reset token is required');
+  }
+  assertStrongPassword(newPassword);
+  const pool = getPool();
+  const [rows] = await pool.query<Array<RowDataPacket & { id: string }>>(
+    `SELECT id FROM users WHERE password_reset_token = ? AND password_reset_expires > NOW() LIMIT 1`,
+    [t],
+  );
+  if (rows.length === 0) {
+    throw new Error('Invalid or expired reset link. Request a new one.');
+  }
+  const userId = rows[0].id;
+  const hash = await bcrypt.hash(newPassword.trim(), 10);
+  await pool.query(
+    `UPDATE users SET password_hash = ?, password_reset_token = NULL, password_reset_expires = NULL, updated_at = NOW() WHERE id = ?`,
+    [hash, userId],
   );
 };
 

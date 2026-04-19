@@ -79,6 +79,14 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
   double _maxOrderAmount = 0.0;
   int _orderCancellationTime = 60;
 
+  // Numeric fields (replaces range sliders for clearer input)
+  final TextEditingController _huluganDpPctController = TextEditingController();
+  final TextEditingController _huluganInterestController = TextEditingController();
+  final TextEditingController _installmentMonthsController = TextEditingController();
+  final TextEditingController _lateFeePerDayController = TextEditingController();
+  final TextEditingController _taxRateController = TextEditingController();
+  final TextEditingController _serviceFeeController = TextEditingController();
+
   // Dropdown options
   final List<int> _freeShippingCountOptions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
@@ -106,6 +114,12 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
     _storeEmailController.dispose();
     _storePhoneController.dispose();
     _storeAddressController.dispose();
+    _huluganDpPctController.dispose();
+    _huluganInterestController.dispose();
+    _installmentMonthsController.dispose();
+    _lateFeePerDayController.dispose();
+    _taxRateController.dispose();
+    _serviceFeeController.dispose();
     super.dispose();
   }
 
@@ -147,6 +161,12 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
       _huluganInterestPercent = settings.huluganInterestPercent;
       _installmentTermMonths = settings.installmentTermMonths;
       _lateFeePerDay = settings.lateFeePerDay;
+      _huluganDpPctController.text = _huluganDownpaymentPercent.toStringAsFixed(0);
+      _huluganInterestController.text = _huluganInterestPercent.toStringAsFixed(1);
+      _installmentMonthsController.text = _installmentTermMonths.toString();
+      _lateFeePerDayController.text = _lateFeePerDay.toStringAsFixed(0);
+      _taxRateController.text = _taxRate.toStringAsFixed(1);
+      _serviceFeeController.text = _serviceFee.toStringAsFixed(0);
       _layawayMinController.text = settings.layawayDownpaymentMin.toStringAsFixed(0);
       _layawayMaxController.text = settings.layawayDownpaymentMax.toStringAsFixed(0);
       
@@ -337,6 +357,31 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
 
     setState(() => _saving = true);
     try {
+      final dp = double.tryParse(_huluganDpPctController.text.trim());
+      if (dp != null) {
+        _huluganDownpaymentPercent = dp.clamp(10.0, 90.0);
+      }
+      final intr = double.tryParse(_huluganInterestController.text.trim());
+      if (intr != null) {
+        _huluganInterestPercent = intr.clamp(0.0, 20.0);
+      }
+      final months = int.tryParse(_installmentMonthsController.text.trim());
+      if (months != null) {
+        _installmentTermMonths = months.clamp(1, 12);
+      }
+      final late = double.tryParse(_lateFeePerDayController.text.trim());
+      if (late != null) {
+        _lateFeePerDay = late.clamp(0.0, 1000.0);
+      }
+      final tax = double.tryParse(_taxRateController.text.trim());
+      if (tax != null) {
+        _taxRate = tax.clamp(0.0, 100.0);
+      }
+      final svc = double.tryParse(_serviceFeeController.text.trim());
+      if (svc != null) {
+        _serviceFee = svc.clamp(0.0, 1000.0);
+      }
+
       // Special shipping cities are managed by dropdown + amount field state.
       final specialShippingMap = Map<String, double>.from(_specialShippingCitiesMap);
 
@@ -390,6 +435,15 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
       
       if (mounted) {
         Toast.success(context, 'Settings saved successfully');
+        // Reflect clamped / normalized values back into the fields.
+        setState(() {
+          _huluganDpPctController.text = _huluganDownpaymentPercent.toStringAsFixed(0);
+          _huluganInterestController.text = _huluganInterestPercent.toStringAsFixed(1);
+          _installmentMonthsController.text = _installmentTermMonths.toString();
+          _lateFeePerDayController.text = _lateFeePerDay.toStringAsFixed(0);
+          _taxRateController.text = _taxRate.toStringAsFixed(1);
+          _serviceFeeController.text = _serviceFee.toStringAsFixed(0);
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -537,57 +591,6 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
             style: GoogleFonts.poppins(fontSize: 13),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSlider({
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required void Function(double) onChanged,
-    String Function(double)? valueDisplay,
-    int? divisions,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                label,
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[700],
-                  decoration: TextDecoration.none,
-                ),
-              ),
-              Text(
-                valueDisplay?.call(value) ?? value.toStringAsFixed(1),
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF8D6E63),
-                  decoration: TextDecoration.none,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Slider(
-            value: value,
-            min: min,
-            max: max,
-            divisions: divisions,
-            activeColor: const Color(0xFF8D6E63),
-            onChanged: onChanged,
           ),
         ],
       ),
@@ -1164,41 +1167,49 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                               ],
                             ),
                           ),
-                          _buildSlider(
-                            label: 'Installment down payment (%)',
-                            value: _huluganDownpaymentPercent,
-                            min: 10,
-                            max: 90,
-                            divisions: 80,
-                            onChanged: (value) => setState(() => _huluganDownpaymentPercent = value),
-                            valueDisplay: (value) => '${value.toStringAsFixed(0)}%',
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: _buildTextField(
+                                  label: 'Installment down payment (%)',
+                                  controller: _huluganDpPctController,
+                                  hint: '10–90',
+                                  keyboardType: TextInputType.number,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: _buildTextField(
+                                  label: 'Installment financing interest (%)',
+                                  controller: _huluganInterestController,
+                                  hint: '0–20',
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                ),
+                              ),
+                            ],
                           ),
-                          _buildSlider(
-                            label: 'Installment financing interest (%)',
-                            value: _huluganInterestPercent,
-                            min: 0,
-                            max: 20,
-                            divisions: 200,
-                            onChanged: (value) => setState(() => _huluganInterestPercent = value),
-                            valueDisplay: (value) => '${value.toStringAsFixed(1)}%',
-                          ),
-                          _buildSlider(
-                            label: 'Installment term (months)',
-                            value: _installmentTermMonths.toDouble(),
-                            min: 1,
-                            max: 12,
-                            divisions: 11,
-                            onChanged: (value) => setState(() => _installmentTermMonths = value.round()),
-                            valueDisplay: (value) => '${value.round()} months',
-                          ),
-                          _buildSlider(
-                            label: 'Late fee per day (₱)',
-                            value: _lateFeePerDay,
-                            min: 0,
-                            max: 1000,
-                            divisions: 200,
-                            onChanged: (value) => setState(() => _lateFeePerDay = value),
-                            valueDisplay: (value) => '₱${value.toStringAsFixed(0)}',
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: _buildTextField(
+                                  label: 'Installment term (months)',
+                                  controller: _installmentMonthsController,
+                                  hint: '1–12',
+                                  keyboardType: TextInputType.number,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: _buildTextField(
+                                  label: 'Late fee per day (₱)',
+                                  controller: _lateFeePerDayController,
+                                  hint: '0–1000',
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -1251,31 +1262,27 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
 
                           // Tax and Fees
                           _buildSectionTitle('Tax and Fees'),
-                          _buildSlider(
-                            label: 'Tax Rate',
-                            value: _taxRate,
-                            min: 0,
-                            max: 100,
-                            divisions: 200,
-                            onChanged: (value) {
-                              setState(() {
-                                _taxRate = value;
-                              });
-                            },
-                            valueDisplay: (value) => '${value.toStringAsFixed(1)}%',
-                          ),
-                          _buildSlider(
-                            label: 'Service Fee',
-                            value: _serviceFee,
-                            min: 0,
-                            max: 1000,
-                            divisions: 200,
-                            onChanged: (value) {
-                              setState(() {
-                                _serviceFee = value;
-                              });
-                            },
-                            valueDisplay: (value) => '₱${value.toStringAsFixed(0)}',
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: _buildTextField(
+                                  label: 'Tax rate (%)',
+                                  controller: _taxRateController,
+                                  hint: '0–100',
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: _buildTextField(
+                                  label: 'Service fee (₱)',
+                                  controller: _serviceFeeController,
+                                  hint: '0–1000',
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                ),
+                              ),
+                            ],
                           ),
 
                         ],

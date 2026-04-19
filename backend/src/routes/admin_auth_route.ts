@@ -117,6 +117,9 @@ adminAuthRouter.post(
       if (message.toLowerCase().includes('verify your email')) {
         return res.status(403).json({ success: false, message });
       }
+      if (message.toLowerCase().includes('disabled')) {
+        return res.status(403).json({ success: false, message });
+      }
       throw error;
     }
   }),

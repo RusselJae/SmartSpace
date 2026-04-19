@@ -65,6 +65,30 @@ export type LegalContentPayload = {
   readonly updatedAt: Date | null;
 };
 
+export type LegalContentHistoryEntry = {
+  readonly version: number;
+  readonly content: string | null;
+  readonly createdAt: Date | null;
+};
+
+let _legalHistorySchemaEnsured = false;
+
+const ensureLegalContentHistorySchema = async (): Promise<void> => {
+  if (_legalHistorySchemaEnsured) return;
+  const pool = getPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS legal_content_history (
+      id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      legal_key    VARCHAR(50)     NOT NULL,
+      version      INT             NOT NULL,
+      content      LONGTEXT        NULL,
+      created_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_legal_key_version (legal_key, version DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+  _legalHistorySchemaEnsured = true;
+};
+
 /**
  * Gets the content for a legal page (terms or privacy).
  * Returns null if not set (client should fall back to default/hardcoded content).
@@ -92,7 +116,17 @@ export const updateLegalContent = async (
   content: string,
 ): Promise<void> => {
   await ensureLegalContentSchema();
+  await ensureLegalContentHistorySchema();
   const pool = getPool();
+
+  const before = await getLegalContent(key);
+  if (before.content != null && before.content.trim().length > 0) {
+    await pool.query(
+      `INSERT INTO legal_content_history (legal_key, version, content) VALUES (?, ?, ?)`,
+      [key, before.version, before.content],
+    );
+  }
+
   await pool.query(
     `INSERT INTO legal_content (\`key\`, content, version) VALUES (?, ?, 1)
      ON DUPLICATE KEY UPDATE content = VALUES(content), version = version + 1`,
@@ -109,4 +143,32 @@ export const updateLegalContent = async (
       console.error('Failed to broadcast terms update notification:', error);
     });
   }
+};
+
+type HistoryRow = RowDataPacket & {
+  readonly version: number;
+  readonly content: string | null;
+  readonly created_at: Date | null;
+};
+
+/**
+ * Prior published snapshots for a legal key (newest versions first).
+ */
+export const listLegalContentHistory = async (
+  key: LegalContentKey,
+  limit = 40,
+): Promise<LegalContentHistoryEntry[]> => {
+  await ensureLegalContentHistorySchema();
+  const pool = getPool();
+  const cap = Math.min(Math.max(Number(limit) || 40, 1), 100);
+  const [rows] = await pool.query<HistoryRow[]>(
+    `SELECT version, content, created_at FROM legal_content_history
+     WHERE legal_key = ? ORDER BY version DESC LIMIT ?`,
+    [key, cap],
+  );
+  return rows.map((r) => ({
+    version: Number(r.version),
+    content: r.content ?? null,
+    createdAt: r.created_at ?? null,
+  }));
 };

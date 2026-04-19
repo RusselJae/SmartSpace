@@ -2487,12 +2487,16 @@ class MySQLDatabaseService {
   }
 
   /// Updates an admin's information.
-  /// 
+  ///
   /// SECURITY: Email and password cannot be updated through this method.
-  /// Only fullName can be updated.
+  /// [role] is only applied when the API accepts it (super_admin on backend).
   Future<Admin> updateAdmin({
     required String adminId,
     String? fullName,
+    String? role,
+    bool? isDisabled,
+    List<String>? extraPermissions,
+    List<String>? revokedPermissions,
   }) async {
     if (!_useApi) {
       throw Exception('Admin update requires API connection');
@@ -2501,6 +2505,18 @@ class MySQLDatabaseService {
     if (fullName != null) {
       payload['fullName'] = fullName.trim();
     }
+    if (role != null && role.trim().isNotEmpty) {
+      payload['role'] = role.trim();
+    }
+    if (isDisabled != null) {
+      payload['isDisabled'] = isDisabled;
+    }
+    if (extraPermissions != null) {
+      payload['extraPermissions'] = extraPermissions;
+    }
+    if (revokedPermissions != null) {
+      payload['revokedPermissions'] = revokedPermissions;
+    }
     final data = await _sendRequest(
       method: 'PATCH',
       path: '/admins/$adminId',
@@ -2508,6 +2524,48 @@ class MySQLDatabaseService {
     );
     final map = _asMap(data, 'admin');
     return Admin.fromJson(map);
+  }
+
+  /// Loads one admin (self or super_admin viewing another).
+  Future<Admin> getAdminById(String adminId) async {
+    if (!_useApi) {
+      throw Exception('Admin fetch requires API connection');
+    }
+    final data = await _sendRequest(method: 'GET', path: '/admins/$adminId');
+    final map = _asMap(data, 'admin');
+    return Admin.fromJson(map);
+  }
+
+  /// Prior snapshots for Terms or Privacy (admin API).
+  Future<List<LegalContentHistoryEntry>> getLegalContentHistory(
+    String key, {
+    int limit = 40,
+  }) async {
+    if (!_useApi) {
+      return const [];
+    }
+    if (key != 'terms' && key != 'privacy') {
+      return const [];
+    }
+    final data = await _sendRequest(
+      method: 'GET',
+      path: '/content/admin/legal/$key/history?limit=$limit',
+    );
+    if (data is! Map<String, dynamic>) {
+      return const [];
+    }
+    final raw = data['entries'];
+    if (raw is! List) {
+      return const [];
+    }
+    return raw.map((e) {
+      final m = Map<String, dynamic>.from(e as Map);
+      return LegalContentHistoryEntry(
+        version: (m['version'] as num?)?.toInt() ?? 0,
+        content: m['content'] as String?,
+        createdAt: m['createdAt'] != null ? DateTime.tryParse(m['createdAt'].toString()) : null,
+      );
+    }).toList(growable: false);
   }
 }
 
@@ -2521,5 +2579,17 @@ class LegalContentPayload {
   final String? content;
   final int version;
   final DateTime? updatedAt;
+}
+
+class LegalContentHistoryEntry {
+  const LegalContentHistoryEntry({
+    required this.version,
+    this.content,
+    this.createdAt,
+  });
+
+  final int version;
+  final String? content;
+  final DateTime? createdAt;
 }
 

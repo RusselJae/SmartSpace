@@ -8,6 +8,8 @@ declare global {
         readonly id: string;
         readonly email: string;
         readonly role: AdminRole;
+        readonly extraPermissions: readonly string[];
+        readonly revokedPermissions: readonly string[];
       };
     }
   }

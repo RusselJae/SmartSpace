@@ -128,7 +128,13 @@ adminRouter.patch(
       });
     }
 
-    const input: { fullName?: string; role?: AdminRole } = {};
+    const input: {
+      fullName?: string;
+      role?: AdminRole;
+      isDisabled?: boolean;
+      extraPermissions?: string[];
+      revokedPermissions?: string[];
+    } = {};
 
     if (req.body.fullName !== undefined) {
       if (auth.id !== targetId && auth.role !== 'super_admin') {
@@ -148,7 +154,34 @@ adminRouter.patch(
       input.role = r;
     }
 
-    if (input.fullName === undefined && input.role === undefined) {
+    if (req.body.isDisabled !== undefined) {
+      if (auth.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Only a super admin can disable accounts' });
+      }
+      input.isDisabled = Boolean(req.body.isDisabled);
+    }
+
+    if (req.body.extraPermissions !== undefined) {
+      if (auth.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Only a super admin can edit permission overrides' });
+      }
+      input.extraPermissions = Array.isArray(req.body.extraPermissions) ? req.body.extraPermissions : [];
+    }
+
+    if (req.body.revokedPermissions !== undefined) {
+      if (auth.role !== 'super_admin') {
+        return res.status(403).json({ success: false, message: 'Only a super admin can edit permission overrides' });
+      }
+      input.revokedPermissions = Array.isArray(req.body.revokedPermissions) ? req.body.revokedPermissions : [];
+    }
+
+    if (
+      input.fullName === undefined &&
+      input.role === undefined &&
+      input.isDisabled === undefined &&
+      input.extraPermissions === undefined &&
+      input.revokedPermissions === undefined
+    ) {
       return res.status(400).json({ success: false, message: 'No valid fields to update' });
     }
 

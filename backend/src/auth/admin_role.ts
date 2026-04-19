@@ -73,3 +73,31 @@ export const adminHasPermission = (role: AdminRole, permission: string): boolean
   if (role === 'super_admin') return true;
   return ROLE_MATRIX[role].has(permission);
 };
+
+/** Every distinct permission key used in RBAC (for validation / admin UI). */
+export const ALL_DEFINED_ADMIN_PERMISSIONS: readonly string[] = Array.from(
+  new Set<string>([
+    ...OPS,
+    ...SUPPORT,
+    ...SOCIAL,
+    ADMIN_PERMISSIONS.adminsManage,
+    ADMIN_PERMISSIONS.settingsWrite,
+  ]),
+);
+
+export const isKnownAdminPermission = (p: string): boolean =>
+  ALL_DEFINED_ADMIN_PERMISSIONS.includes(p);
+
+/**
+ * Effective permission check: [revoked] wins, then [extra] grants, then role matrix.
+ */
+export const adminEffectiveHasPermission = (
+  role: AdminRole,
+  permission: string,
+  extra: readonly string[] | null | undefined,
+  revoked: readonly string[] | null | undefined,
+): boolean => {
+  if (revoked?.includes(permission)) return false;
+  if (extra?.includes(permission)) return true;
+  return adminHasPermission(role, permission);
+};

@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
 import type { AdminRole } from '../auth/admin_role';
-import { parseAdminRole } from '../auth/admin_role';
+import { isKnownAdminPermission, parseAdminRole } from '../auth/admin_role';
 import { Admin } from '../models/admin';
 import { generateId } from '../utils/id_generator';
 import { assertStrongPassword } from '../utils/password_policy';
@@ -48,6 +48,9 @@ const ensureAdminAuthSchema = async (): Promise<void> => {
     'ADD COLUMN password_reset_token VARCHAR(255) NULL',
     'ADD COLUMN password_reset_expires DATETIME NULL',
     `ADD COLUMN role VARCHAR(32) NOT NULL DEFAULT 'super_admin'`,
+    'ADD COLUMN is_disabled TINYINT(1) NOT NULL DEFAULT 0',
+    'ADD COLUMN extra_permissions JSON NULL',
+    'ADD COLUMN revoked_permissions JSON NULL',
   ];
   for (const fragment of alters) {
     try {
@@ -63,6 +66,27 @@ const ensureAdminAuthSchema = async (): Promise<void> => {
 };
 
 const generateAdminVerificationToken = (): string => crypto.randomBytes(32).toString('base64url');
+
+const parseJsonStringArray = (raw: unknown): string[] => {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.filter((x): x is string => typeof x === 'string');
+  }
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw) as unknown;
+      return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+const sanitizePermissionList = (raw: unknown): string[] => {
+  const arr = Array.isArray(raw) ? raw : [];
+  return arr.filter((p): p is string => typeof p === 'string' && isKnownAdminPermission(p));
+};
 
 const generateAdminVerificationCode = (): string => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -88,6 +112,10 @@ const mapAdmin = (row: AdminRow): Admin => {
   const emailVerified = ev === undefined || ev === null ? true : Boolean(ev);
   const roleParsed = parseAdminRole(row.role != null ? String(row.role) : null);
   const role: AdminRole = roleParsed ?? 'super_admin';
+  const isDisabled =
+    row.is_disabled !== undefined && row.is_disabled !== null ? Boolean(row.is_disabled) : false;
+  const extraPermissions = parseJsonStringArray(row.extra_permissions);
+  const revokedPermissions = parseJsonStringArray(row.revoked_permissions);
   return {
     id: row.id,
     email: row.email,
@@ -97,6 +125,9 @@ const mapAdmin = (row: AdminRow): Admin => {
     lastLoginAt: row.last_login_at ?? null,
     emailVerified,
     role,
+    isDisabled,
+    extraPermissions,
+    revokedPermissions,
   };
 };
 
@@ -216,6 +247,9 @@ export const createAdmin = async (input: CreateAdminInput): Promise<Admin> => {
 export interface UpdateAdminInput {
   readonly fullName?: string;
   readonly role?: AdminRole;
+  readonly isDisabled?: boolean;
+  readonly extraPermissions?: readonly string[];
+  readonly revokedPermissions?: readonly string[];
 }
 
 /**
@@ -238,6 +272,20 @@ export const updateAdmin = async (adminId: string, input: UpdateAdminInput): Pro
   if (input.role !== undefined) {
     updates.push('role = ?');
     values.push(input.role);
+  }
+  if (input.isDisabled !== undefined) {
+    updates.push('is_disabled = ?');
+    values.push(input.isDisabled ? 1 : 0);
+  }
+  if (input.extraPermissions !== undefined) {
+    const sanitized = sanitizePermissionList(input.extraPermissions);
+    updates.push('extra_permissions = ?');
+    values.push(JSON.stringify(sanitized));
+  }
+  if (input.revokedPermissions !== undefined) {
+    const sanitized = sanitizePermissionList(input.revokedPermissions);
+    updates.push('revoked_permissions = ?');
+    values.push(JSON.stringify(sanitized));
   }
 
   if (updates.length === 0) {
@@ -330,6 +378,10 @@ export const verifyAdminCredentials = async (
   if (!passwordMatches) {
     // Password doesn't match - return null
     return null;
+  }
+
+  if (admin.is_disabled !== undefined && admin.is_disabled !== null && Boolean(admin.is_disabled)) {
+    throw new Error('This administrator account has been disabled.');
   }
 
   const verified = admin.email_verified === undefined || admin.email_verified === null ? true : Boolean(admin.email_verified);

@@ -1,3 +1,5 @@
+import '../models/admin.dart';
+
 /// Role and permission checks for the admin console (mirrors backend [ADMIN_PERMISSIONS] / role matrix).
 class AdminPermissions {
   AdminPermissions._();
@@ -16,8 +18,64 @@ class AdminPermissions {
   static const String settingsWrite = 'settings:write';
   static const String madeToOrderWrite = 'made_to_order:write';
 
+  /// Every permission key the backend knows about (used for super_admin display / chips).
+  static const List<String> allDefinedPermissions = <String>[
+    activityRead,
+    adminsManage,
+    faqsWrite,
+    legalWrite,
+    madeToOrderWrite,
+    notificationsSend,
+    ordersRead,
+    ordersWrite,
+    productsWrite,
+    reviewsModerate,
+    settingsWrite,
+    supportWrite,
+    usersRead,
+  ];
+
   /// Number of primary shell tabs (Dashboard + rail items), aligned with [AdminRoutes.pathsByIndex].
   static const int shellTabCount = 11;
+
+  /// Permission strings granted for this [role] (mirrors backend [ROLE_MATRIX]; super = all defined).
+  static List<String> permissionsForRole(String? roleRaw) {
+    final role = (roleRaw ?? '').trim();
+    if (role.isEmpty) {
+      return const [];
+    }
+    if (role == 'super_admin') {
+      final copy = List<String>.from(allDefinedPermissions);
+      copy.sort();
+      return copy;
+    }
+    final set = switch (role) {
+      'operations_admin' => _ops,
+      'support_admin' => _support,
+      'social_admin' => _social,
+      _ => <String>{},
+    };
+    final list = set.toList();
+    list.sort();
+    return list;
+  }
+
+  /// Short label for table / chips (e.g. `products:write` → `products: write`).
+  static String formatPermissionLabel(String key) {
+    return key.replaceAll('_', ' ');
+  }
+
+  /// Effective permissions after role + [Admin.extraPermissions] − [Admin.revokedPermissions].
+  static List<String> effectivePermissionsFor(Admin admin) {
+    final base = permissionsForRole(admin.role).toSet();
+    final extra = admin.extraPermissions.toSet();
+    final revoked = admin.revokedPermissions.toSet();
+    final merged = {...base, ...extra};
+    merged.removeWhere(revoked.contains);
+    final out = merged.toList();
+    out.sort();
+    return out;
+  }
 
   static final Set<String> _ops = {
     productsWrite,

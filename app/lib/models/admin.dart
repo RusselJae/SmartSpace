@@ -1,5 +1,5 @@
 /// Admin model representing an administrator in the Wood Home Furniture Trading system.
-/// 
+///
 /// Admins have full access to the admin console and can manage
 /// products, orders, reviews, users, and other admins.
 class Admin {
@@ -12,6 +12,9 @@ class Admin {
     this.lastLoginAt,
     this.emailVerified = true,
     this.role = 'operations_admin',
+    this.isDisabled = false,
+    this.extraPermissions = const [],
+    this.revokedPermissions = const [],
   });
 
   final String id;
@@ -26,6 +29,15 @@ class Admin {
   /// RBAC role from the API (`super_admin`, `operations_admin`, `support_admin`, `social_admin`).
   final String role;
 
+  /// When true, API and login reject this account until a super admin re-enables it.
+  final bool isDisabled;
+
+  /// Extra capability keys granted beyond the role baseline (server-validated).
+  final List<String> extraPermissions;
+
+  /// Capability keys explicitly revoked (overrides role and extras).
+  final List<String> revokedPermissions;
+
   /// Creates an Admin from a JSON map (typically from the API).
   factory Admin.fromJson(Map<String, dynamic> json) {
     return Admin(
@@ -39,7 +51,15 @@ class Admin {
           : null,
       emailVerified: json['emailVerified'] as bool? ?? true,
       role: json['role'] as String? ?? 'operations_admin',
+      isDisabled: json['isDisabled'] as bool? ?? false,
+      extraPermissions: _parseStringList(json['extraPermissions']),
+      revokedPermissions: _parseStringList(json['revokedPermissions']),
     );
+  }
+
+  static List<String> _parseStringList(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw.map((e) => e?.toString() ?? '').where((s) => s.isNotEmpty).toList(growable: false);
   }
 
   /// Converts this Admin to a JSON map.
@@ -53,25 +73,9 @@ class Admin {
       'lastLoginAt': lastLoginAt?.toIso8601String(),
       'emailVerified': emailVerified,
       'role': role,
+      'isDisabled': isDisabled,
+      'extraPermissions': extraPermissions,
+      'revokedPermissions': revokedPermissions,
     };
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

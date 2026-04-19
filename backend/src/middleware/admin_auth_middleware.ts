@@ -1,7 +1,7 @@
 import type { RequestHandler } from 'express';
 import { verifyAdminAccessToken } from '../auth/admin_jwt';
 import type { AdminRole } from '../auth/admin_role';
-import { adminHasPermission } from '../auth/admin_role';
+import { adminEffectiveHasPermission } from '../auth/admin_role';
 import { findAdminById } from '../services/admin_service';
 
 /**
@@ -19,6 +19,9 @@ export const requireAdminAuth: RequestHandler = async (req, res, next) => {
     if (admin == null || !admin.emailVerified) {
       return res.status(401).json({ success: false, message: 'Invalid admin session' });
     }
+    if (admin.isDisabled) {
+      return res.status(403).json({ success: false, message: 'This administrator account has been disabled' });
+    }
     if (admin.role !== payload.role) {
       return res.status(401).json({ success: false, message: 'Session outdated; sign in again' });
     }
@@ -26,6 +29,8 @@ export const requireAdminAuth: RequestHandler = async (req, res, next) => {
       id: admin.id,
       email: admin.email,
       role: admin.role as AdminRole,
+      extraPermissions: admin.extraPermissions,
+      revokedPermissions: admin.revokedPermissions,
     };
     next();
   } catch {
@@ -39,7 +44,14 @@ export const requireAdminPermission = (permission: string): RequestHandler => {
     if (auth == null) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
-    if (!adminHasPermission(auth.role, permission)) {
+    if (
+      !adminEffectiveHasPermission(
+        auth.role,
+        permission,
+        auth.extraPermissions,
+        auth.revokedPermissions,
+      )
+    ) {
       return res.status(403).json({ success: false, message: 'You do not have permission for this action' });
     }
     next();

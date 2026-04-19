@@ -2,10 +2,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../auth/admin_permissions.dart';
 import '../../../../models/admin.dart';
 import '../../../../services/admin_auth_service.dart';
 import '../../../../services/mysql_database_service.dart';
 import '../../../../utils/password_policy.dart';
+import '../auth/admin_login_page.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
 import '../../../../widgets/toast.dart';
@@ -33,6 +35,8 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
   
   List<Admin> _admins = const [];
   bool _loading = true;
+  /// True while POST /admins is in flight (dialog already closed).
+  bool _createAdminInFlight = false;
   String? _error;
   String _searchQuery = '';
   String _sortBy = 'newest';
@@ -192,16 +196,87 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
     );
   }
 
+  /// Opens the edit sheet (role + permissions follow the selected role, same as backend RBAC).
+  Future<void> _openEditAdmin(Admin admin) async {
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _EditAdminDialog(
+        admin: admin,
+        canChangeRole: (_adminAuth.currentRole ?? '').trim() == 'super_admin',
+      ),
+    );
+    if (changed == true && mounted) {
+      await _loadAdmins();
+    }
+  }
+
+  void _onArchiveAdmin(Admin admin) {
+    Toast.info(
+      context,
+      'Admin accounts cannot be archived from the console yet. Change this user’s role to restrict access.',
+    );
+  }
+
+  /// Disables or re-enables sign-in for an admin (super_admin only; enforced server-side).
+  Future<void> _confirmSetDisabled(Admin admin, bool disabled) async {
+    final isSuper = (_adminAuth.currentRole ?? '').trim() == 'super_admin';
+    if (!isSuper) {
+      Toast.error(context, 'Only a super admin can change account status');
+      return;
+    }
+    final self = (_adminAuth.currentAdminId ?? '').trim() == admin.id.trim();
+    if (disabled && self) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Disable your own account?'),
+          content: const Text(
+            'You will be signed out immediately and cannot sign in again until another super admin re-enables this account.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+              child: const Text('Disable'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    } else if (!disabled && self) {
+      // Enabling self is a no-op edge case (you're already in).
+    }
+
+    try {
+      await _db.updateAdmin(adminId: admin.id, isDisabled: disabled);
+      if (!mounted) return;
+      Toast.success(context, disabled ? 'Account disabled' : 'Account enabled');
+      if (disabled && self) {
+        await _adminAuth.signOut();
+        if (!mounted) return;
+        Navigator.of(context).pushNamedAndRemoveUntil(AdminLoginPage.route, (route) => false);
+        return;
+      }
+      await _loadAdmins();
+    } catch (e) {
+      if (!mounted) return;
+      Toast.error(context, 'Failed: $e');
+    }
+  }
+
   /// Opens the "Add admin" dialog and creates a new admin if confirmed.
   Future<void> _createAdmin() async {
+    if (_createAdminInFlight) return;
     final allowRolePick = (_adminAuth.currentRole ?? '').trim() == 'super_admin';
+    // Match [Users] add-dialog routing: single app navigator — avoid rootNavigator pop mismatch on web.
     final data = await showDialog<_AdminFormData>(
       context: context,
-      useRootNavigator: true,
       builder: (_) => _AdminFormDialog(allowRolePick: allowRolePick),
     );
     if (data == null) return;
-    
+
+    setState(() => _createAdminInFlight = true);
     try {
       await _db.createAdmin(
         email: data.email,
@@ -221,6 +296,8 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
               ? 'Server is not configured for admin API (ADMIN_JWT_SECRET). Check backend .env.'
               : 'Failed to create admin: $e';
       Toast.error(context, friendly);
+    } finally {
+      if (mounted) setState(() => _createAdminInFlight = false);
     }
   }
 
@@ -322,7 +399,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
               ),
               const SizedBox(width: 8),
               FilledButton.icon(
-                onPressed: _createAdmin,
+                onPressed: _createAdminInFlight ? null : _createAdmin,
                 icon: const Icon(Icons.admin_panel_settings_outlined),
                 label: const Text('Add admin'),
                 style: FilledButton.styleFrom(
@@ -390,7 +467,12 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
                                 final admin = filtered[index];
                                 return _AdminsTableRow(
                                   admin: admin,
-                                  onTap: () => _showAdminDetails(admin),
+                                  onEdit: () => _openEditAdmin(admin),
+                                  onDetails: () => _showAdminDetails(admin),
+                                  onArchive: () => _onArchiveAdmin(admin),
+                                  onDisableAccount: () => _confirmSetDisabled(admin, true),
+                                  onEnableAccount: () => _confirmSetDisabled(admin, false),
+                                  viewerIsSuper: (_adminAuth.currentRole ?? '').trim() == 'super_admin',
                                 );
                               },
                             ),
@@ -404,7 +486,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
   }
 }
 
-/// Header row for the admins table.
+/// Header row for the admins table (image · name · email · role · permissions · actions).
 class _AdminsHeaderRow extends StatelessWidget {
   const _AdminsHeaderRow();
 
@@ -418,105 +500,592 @@ class _AdminsHeaderRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          Expanded(flex: 3, child: Text('Name', style: style)),
-          Expanded(flex: 3, child: Text('Email', style: style)),
-          Expanded(flex: 2, child: Text('Role', style: style)),
-          Expanded(flex: 2, child: Text('Created', style: style)),
-          Expanded(flex: 2, child: Text('Last Login', style: style)),
-          const SizedBox(width: 80),
+          SizedBox(width: 44, child: Center(child: Text('Image', style: style))),
+          Expanded(flex: 22, child: Text('Name', style: style)),
+          Expanded(flex: 28, child: Text('Email', style: style)),
+          Expanded(flex: 16, child: Text('Role', style: style)),
+          Expanded(flex: 30, child: Text('Permissions', style: style)),
+          SizedBox(width: 44, child: Center(child: Text('', style: style))),
         ],
       ),
     );
   }
 }
 
-/// Table row displaying an admin's information.
-class _AdminsTableRow extends StatelessWidget {
-  const _AdminsTableRow({required this.admin, required this.onTap});
+String _adminInitials(String fullName) {
+  final parts = fullName.trim().split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+  if (parts.isEmpty) {
+    return '?';
+  }
+  if (parts.length == 1) {
+    final s = parts[0];
+    return s.length >= 2 ? s.substring(0, 2).toUpperCase() : s.toUpperCase();
+  }
+  return ('${parts.first[0]}${parts.last[0]}').toUpperCase();
+}
+
+/// Permission tags for the table (first few + overflow count).
+class _PermissionsChips extends StatelessWidget {
+  const _PermissionsChips({required this.admin});
 
   final Admin admin;
-  final VoidCallback onTap;
 
-  String _formatDate(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  @override
+  Widget build(BuildContext context) {
+    final perms = AdminPermissions.effectivePermissionsFor(admin);
+    const maxVisible = 4;
+    final visible = perms.take(maxVisible).toList();
+    final extra = perms.length - visible.length;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        ...visible.map(
+          (p) => Chip(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+            label: Text(
+              p,
+              style: GoogleFonts.poppins(fontSize: 10.5, fontWeight: FontWeight.w500),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            side: BorderSide(color: Colors.grey.shade300),
+            backgroundColor: const Color(0xFFF5F5F5),
+          ),
+        ),
+        if (extra > 0)
+          Chip(
+            visualDensity: VisualDensity.compact,
+            label: Text(
+              '+$extra',
+              style: GoogleFonts.poppins(fontSize: 10.5, fontWeight: FontWeight.w600),
+            ),
+            side: BorderSide(color: Colors.grey.shade300),
+            backgroundColor: const Color(0xFFEDE7DC),
+          ),
+      ],
+    );
+  }
+}
+
+/// One data row: avatar, identity, role badge, permission chips, overflow menu.
+class _AdminsTableRow extends StatelessWidget {
+  const _AdminsTableRow({
+    required this.admin,
+    required this.onEdit,
+    required this.onDetails,
+    required this.onArchive,
+    required this.onDisableAccount,
+    required this.onEnableAccount,
+    required this.viewerIsSuper,
+  });
+
+  final Admin admin;
+  final VoidCallback onEdit;
+  final VoidCallback onDetails;
+  final VoidCallback onArchive;
+  final VoidCallback onDisableAccount;
+  final VoidCallback onEnableAccount;
+  final bool viewerIsSuper;
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: admin.isDisabled ? 0.55 : 1,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+          SizedBox(
+            width: 44,
+            child: CircleAvatar(
+              radius: 20,
+              backgroundColor: const Color(0xFF8D6E63).withValues(alpha: 0.2),
+              child: Text(
+                _adminInitials(admin.fullName),
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF5C4033),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 22,
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    admin.fullName,
+                    style: GoogleFonts.poppins(
+                      color: Colors.black,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.none,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (admin.isDisabled) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Text(
+                      'Disabled',
+                      style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.red.shade800),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Expanded(
+            flex: 28,
+            child: Text(
+              admin.email,
+              style: GoogleFonts.poppins(
+                color: Colors.black87,
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+                decoration: TextDecoration.none,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Expanded(
+            flex: 16,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEDE7DC),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Text(
+                  admin.role.replaceAll('_', ' '),
+                  style: GoogleFonts.poppins(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF4E342E),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 30,
+            child: _PermissionsChips(admin: admin),
+          ),
+          SizedBox(
+            width: 44,
+            child: PopupMenuButton<String>(
+              padding: EdgeInsets.zero,
+              icon: const Icon(Icons.more_vert, size: 22),
+              onSelected: (value) {
+                switch (value) {
+                  case 'edit':
+                    onEdit();
+                    break;
+                  case 'details':
+                    onDetails();
+                    break;
+                  case 'archive':
+                    onArchive();
+                    break;
+                  case 'disable':
+                    onDisableAccount();
+                    break;
+                  case 'enable':
+                    onEnableAccount();
+                    break;
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                const PopupMenuItem(value: 'details', child: Text('View details')),
+                if (viewerIsSuper)
+                  PopupMenuItem(
+                    value: admin.isDisabled ? 'enable' : 'disable',
+                    child: Text(admin.isDisabled ? 'Enable account' : 'Disable account'),
+                  ),
+                const PopupMenuItem(value: 'archive', child: Text('Archive')),
+              ],
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+}
+
+/// Per-key override: inherit role matrix, force grant, or force revoke (super admin only; stored server-side).
+enum _PermOverride { inherit, grant, revoke }
+
+/// Modal to adjust display name and role; permission list reflects the role (server-side RBAC).
+class _EditAdminDialog extends StatefulWidget {
+  const _EditAdminDialog({
+    required this.admin,
+    required this.canChangeRole,
+  });
+
+  final Admin admin;
+  final bool canChangeRole;
+
+  @override
+  State<_EditAdminDialog> createState() => _EditAdminDialogState();
+}
+
+class _EditAdminDialogState extends State<_EditAdminDialog> {
+  final MySQLDatabaseService _db = MySQLDatabaseService();
+  final AdminAuthService _auth = AdminAuthService();
+
+  late final TextEditingController _fullName;
+  late String _draftRole;
+  late Set<String> _extra;
+  late Set<String> _revoked;
+  String? _inlineError;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fullName = TextEditingController(text: widget.admin.fullName);
+    _draftRole = widget.admin.role;
+    _extra = Set<String>.from(widget.admin.extraPermissions);
+    _revoked = Set<String>.from(widget.admin.revokedPermissions);
+  }
+
+  @override
+  void dispose() {
+    _fullName.dispose();
+    super.dispose();
+  }
+
+  _PermOverride _modeFor(String key) {
+    if (_revoked.contains(key)) return _PermOverride.revoke;
+    if (_extra.contains(key)) return _PermOverride.grant;
+    return _PermOverride.inherit;
+  }
+
+  void _applyMode(String key, _PermOverride mode) {
+    setState(() {
+      _extra.remove(key);
+      _revoked.remove(key);
+      switch (mode) {
+        case _PermOverride.inherit:
+          break;
+        case _PermOverride.grant:
+          _extra.add(key);
+          break;
+        case _PermOverride.revoke:
+          _revoked.add(key);
+          break;
+      }
+    });
+  }
+
+  bool _listSetMatch(Set<String> a, List<String> b) =>
+      a.length == b.length && a.containsAll(b);
+
+  Admin _previewAdmin(String name) {
+    return Admin(
+      id: widget.admin.id,
+      email: widget.admin.email,
+      fullName: name,
+      createdAt: widget.admin.createdAt,
+      updatedAt: widget.admin.updatedAt,
+      lastLoginAt: widget.admin.lastLoginAt,
+      emailVerified: widget.admin.emailVerified,
+      role: _draftRole,
+      isDisabled: widget.admin.isDisabled,
+      extraPermissions: _extra.toList(),
+      revokedPermissions: _revoked.toList(),
+    );
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _inlineError = null;
+    });
+    final name = _fullName.text.trim();
+    if (name.isEmpty) {
+      setState(() => _inlineError = 'Name is required.');
+      return;
+    }
+
+    final roleChanged = widget.canChangeRole && _draftRole != widget.admin.role;
+    final nameChanged = name != widget.admin.fullName;
+    final permsChanged = widget.canChangeRole &&
+        (!_listSetMatch(_extra, widget.admin.extraPermissions) ||
+            !_listSetMatch(_revoked, widget.admin.revokedPermissions));
+
+    if (!nameChanged && !roleChanged && !permsChanged) {
+      Navigator.of(context).pop(false);
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final updated = await _db.updateAdmin(
+        adminId: widget.admin.id,
+        fullName: nameChanged ? name : null,
+        role: roleChanged ? _draftRole : null,
+        extraPermissions: permsChanged ? _extra.toList() : null,
+        revokedPermissions: permsChanged ? _revoked.toList() : null,
+      );
+      final self = (_auth.currentAdminId ?? '').trim() == widget.admin.id.trim();
+      if (self) {
+        await _auth.updateLocalProfile(fullName: updated.fullName, role: updated.role);
+      }
+      if (!mounted) return;
+      Toast.success(context, 'Administrator updated');
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _inlineError = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
+    final preview = _previewAdmin(_fullName.text.trim().isEmpty ? widget.admin.fullName : _fullName.text.trim());
+    final effective = AdminPermissions.effectivePermissionsFor(preview);
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 8, 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Edit administrator',
+                          style: GoogleFonts.poppins(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Role sets the baseline. Super admins can grant or revoke individual permissions below.',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12.5,
+                            color: Colors.black54,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
             Expanded(
-              flex: 3,
-              child: Text(
-                admin.fullName,
-                style: GoogleFonts.poppins(
-                  color: Colors.black,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  decoration: TextDecoration.none,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_inlineError != null) ...[
+                      Material(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Text(
+                            _inlineError!,
+                            style: GoogleFonts.poppins(fontSize: 13, color: Colors.red.shade900),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    Text(
+                      'General',
+                      style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _fullName,
+                      decoration: InputDecoration(
+                        labelText: 'Full name',
+                        filled: true,
+                        fillColor: const Color(0xFFF8F8F8),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Email is read-only here for security.',
+                      style: GoogleFonts.poppins(fontSize: 11.5, color: Colors.black45),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Role',
+                      style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87),
+                    ),
+                    const SizedBox(height: 8),
+                    if (widget.canChangeRole)
+                      DropdownButtonFormField<String>(
+                        // ignore: deprecated_member_use
+                        value: _draftRole,
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: const Color(0xFFF8F8F8),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'super_admin', child: Text('Super admin')),
+                          DropdownMenuItem(value: 'operations_admin', child: Text('Operations')),
+                          DropdownMenuItem(value: 'support_admin', child: Text('Support')),
+                          DropdownMenuItem(value: 'social_admin', child: Text('Social / content')),
+                        ],
+                        onChanged: _busy
+                            ? null
+                            : (v) {
+                                if (v == null) return;
+                                setState(() => _draftRole = v);
+                              },
+                      )
+                    else
+                      Text(
+                        widget.admin.role.replaceAll('_', ' '),
+                        style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Permission overrides',
+                      style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Default follows the role. Grant adds a capability; Revoke removes it even if the role normally includes it.',
+                      style: GoogleFonts.poppins(fontSize: 11.5, color: Colors.black45, height: 1.35),
+                    ),
+                    const SizedBox(height: 10),
+                    if (widget.canChangeRole)
+                      ...AdminPermissions.allDefinedPermissions.map((p) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                flex: 2,
+                                child: Text(
+                                  p,
+                                  style: GoogleFonts.poppins(fontSize: 12.5, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: DropdownButtonFormField<_PermOverride>(
+                                  // ignore: deprecated_member_use
+                                  value: _modeFor(p),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    filled: true,
+                                    fillColor: const Color(0xFFF8F8F8),
+                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem(value: _PermOverride.inherit, child: Text('Default')),
+                                    DropdownMenuItem(value: _PermOverride.grant, child: Text('Grant')),
+                                    DropdownMenuItem(value: _PermOverride.revoke, child: Text('Revoke')),
+                                  ],
+                                  onChanged: _busy
+                                      ? null
+                                      : (v) {
+                                          if (v != null) _applyMode(p, v);
+                                        },
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      })
+                    else
+                      Text(
+                        'Only a super admin can edit permission overrides.',
+                        style: GoogleFonts.poppins(fontSize: 12, color: Colors.black45),
+                      ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Effective permissions (${effective.length})',
+                      style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: effective
+                          .map(
+                            (p) => Chip(
+                              label: Text(p, style: GoogleFonts.poppins(fontSize: 10.5)),
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor: const Color(0xFFF0EBE6),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ],
                 ),
               ),
             ),
-            Expanded(
-              flex: 3,
-              child: Text(
-                admin.email,
-                style: GoogleFonts.poppins(
-                  color: Colors.black,
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  decoration: TextDecoration.none,
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  onPressed: _busy ? null : _save,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF8D6E63),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  ),
+                  child: _busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : Text('Save changes', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                 ),
               ),
-            ),
-            Expanded(
-              flex: 2,
-              child: Text(
-                admin.role.replaceAll('_', ' '),
-                style: GoogleFonts.poppins(
-                  color: Colors.black,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  decoration: TextDecoration.none,
-                ),
-              ),
-            ),
-            Expanded(
-              flex: 2,
-              child: Text(
-                _formatDate(admin.createdAt),
-                style: GoogleFonts.poppins(
-                  color: Colors.black,
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  decoration: TextDecoration.none,
-                ),
-              ),
-            ),
-            Expanded(
-              flex: 2,
-              child: Text(
-                admin.lastLoginAt != null
-                    ? _formatDate(admin.lastLoginAt!)
-                    : 'Never',
-                style: GoogleFonts.poppins(
-                  color: admin.lastLoginAt != null
-                      ? Colors.black
-                      : Colors.grey[600],
-                  fontSize: 14,
-                  fontWeight: FontWeight.normal,
-                  decoration: TextDecoration.none,
-                ),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.more_vert, size: 20),
-              onPressed: onTap,
-              tooltip: 'View details',
             ),
           ],
         ),
@@ -592,6 +1161,18 @@ class _AdminDetailsDialog extends StatelessWidget {
                     _DetailRow(
                       label: 'Role',
                       value: admin.role.replaceAll('_', ' '),
+                    ),
+                    const SizedBox(height: 12),
+                    _DetailRow(
+                      label: 'Account',
+                      value: admin.isDisabled ? 'Disabled (cannot sign in)' : 'Enabled',
+                    ),
+                    const SizedBox(height: 12),
+                    _DetailRow(
+                      label: 'Permission overrides',
+                      value: admin.extraPermissions.isEmpty && admin.revokedPermissions.isEmpty
+                          ? 'None (role defaults only)'
+                          : 'Extra: ${admin.extraPermissions.length}, Revoked: ${admin.revokedPermissions.length}',
                     ),
                     const SizedBox(height: 12),
                     _DetailRow(
@@ -710,6 +1291,8 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
   final TextEditingController _fullName = TextEditingController();
   String _pickedRole = 'operations_admin';
   bool _obscurePassword = true;
+  /// Shown inside the modal — top [Toast] can sit under the dialog barrier on web.
+  String? _inlineError;
 
   @override
   void dispose() {
@@ -720,17 +1303,18 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
   }
 
   void _submit() {
+    setState(() => _inlineError = null);
     final email = _email.text.trim();
     final password = _password.text.trim();
     final fullName = _fullName.text.trim();
     if (email.isEmpty || password.isEmpty || fullName.isEmpty) {
-      Toast.warning(context, 'All fields are required');
+      setState(() => _inlineError = 'All fields are required.');
       return;
     }
 
     final passwordError = PasswordPolicy.validateStrongPassword(password);
     if (passwordError != null) {
-      Toast.warning(context, passwordError);
+      setState(() => _inlineError = passwordError);
       return;
     }
 
@@ -740,8 +1324,8 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
       fullName: fullName,
       role: widget.allowRolePick ? _pickedRole : null,
     );
-    // Root navigator matches [showDialog(..., useRootNavigator: true)] so the dialog always closes.
-    Navigator.of(context, rootNavigator: true).pop(data);
+    // Same navigator as [showDialog] (see [_createAdmin]) — do not use rootNavigator here.
+    Navigator.of(context).pop(data);
   }
 
   Widget _buildField(
@@ -750,6 +1334,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
     TextInputType keyboardType = TextInputType.text,
     bool obscureText = false,
     Widget? suffixIcon,
+    ValueChanged<String>? onChanged,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -757,6 +1342,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
         controller: controller,
         keyboardType: keyboardType,
         obscureText: obscureText,
+        onChanged: onChanged,
         decoration: InputDecoration(
           labelText: label,
           filled: true,
@@ -837,11 +1423,48 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _buildField(_email, 'Email *', keyboardType: TextInputType.emailAddress),
+                      if (_inlineError != null) ...[
+                        Material(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _inlineError!,
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      color: Colors.red.shade900,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      _buildField(
+                        _email,
+                        'Email *',
+                        keyboardType: TextInputType.emailAddress,
+                        onChanged: (_) {
+                          if (_inlineError != null) setState(() => _inlineError = null);
+                        },
+                      ),
                       _buildField(
                         _password,
                         'Password *',
                         obscureText: _obscurePassword,
+                        onChanged: (_) {
+                          if (_inlineError != null) setState(() => _inlineError = null);
+                        },
                         suffixIcon: IconButton(
                           icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
                           onPressed: () {
@@ -851,7 +1474,13 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                           },
                         ),
                       ),
-                      _buildField(_fullName, 'Full name *'),
+                      _buildField(
+                        _fullName,
+                        'Full name *',
+                        onChanged: (_) {
+                          if (_inlineError != null) setState(() => _inlineError = null);
+                        },
+                      ),
                       if (widget.allowRolePick) ...[
                         const SizedBox(height: 4),
                         DropdownButtonFormField<String>(

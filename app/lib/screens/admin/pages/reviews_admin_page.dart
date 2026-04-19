@@ -6,6 +6,7 @@ import '../../../models/review.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
+import '../../../widgets/admin_console_surfaces.dart';
 
 /// Reviews management page with moderation, search, and status filtering.
 /// Follows Apple HIG with clean layouts and smooth animations.
@@ -625,7 +626,7 @@ class _ReviewDetailsDialog extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 18),
                   CircleAvatar(
                     radius: 36,
                     backgroundColor: Colors.grey[200],
@@ -637,8 +638,9 @@ class _ReviewDetailsDialog extends StatelessWidget {
             ),
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                child: Column(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                child: AdminConsoleSurfaces.detailCard(
+                  child: Column(
                   children: [
                     _DetailRow(
                       label: 'Product',
@@ -692,6 +694,7 @@ class _ReviewDetailsDialog extends StatelessWidget {
                     // happens automatically at creation time.
                   ],
                 ),
+                ),
               ),
             ),
           ],
@@ -716,31 +719,27 @@ class _DetailRow extends StatelessWidget {
   Widget build(BuildContext context) {
     if (value.trim().isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              '$label:',
-              style: GoogleFonts.poppins(
-                color: Colors.grey[600],
-                fontSize: fontSize,
-                fontWeight: FontWeight.w500,
-                decoration: TextDecoration.none,
-              ),
+          Text(
+            label,
+            style: GoogleFonts.poppins(
+              color: Colors.black54,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              decoration: TextDecoration.none,
             ),
           ),
-          Expanded(
-            child: Text(
-              value.trim(),
-              style: GoogleFonts.poppins(
-                color: Colors.black,
-                fontSize: fontSize,
-                fontWeight: FontWeight.w400,
-                decoration: TextDecoration.none,
-              ),
+          const SizedBox(height: 4),
+          Text(
+            value.trim(),
+            style: GoogleFonts.poppins(
+              color: const Color(0xFF1A1A1A),
+              fontSize: fontSize,
+              fontWeight: FontWeight.w600,
+              decoration: TextDecoration.none,
             ),
           ),
         ],

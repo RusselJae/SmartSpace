@@ -10,6 +10,7 @@ import '../../../../utils/password_policy.dart';
 import '../auth/admin_login_page.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
+import '../../../../widgets/admin_console_surfaces.dart';
 import '../../../../widgets/toast.dart';
 
 /// Admin management page for viewing and creating admin accounts.
@@ -943,7 +944,7 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
                       decoration: InputDecoration(
                         labelText: 'Full name',
                         filled: true,
-                        fillColor: const Color(0xFFF8F8F8),
+                        fillColor: Colors.white,
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
@@ -964,7 +965,7 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
                         value: _draftRole,
                         decoration: InputDecoration(
                           filled: true,
-                          fillColor: const Color(0xFFF8F8F8),
+                          fillColor: Colors.white,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         items: const [
@@ -1018,7 +1019,7 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
                                   decoration: InputDecoration(
                                     isDense: true,
                                     filled: true,
-                                    fillColor: const Color(0xFFF8F8F8),
+                                    fillColor: Colors.white,
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                                     contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                                   ),
@@ -1123,7 +1124,7 @@ class _AdminDetailsDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
+              padding: const EdgeInsets.fromLTRB(24, 22, 16, 12),
               child: Row(
                 children: [
                   const SizedBox(width: 40),
@@ -1150,43 +1151,38 @@ class _AdminDetailsDialog extends StatelessWidget {
             ),
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                child: Column(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                child: AdminConsoleSurfaces.detailCard(
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _DetailRow(label: 'Full Name', value: admin.fullName),
-                    const SizedBox(height: 12),
                     _DetailRow(label: 'Email', value: admin.email),
-                    const SizedBox(height: 12),
                     _DetailRow(
                       label: 'Role',
                       value: admin.role.replaceAll('_', ' '),
                     ),
-                    const SizedBox(height: 12),
                     _DetailRow(
                       label: 'Account',
                       value: admin.isDisabled ? 'Disabled (cannot sign in)' : 'Enabled',
                     ),
-                    const SizedBox(height: 12),
                     _DetailRow(
                       label: 'Permission overrides',
                       value: admin.extraPermissions.isEmpty && admin.revokedPermissions.isEmpty
                           ? 'None (role defaults only)'
                           : 'Extra: ${admin.extraPermissions.length}, Revoked: ${admin.revokedPermissions.length}',
                     ),
-                    const SizedBox(height: 12),
                     _DetailRow(
                       label: 'Created',
                       value: _formatDateTime(admin.createdAt),
                     ),
-                    const SizedBox(height: 12),
                     _DetailRow(
                       label: 'Last Login',
                       value: admin.lastLoginAt != null
                           ? _formatDateTime(admin.lastLoginAt!)
                           : 'Never',
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 8),
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -1211,6 +1207,7 @@ class _AdminDetailsDialog extends StatelessWidget {
                     ),
                   ],
                 ),
+                ),
               ),
             ),
           ],
@@ -1230,31 +1227,30 @@ class _DetailRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 100,
-          child: Text(
-            '$label:',
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
             style: GoogleFonts.poppins(
-              fontSize: _detailFontSize,
+              fontSize: 13,
               fontWeight: FontWeight.w500,
-              color: Colors.grey[600],
+              color: Colors.black54,
             ),
           ),
-        ),
-        Expanded(
-          child: Text(
+          const SizedBox(height: 4),
+          Text(
             value,
             style: GoogleFonts.poppins(
               fontSize: _detailFontSize,
-              color: Colors.black,
-              fontWeight: FontWeight.w400,
+              color: const Color(0xFF1A1A1A),
+              fontWeight: FontWeight.w600,
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

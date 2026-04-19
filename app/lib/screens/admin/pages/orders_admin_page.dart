@@ -11,6 +11,7 @@ import '../../../services/mysql_database_service.dart';
 import '../../../config/api_config.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
+import '../../../widgets/admin_console_surfaces.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/order_payment_balance.dart';
 
@@ -654,8 +655,8 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     );
     final msgCtrl = TextEditingController(text: req.adminMessage ?? '');
 
-    final borderColor = CupertinoColors.separator.withValues(alpha: 0.1);
-    const fillColor = Color(0xFFF8F8F8);
+    final borderColor = Colors.grey.shade300;
+    const fillColor = Colors.white;
     const focusColor = Color(0xFF8D6E63);
 
     void recalcRemaining() {
@@ -750,7 +751,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                   Container(
                     padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8F8F8),
+                      color: Colors.white,
                       border: Border(
                         bottom: BorderSide(color: Colors.grey.shade200),
                       ),
@@ -783,7 +784,8 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                       padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 900),
-                        child: Column(
+                        child: AdminConsoleSurfaces.detailCard(
+                          child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -890,6 +892,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                               ),
                             ),
                           ],
+                        ),
                         ),
                       ),
                     ),
@@ -1002,7 +1005,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                 Container(
                   padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8F8F8),
+                    color: Colors.white,
                     border: Border(
                       bottom: BorderSide(color: Colors.grey.shade200),
                     ),
@@ -1035,7 +1038,8 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                     padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 900),
-                      child: Column(
+                      child: AdminConsoleSurfaces.detailCard(
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1047,12 +1051,27 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                           TextField(
                             controller: msgCtrl,
                             maxLines: 3,
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               labelText: 'Reason (optional)',
                               hintText: 'e.g. materials not available for this design',
+                              filled: true,
+                              fillColor: Colors.white,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+                              ),
                             ),
                           ),
                         ],
+                      ),
                       ),
                     ),
                   ),
@@ -1117,12 +1136,13 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       showDialog(
         context: context,
         builder: (context) => Dialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
           child: Container(
-            width: MediaQuery.of(context).size.width * 0.82,
-            height: MediaQuery.of(context).size.height * 0.78,
-            padding: const EdgeInsets.all(20),
+            width: MediaQuery.of(context).size.width * 0.88,
+            height: MediaQuery.of(context).size.height * 0.82,
+            decoration: AdminConsoleSurfaces.detailCardDecoration(),
+            padding: const EdgeInsets.all(22),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1145,7 +1165,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 Expanded(
                   child: requests.isEmpty
                       ? Center(
@@ -1160,18 +1180,15 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
                         )
                       : ListView.separated(
                           itemCount: requests.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          separatorBuilder: (_, __) => const SizedBox(height: 14),
                           itemBuilder: (context, index) {
                             final req = requests[index];
                             final validIdUrl = (req.validIdUrl == null || req.validIdUrl!.isEmpty)
                                 ? null
                                 : _absoluteMediaUrl(req.validIdUrl!);
                             return Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: CupertinoColors.separator.withValues(alpha: 0.25)),
-                              ),
+                              padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                              decoration: AdminConsoleSurfaces.detailCardDecoration(),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -2205,7 +2222,7 @@ class _OrderDetailsDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenW = MediaQuery.sizeOf(context).width;
-    final maxDialogW = math.min(1040.0, screenW - 24);
+    final maxDialogW = math.min(1240.0, screenW - 16);
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 28),
@@ -2252,8 +2269,9 @@ class _OrderDetailsDialog extends StatelessWidget {
             ),
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                child: Column(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                child: AdminConsoleSurfaces.detailCard(
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     LayoutBuilder(
@@ -2319,7 +2337,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                           child: Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: Colors.grey[50],
+                              color: Colors.white,
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: Colors.grey[200]!),
                             ),
@@ -2398,8 +2416,9 @@ class _OrderDetailsDialog extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.grey[50],
+                        color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2512,7 +2531,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                             Container(
                               padding: const EdgeInsets.all(16),
                               decoration: BoxDecoration(
-                                color: Colors.grey[50],
+                                color: Colors.white,
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(color: Colors.grey[200]!),
                               ),
@@ -2896,6 +2915,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                       ],
                   ],
                 ),
+                ),
               ),
             ),
           ],
@@ -2931,31 +2951,27 @@ class _DetailRow extends StatelessWidget {
   Widget build(BuildContext context) {
     if (value.trim().isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 140,
-            child: Text(
-              '$label:',
-              style: GoogleFonts.poppins(
-                color: Colors.grey[600],
-                fontSize: _detailFontSize,
-                fontWeight: FontWeight.w500,
-                decoration: TextDecoration.none,
-              ),
+          Text(
+            label,
+            style: GoogleFonts.poppins(
+              color: Colors.black54,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              decoration: TextDecoration.none,
             ),
           ),
-          Expanded(
-            child: Text(
-              value.trim(),
-              style: GoogleFonts.poppins(
-                color: Colors.black,
-                fontSize: _detailFontSize,
-                fontWeight: FontWeight.w400,
-                decoration: TextDecoration.none,
-              ),
+          const SizedBox(height: 4),
+          Text(
+            value.trim(),
+            style: GoogleFonts.poppins(
+              color: const Color(0xFF1A1A1A),
+              fontSize: _detailFontSize,
+              fontWeight: FontWeight.w600,
+              decoration: TextDecoration.none,
             ),
           ),
         ],

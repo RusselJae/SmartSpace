@@ -184,11 +184,11 @@ class _AdminShellState extends State<AdminShell> {
       barrierColor: Colors.black54,
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 60),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 48),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(22),
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 520),
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(22),

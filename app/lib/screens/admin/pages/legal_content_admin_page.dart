@@ -167,6 +167,8 @@ This Privacy Policy explains how SmartSpace collects, uses, and protects persona
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
           title: Text('Version history — $label', style: GoogleFonts.poppins(fontWeight: FontWeight.w700)),
           content: SizedBox(
             width: 480,
@@ -264,7 +266,7 @@ This Privacy Policy explains how SmartSpace collects, uses, and protects persona
   Widget build(BuildContext context) {
     final verLabel = _tabController.index == 0 ? _termsVersion : _privacyVersion;
     return ColoredBox(
-      color: const Color(0xFFF3F3F5),
+      color: Colors.white,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -465,9 +467,9 @@ class _LegalEditorPanel extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFFE8E8EA),
+              color: Colors.white,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey.shade300),
+              border: Border.all(color: Colors.grey.shade200),
             ),
             child: Wrap(
               spacing: 4,

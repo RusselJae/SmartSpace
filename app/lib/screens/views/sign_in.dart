@@ -248,7 +248,24 @@ class _SignInScreenState extends State<SignInScreen> {
                     textInputAction: TextInputAction.done,
                     placeholder: '••••••••',
                   ),
-                  SizedBox(height: isSmallScreen ? 20 : 24),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: _loading ? null : _showForgotPasswordDialog,
+                      child: Text(
+                        'Forgot password?',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: kBrown,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: isSmallScreen ? 14 : 18),
 
                   // ------------------------------
                   // Primary CTA
@@ -288,23 +305,6 @@ class _SignInScreenState extends State<SignInScreen> {
                     ),
                   ),
 
-                  SizedBox(height: isSmallScreen ? 12 : 14),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: CupertinoButton(
-                      padding: EdgeInsets.zero,
-                      onPressed: _loading ? null : _showForgotPasswordDialog,
-                      child: Text(
-                        'Forgot password?',
-                        style: GoogleFonts.poppins(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: kBrown,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ),
-                  ),
                   SizedBox(height: isSmallScreen ? 12 : 14),
 
                   // ------------------------------

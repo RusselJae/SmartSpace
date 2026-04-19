@@ -209,13 +209,21 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
   }
 
   Widget _nameCard(BuildContext context) {
+    const kBrown = Color(0xFF8D6E63);
+    InputBorder outlineBorder({Color? border, double width = 1}) {
+      return OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: border ?? Colors.grey.shade300, width: width),
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: Colors.grey.shade200),
       ),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -224,7 +232,11 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
               Expanded(
                 child: Text(
                   'Legal name',
-                  style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600),
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF5C4033),
+                  ),
                 ),
               ),
               TextButton(
@@ -249,8 +261,10 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                   decoration: InputDecoration(
                     labelText: 'First name',
                     filled: true,
-                    fillColor: const Color(0xFFF8F8F8),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    fillColor: Colors.white,
+                    enabledBorder: outlineBorder(),
+                    focusedBorder: outlineBorder(border: kBrown, width: 1.5),
+                    border: outlineBorder(),
                   ),
                 ),
               ),
@@ -262,8 +276,10 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
                   decoration: InputDecoration(
                     labelText: 'Last name',
                     filled: true,
-                    fillColor: const Color(0xFFF8F8F8),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    fillColor: Colors.white,
+                    enabledBorder: outlineBorder(),
+                    focusedBorder: outlineBorder(border: kBrown, width: 1.5),
+                    border: outlineBorder(),
                   ),
                 ),
               ),
@@ -402,19 +418,19 @@ class _AdminProfilePageState extends State<AdminProfilePage> {
   Widget _buildContent(BuildContext context) {
     return ListView(
       shrinkWrap: true,
-      padding: const EdgeInsets.fromLTRB(0, 8, 0, 24),
+      padding: const EdgeInsets.fromLTRB(0, 12, 0, 32),
       children: [
         _profileHeaderRow(),
-        const SizedBox(height: 20),
+        const SizedBox(height: 28),
         _nameCard(context),
-        const SizedBox(height: 16),
+        const SizedBox(height: 22),
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: Colors.grey.shade200),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Column(
             children: [
               _emailRow(),

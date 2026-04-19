@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:excel/excel.dart' as excel;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
@@ -15,6 +16,31 @@ import '../../../utils/admin_formatters.dart';
 import '../../../utils/report_file_saver.dart';
 import '../../../widgets/toast.dart';
 import '../widgets/admin_analytics_components.dart';
+
+// ---------------------------------------------------------------------------
+// Sales report period helpers (local week = Mon 00:00 → next Mon 00:00).
+// ---------------------------------------------------------------------------
+
+DateTime _mondayOfWeekContaining(DateTime date) {
+  final d = DateTime(date.year, date.month, date.day);
+  return d.subtract(Duration(days: d.weekday - DateTime.monday));
+}
+
+/// Trend + CSV/PDF x-axis: weekly = weekday; monthly = in-month week index; yearly = month short name.
+String _salesTrendXLabel(AdminTrendGranularity g, DateTime x) {
+  switch (g) {
+    case AdminTrendGranularity.weekly:
+      return DateFormat.E().format(x);
+    case AdminTrendGranularity.monthly:
+      final d = x.day;
+      if (d <= 7) return 'Week 1';
+      if (d <= 14) return 'Week 2';
+      if (d <= 21) return 'Week 3';
+      return 'Week 4';
+    case AdminTrendGranularity.yearly:
+      return DateFormat.MMM().format(x);
+  }
+}
 
 class SalesReportsAdminPage extends StatefulWidget {
   const SalesReportsAdminPage({super.key});
@@ -74,20 +100,34 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
   Future<void> _pickSelectedPeriod() async {
     final now = DateTime.now();
+    final base = Theme.of(context);
+    final pickerTheme = base.copyWith(
+      dialogTheme: base.dialogTheme.copyWith(backgroundColor: Colors.white),
+      colorScheme: base.colorScheme.copyWith(surface: Colors.white),
+      datePickerTheme: base.datePickerTheme.copyWith(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        rangeSelectionBackgroundColor: const Color(0xFF8D6E63).withValues(alpha: 0.12),
+      ),
+    );
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(now.year - 5, 1, 1),
       lastDate: DateTime(now.year + 1, 12, 31),
-      helpText: _trendGranularity == AdminTrendGranularity.daily
-          ? 'Select report date'
+      helpText: _trendGranularity == AdminTrendGranularity.weekly
+          ? 'Select any day in the report week (Mon–Sun)'
           : _trendGranularity == AdminTrendGranularity.monthly
               ? 'Select report month'
               : 'Select report year',
+      builder: (context, child) => Theme(
+        data: pickerTheme,
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
     if (picked == null) return;
     setState(() {
-      _selectedDate = _trendGranularity == AdminTrendGranularity.daily
+      _selectedDate = _trendGranularity == AdminTrendGranularity.weekly
           ? DateTime(picked.year, picked.month, picked.day)
           : _trendGranularity == AdminTrendGranularity.monthly
               ? DateTime(picked.year, picked.month, 1)
@@ -97,8 +137,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
   DateTime get _periodStart {
     switch (_trendGranularity) {
-      case AdminTrendGranularity.daily:
-        return DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+      case AdminTrendGranularity.weekly:
+        return _mondayOfWeekContaining(_selectedDate);
       case AdminTrendGranularity.monthly:
         return DateTime(_selectedDate.year, _selectedDate.month, 1);
       case AdminTrendGranularity.yearly:
@@ -108,8 +148,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
   DateTime get _periodEnd {
     switch (_trendGranularity) {
-      case AdminTrendGranularity.daily:
-        return _periodStart.add(const Duration(days: 1));
+      case AdminTrendGranularity.weekly:
+        return _mondayOfWeekContaining(_selectedDate).add(const Duration(days: 7));
       case AdminTrendGranularity.monthly:
         return DateTime(_selectedDate.year, _selectedDate.month + 1, 1);
       case AdminTrendGranularity.yearly:
@@ -119,8 +159,10 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
   String get _selectedPeriodLabel {
     switch (_trendGranularity) {
-      case AdminTrendGranularity.daily:
-        return DateFormat.yMMMd().format(_selectedDate);
+      case AdminTrendGranularity.weekly:
+        final mon = _mondayOfWeekContaining(_selectedDate);
+        final sun = mon.add(const Duration(days: 6));
+        return '${DateFormat.yMMMd().format(mon)} – ${DateFormat.yMMMd().format(sun)}';
       case AdminTrendGranularity.monthly:
         return DateFormat.yMMM().format(_selectedDate);
       case AdminTrendGranularity.yearly:
@@ -273,10 +315,9 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
         .fold<double>(0, (sum, o) => sum + _orderRevenueForSalesReports(o));
   }
 
-  List<AdminSeriesPoint> get _dailyTrendPoints {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final monday = today.subtract(Duration(days: today.weekday - DateTime.monday));
+  /// Mon–Sun revenue for the ISO week that contains [_selectedDate].
+  List<AdminSeriesPoint> get _weeklyTrendPoints {
+    final monday = _mondayOfWeekContaining(_selectedDate);
     final points = <AdminSeriesPoint>[];
     for (var i = 0; i < 7; i++) {
       final day = monday.add(Duration(days: i));
@@ -286,32 +327,52 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     return points;
   }
 
+  /// Four buckets within the selected month only: days 1–7, 8–14, 15–21, 22–end.
   List<AdminSeriesPoint> get _monthlyTrendPoints {
-    final points = <AdminSeriesPoint>[];
-    for (var i = 11; i >= 0; i--) {
-      final month = DateTime(_selectedDate.year, _selectedDate.month - i, 1);
-      final next = DateTime(month.year, month.month + 1, 1);
-      points.add(AdminSeriesPoint(x: month, y: _revenueInRange(month, next)));
+    final y = _selectedDate.year;
+    final m = _selectedDate.month;
+    DateTime segmentStart(int weekIndex) {
+      switch (weekIndex) {
+        case 0:
+          return DateTime(y, m, 1);
+        case 1:
+          return DateTime(y, m, 8);
+        case 2:
+          return DateTime(y, m, 15);
+        case 3:
+        default:
+          return DateTime(y, m, 22);
+      }
     }
-    return points;
+
+    DateTime segmentEndExclusive(int weekIndex) {
+      if (weekIndex < 3) return segmentStart(weekIndex + 1);
+      return DateTime(y, m + 1, 1);
+    }
+
+    return List<AdminSeriesPoint>.generate(4, (w) {
+      final start = segmentStart(w);
+      final end = segmentEndExclusive(w);
+      return AdminSeriesPoint(x: start, y: _revenueInRange(start, end));
+    });
   }
 
+  /// January–December net revenue for [_selectedDate.year] only.
   List<AdminSeriesPoint> get _yearlyTrendPoints {
-    final y0 = _selectedDate.year;
+    final y = _selectedDate.year;
     final points = <AdminSeriesPoint>[];
-    for (var i = 11; i >= 0; i--) {
-      final year = y0 - i;
-      final start = DateTime(year, 1, 1);
-      final end = DateTime(year + 1, 1, 1);
-      points.add(AdminSeriesPoint(x: DateTime(year, 7, 1), y: _revenueInRange(start, end)));
+    for (var month = 1; month <= 12; month++) {
+      final start = DateTime(y, month, 1);
+      final end = DateTime(y, month + 1, 1);
+      points.add(AdminSeriesPoint(x: start, y: _revenueInRange(start, end)));
     }
     return points;
   }
 
   List<AdminSeriesPoint> get _activeTrendPoints {
     switch (_trendGranularity) {
-      case AdminTrendGranularity.daily:
-        return _dailyTrendPoints;
+      case AdminTrendGranularity.weekly:
+        return _weeklyTrendPoints;
       case AdminTrendGranularity.monthly:
         return _monthlyTrendPoints;
       case AdminTrendGranularity.yearly:
@@ -321,8 +382,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
   String get _granularityLabel {
     switch (_trendGranularity) {
-      case AdminTrendGranularity.daily:
-        return 'daily';
+      case AdminTrendGranularity.weekly:
+        return 'weekly';
       case AdminTrendGranularity.monthly:
         return 'monthly';
       case AdminTrendGranularity.yearly:
@@ -330,35 +391,25 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
-  String _trendXAxisLabel(DateTime date) {
-    switch (_trendGranularity) {
-      case AdminTrendGranularity.daily:
-        return DateFormat.E().format(date);
-      case AdminTrendGranularity.monthly:
-        return DateFormat.MMM().format(date);
-      case AdminTrendGranularity.yearly:
-        return DateFormat.y().format(date);
-    }
-  }
+  String _trendXAxisLabel(DateTime date) => _salesTrendXLabel(_trendGranularity, date);
 
-  Future<void> _exportExcelCsv() async {
+  Future<void> _exportExcelXlsx() async {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
-      final csv = _buildCsvForGranularity();
-      final bytes = Uint8List.fromList(csv.codeUnits);
+      final bytes = _buildXlsxForGranularity();
       final filename =
-          'sales_report_${_granularityLabel}_${_selectedDate.year}_${_selectedDate.month.toString().padLeft(2, '0')}_${_selectedDate.day.toString().padLeft(2, '0')}.csv';
+          'sales_report_${_granularityLabel}_${_selectedDate.year}_${_selectedDate.month.toString().padLeft(2, '0')}_${_selectedDate.day.toString().padLeft(2, '0')}.xlsx';
       final savedAt = await saveReportFile(
         filename: filename,
         bytes: bytes,
-        mimeType: 'text/csv;charset=utf-8',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       );
       if (!mounted) return;
-      Toast.success(context, '$_granularityLabel CSV exported: $savedAt');
+      Toast.success(context, '$_granularityLabel XLSX exported: $savedAt');
     } catch (e) {
       if (!mounted) return;
-      Toast.error(context, 'Failed to export CSV: $e');
+      Toast.error(context, 'Failed to export XLSX: $e');
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
@@ -380,47 +431,105 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
-  String _buildCsvForGranularity() {
-    final buffer = StringBuffer();
-    final summary = _summaryRows();
-    final trend = _activeTrendPoints;
-    buffer.writeln('Wood Home Furniture Trading');
-    buffer.writeln(
-      'Sales Report (${_granularityLabel.toUpperCase()}),${_csv(_selectedPeriodLabel)}',
-    );
-    buffer.writeln('Generated At,${_csv(AdminFormatters.dateYmdHm(DateTime.now()))}');
-    buffer.writeln('');
-    buffer.writeln('Summary,Value');
-    for (final row in summary) {
-      buffer.writeln('${_csv(row.$1)},${_csv(row.$2)}');
-    }
-    buffer.writeln('');
-    buffer.writeln('${_granularityLabel.toUpperCase()} Revenue,Amount');
-    for (final p in trend) {
-      buffer.writeln('${_csv(_trendXAxisLabel(p.x))},${AdminFormatters.decimal(p.y)}');
-    }
-    buffer.writeln('');
-    buffer.writeln('Best Selling Products');
-    buffer.writeln('Product,Units Sold,Estimated Revenue');
-    for (final item in _bestSellingInMonth) {
-      buffer.writeln(
-        '${_csv(item.name)},${AdminFormatters.decimal(item.value, digits: 0)},${AdminFormatters.decimal(item.secondaryValue)}',
-      );
-    }
-    buffer.writeln('');
-    buffer.writeln('Top Rated Products');
-    buffer.writeln('Product,Average Rating,Review Count');
-    for (final item in _topRatedInMonth) {
-      buffer.writeln(
-        '${_csv(item.name)},${AdminFormatters.decimal(item.value)},${AdminFormatters.decimal(item.secondaryValue, digits: 0)}',
-      );
-    }
-    return buffer.toString();
-  }
+  Uint8List _buildXlsxForGranularity() {
+    final workbook = excel.Excel.createExcel();
+    workbook.delete('Sheet1');
 
-  String _csv(String raw) {
-    final escaped = raw.replaceAll('"', '""');
-    return '"$escaped"';
+    final generatedAt = AdminFormatters.dateYmdHm(DateTime.now());
+    final trend = _activeTrendPoints;
+    final summaryRows = _summaryRows();
+    final topSelling = _bestSellingInMonth;
+    final topRated = _topRatedInMonth;
+    final mostCancelled = _mostCancelledInMonth;
+
+    final overview = workbook['Overview'];
+    overview.setColumnWidth(0, 34);
+    overview.setColumnWidth(1, 30);
+    overview.appendRow([
+      excel.TextCellValue('Wood Home Furniture Trading'),
+      excel.TextCellValue(''),
+    ]);
+    overview.appendRow([
+      excel.TextCellValue('Sales Report (${_granularityLabel.toUpperCase()})'),
+      excel.TextCellValue(_selectedPeriodLabel),
+    ]);
+    overview.appendRow([
+      excel.TextCellValue('Generated At'),
+      excel.TextCellValue(generatedAt),
+    ]);
+    overview.appendRow([excel.TextCellValue(''), excel.TextCellValue('')]);
+    overview.appendRow([excel.TextCellValue('Summary'), excel.TextCellValue('Value')]);
+    for (final row in summaryRows) {
+      overview.appendRow([excel.TextCellValue(row.$1), excel.TextCellValue(row.$2)]);
+    }
+
+    final trendSheet = workbook['Revenue Trend'];
+    trendSheet.setColumnWidth(0, 20);
+    trendSheet.setColumnWidth(1, 18);
+    trendSheet.appendRow([
+      excel.TextCellValue(_granularityLabel.toUpperCase()),
+      excel.TextCellValue('Amount'),
+    ]);
+    for (final p in trend) {
+      trendSheet.appendRow([
+        excel.TextCellValue(_trendXAxisLabel(p.x)),
+        excel.DoubleCellValue(p.y),
+      ]);
+    }
+
+    final sellingSheet = workbook['Top Selling'];
+    sellingSheet.setColumnWidth(0, 30);
+    sellingSheet.setColumnWidth(1, 14);
+    sellingSheet.setColumnWidth(2, 18);
+    sellingSheet.appendRow([
+      excel.TextCellValue('Product'),
+      excel.TextCellValue('Units Sold'),
+      excel.TextCellValue('Estimated Revenue'),
+    ]);
+    for (final item in topSelling) {
+      sellingSheet.appendRow([
+        excel.TextCellValue(item.name),
+        excel.DoubleCellValue(item.value),
+        excel.DoubleCellValue(item.secondaryValue),
+      ]);
+    }
+
+    final ratedSheet = workbook['Top Rated'];
+    ratedSheet.setColumnWidth(0, 30);
+    ratedSheet.setColumnWidth(1, 14);
+    ratedSheet.setColumnWidth(2, 14);
+    ratedSheet.appendRow([
+      excel.TextCellValue('Product'),
+      excel.TextCellValue('Average Rating'),
+      excel.TextCellValue('Review Count'),
+    ]);
+    for (final item in topRated) {
+      ratedSheet.appendRow([
+        excel.TextCellValue(item.name),
+        excel.DoubleCellValue(item.value),
+        excel.DoubleCellValue(item.secondaryValue),
+      ]);
+    }
+
+    final cancelledSheet = workbook['Most Cancelled'];
+    cancelledSheet.setColumnWidth(0, 30);
+    cancelledSheet.setColumnWidth(1, 20);
+    cancelledSheet.appendRow([
+      excel.TextCellValue('Product'),
+      excel.TextCellValue('Cancelled Orders'),
+    ]);
+    for (final item in mostCancelled) {
+      cancelledSheet.appendRow([
+        excel.TextCellValue(item.name),
+        excel.DoubleCellValue(item.value),
+      ]);
+    }
+
+    final encoded = workbook.encode();
+    if (encoded == null || encoded.isEmpty) {
+      throw StateError('Failed to encode XLSX workbook.');
+    }
+    return Uint8List.fromList(encoded);
   }
 
   List<(String, String)> _summaryRows() {
@@ -612,9 +721,10 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
             onGranularityChanged: (g) => setState(() => _trendGranularity = g),
             selectedLabel: _selectedPeriodLabel,
             onPickDate: _pickSelectedPeriod,
-            onExport: _exporting ? null : _exportExcelCsv,
+            onExport: _exporting ? null : _exportExcelXlsx,
             onPrint: _exporting ? null : _printPdfReport,
             points: _activeTrendPoints,
+            trendXFormatter: (x) => _salesTrendXLabel(_trendGranularity, x),
           ),
           const SizedBox(height: 16),
           AdminInsightPanelRow(
@@ -736,6 +846,7 @@ class _SalesTrendSection extends StatelessWidget {
     required this.onExport,
     required this.onPrint,
     required this.points,
+    required this.trendXFormatter,
   });
 
   final AdminTrendGranularity granularity;
@@ -745,6 +856,7 @@ class _SalesTrendSection extends StatelessWidget {
   final VoidCallback? onExport;
   final VoidCallback? onPrint;
   final List<AdminSeriesPoint> points;
+  final String Function(DateTime x) trendXFormatter;
 
   @override
   Widget build(BuildContext context) {
@@ -758,7 +870,7 @@ class _SalesTrendSection extends StatelessWidget {
               children: [
                 SegmentedButton<AdminTrendGranularity>(
                   segments: const [
-                    ButtonSegment(value: AdminTrendGranularity.daily, label: Text('Daily')),
+                    ButtonSegment(value: AdminTrendGranularity.weekly, label: Text('Weekly')),
                     ButtonSegment(value: AdminTrendGranularity.monthly, label: Text('Monthly')),
                     ButtonSegment(value: AdminTrendGranularity.yearly, label: Text('Yearly')),
                   ],
@@ -777,7 +889,7 @@ class _SalesTrendSection extends StatelessWidget {
                 const SizedBox(width: 8),
                 IconButton.outlined(
                   onPressed: onExport,
-                  tooltip: 'Export CSV',
+                  tooltip: 'Export XLSX',
                   icon: const Icon(Icons.table_view_outlined),
                 ),
                 const SizedBox(width: 8),
@@ -790,22 +902,23 @@ class _SalesTrendSection extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             AdminUnifiedTrendChartCard(
-              title: granularity == AdminTrendGranularity.daily
-                  ? 'Revenue Trend (Daily)'
+              title: granularity == AdminTrendGranularity.weekly
+                  ? 'Revenue Trend (Weekly)'
                   : granularity == AdminTrendGranularity.monthly
                       ? 'Revenue Trend (Monthly)'
                       : 'Revenue Trend (Yearly)',
-              subtitle: granularity == AdminTrendGranularity.daily
-                  ? 'Net revenue for Monday to Sunday of the current week.'
+              subtitle: granularity == AdminTrendGranularity.weekly
+                  ? 'Net revenue Mon–Sun for the week you picked on the calendar.'
                   : granularity == AdminTrendGranularity.monthly
-                      ? 'Net revenue for each of the last 12 months.'
-                      : 'Net revenue for each of the last 12 years.',
+                      ? 'Net revenue for weeks 1–4 inside the selected month only.'
+                      : 'Net revenue per month for the selected calendar year.',
               seriesLabel: 'Net revenue',
               points: points,
               granularity: granularity,
               onGranularityChanged: onGranularityChanged,
               showGranularitySelector: false,
               valueFormatter: AdminFormatters.currency,
+              xAxisLabelFormatter: trendXFormatter,
             ),
           ],
         ),

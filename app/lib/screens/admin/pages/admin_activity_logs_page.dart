@@ -291,11 +291,24 @@ class _AdminActivityLogsPageState extends State<AdminActivityLogsPage> {
       required bool from,
       required void Function(void Function()) setModalState,
     }) async {
+      final base = Theme.of(context);
+      final pickerTheme = base.copyWith(
+        dialogTheme: base.dialogTheme.copyWith(backgroundColor: Colors.white),
+        colorScheme: base.colorScheme.copyWith(surface: Colors.white),
+        datePickerTheme: base.datePickerTheme.copyWith(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+        ),
+      );
       final picked = await showDatePicker(
         context: context,
         initialDate: (from ? tempFrom : tempTo) ?? DateTime.now(),
         firstDate: DateTime(2020, 1, 1),
         lastDate: DateTime.now().add(const Duration(days: 365)),
+        builder: (context, child) => Theme(
+          data: pickerTheme,
+          child: child ?? const SizedBox.shrink(),
+        ),
       );
       if (picked == null) return;
       setModalState(() {

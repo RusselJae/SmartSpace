@@ -870,6 +870,8 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
     final preview = _previewAdmin(_fullName.text.trim().isEmpty ? widget.admin.fullName : _fullName.text.trim());
     final effective = AdminPermissions.effectivePermissionsFor(preview);
     return Dialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(

@@ -54,7 +54,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     return _orders.where((o) => !o.createdAt.isBefore(start) && o.createdAt.isBefore(end)).length.toDouble();
   }
 
-  List<AdminSeriesPoint> get _dailyOrderPoints {
+  List<AdminSeriesPoint> get _weeklyOrderPoints {
     final now = DateTime.now();
     final local = DateTime(now.year, now.month, now.day);
     final monday = local.subtract(Duration(days: local.weekday - DateTime.monday));
@@ -94,8 +94,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
   List<AdminSeriesPoint> get _orderTrendPoints {
     switch (_ordersGranularity) {
-      case AdminTrendGranularity.daily:
-        return _dailyOrderPoints;
+      case AdminTrendGranularity.weekly:
+        return _weeklyOrderPoints;
       case AdminTrendGranularity.monthly:
         return _monthlyOrderPoints;
       case AdminTrendGranularity.yearly:
@@ -241,7 +241,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             const SizedBox(height: 20),
             AdminUnifiedTrendChartCard(
               title: 'Order Volume Trend',
-              subtitle: _ordersGranularity == AdminTrendGranularity.daily
+              subtitle: _ordersGranularity == AdminTrendGranularity.weekly
                   ? 'Number of orders by day (Mon-Sun).'
                   : _ordersGranularity == AdminTrendGranularity.monthly
                       ? 'Number of orders for each of the last 12 months.'

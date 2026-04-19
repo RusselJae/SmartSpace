@@ -552,6 +552,8 @@ class _LegalEditorPanel extends StatelessWidget {
                 decoration: InputDecoration(
                   hintText: hint,
                   hintStyle: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500], height: 1.5),
+                  filled: true,
+                  fillColor: Colors.white,
                   border: InputBorder.none,
                   isCollapsed: true,
                 ),

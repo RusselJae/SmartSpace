@@ -368,7 +368,8 @@ class _DualChartPainter extends CustomPainter {
 
 /// Granularity for the unified admin trend chart (Overview).
 enum AdminTrendGranularity {
-  daily,
+  /// Monday–Sunday buckets (current calendar week on dashboard; selected week on sales).
+  weekly,
   monthly,
   yearly,
 }
@@ -378,7 +379,7 @@ enum AdminTrendSelectorPlacement {
   bottom,
 }
 
-/// Single-series trend with Daily / Monthly / Yearly control (Apple-style segmented control).
+/// Single-series trend with Weekly / Monthly / Yearly control (Apple-style segmented control).
 class AdminUnifiedTrendChartCard extends StatelessWidget {
   const AdminUnifiedTrendChartCard({
     super.key,
@@ -389,6 +390,8 @@ class AdminUnifiedTrendChartCard extends StatelessWidget {
     required this.granularity,
     required this.onGranularityChanged,
     this.valueFormatter,
+    /// Overrides default x labels derived from [granularity] (e.g. sales “weeks in month”).
+    this.xAxisLabelFormatter,
     this.showGranularitySelector = true,
     this.selectorPlacement = AdminTrendSelectorPlacement.top,
   });
@@ -400,6 +403,8 @@ class AdminUnifiedTrendChartCard extends StatelessWidget {
   final AdminTrendGranularity granularity;
   final ValueChanged<AdminTrendGranularity> onGranularityChanged;
   final String Function(double y)? valueFormatter;
+  /// When non-null, each point’s `x` is formatted with this instead of [_xLabel].
+  final String Function(DateTime x)? xAxisLabelFormatter;
   final bool showGranularitySelector;
   final AdminTrendSelectorPlacement selectorPlacement;
 
@@ -415,7 +420,7 @@ class AdminUnifiedTrendChartCard extends StatelessWidget {
             final bool stackControls = constraints.maxWidth < 520;
             final granularityPicker = SegmentedButton<AdminTrendGranularity>(
               segments: const [
-                ButtonSegment(value: AdminTrendGranularity.daily, label: Text('Daily')),
+                ButtonSegment(value: AdminTrendGranularity.weekly, label: Text('Weekly')),
                 ButtonSegment(value: AdminTrendGranularity.monthly, label: Text('Monthly')),
                 ButtonSegment(value: AdminTrendGranularity.yearly, label: Text('Yearly')),
               ],
@@ -506,7 +511,7 @@ class AdminUnifiedTrendChartCard extends StatelessWidget {
                             for (final p in points)
                               Expanded(
                                 child: Text(
-                                  _xLabel(p.x, granularity),
+                                  (xAxisLabelFormatter ?? (DateTime x) => _xLabel(x, granularity))(p.x),
                                   textAlign: TextAlign.center,
                                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                         color: const Color(0xFF70778A),
@@ -534,7 +539,7 @@ class AdminUnifiedTrendChartCard extends StatelessWidget {
 
   static String _xLabel(DateTime x, AdminTrendGranularity g) {
     switch (g) {
-      case AdminTrendGranularity.daily:
+      case AdminTrendGranularity.weekly:
         return DateFormat.E().format(x.toLocal());
       case AdminTrendGranularity.monthly:
         return DateFormat.MMM().format(x.toLocal());

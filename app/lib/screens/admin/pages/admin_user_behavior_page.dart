@@ -113,7 +113,7 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
     return _users.where((u) => !u.createdAt.isBefore(start) && u.createdAt.isBefore(end)).length.toDouble();
   }
 
-  List<AdminSeriesPoint> get _dailyUserPoints {
+  List<AdminSeriesPoint> get _weeklyUserPoints {
     final now = DateTime.now();
     final local = DateTime(now.year, now.month, now.day);
     final monday = local.subtract(Duration(days: local.weekday - DateTime.monday));
@@ -148,8 +148,8 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
 
   List<AdminSeriesPoint> get _userTrendPoints {
     switch (_usersGranularity) {
-      case AdminTrendGranularity.daily:
-        return _dailyUserPoints;
+      case AdminTrendGranularity.weekly:
+        return _weeklyUserPoints;
       case AdminTrendGranularity.monthly:
         return _monthlyUserPoints;
       case AdminTrendGranularity.yearly:
@@ -322,7 +322,7 @@ class _AdminUserBehaviorPageState extends State<AdminUserBehaviorPage> {
             const SizedBox(height: 20),
             AdminUnifiedTrendChartCard(
               title: 'User Growth Trend',
-              subtitle: _usersGranularity == AdminTrendGranularity.daily
+              subtitle: _usersGranularity == AdminTrendGranularity.weekly
                   ? 'Number of newly registered users by day (Mon-Sun).'
                   : _usersGranularity == AdminTrendGranularity.monthly
                       ? 'Number of newly registered users for each of the last 12 months.'

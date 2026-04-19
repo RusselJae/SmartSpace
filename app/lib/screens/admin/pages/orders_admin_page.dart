@@ -1129,150 +1129,227 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     }
   }
 
+  Widget _mtoDetailLabelValue(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 92,
+            child: Text(
+              label,
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Colors.black54,
+                height: 1.3,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AdminConsoleSurfaces.walnutText,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mtoStatusChip(String statusRaw) {
+    final status = statusRaw.trim();
+    final lower = status.toLowerCase();
+    Color bg;
+    Color fg;
+    if (lower.contains('declin')) {
+      bg = Colors.grey.shade200;
+      fg = Colors.grey.shade800;
+    } else if (lower.contains('order_created') || lower.contains('completed')) {
+      bg = Colors.green.shade50;
+      fg = Colors.green.shade800;
+    } else if (lower.contains('quoted') || lower.contains('quote')) {
+      bg = AdminConsoleSurfaces.accentBrown.withValues(alpha: 0.14);
+      fg = AdminConsoleSurfaces.walnutText;
+    } else {
+      bg = Colors.blueGrey.shade50;
+      fg = Colors.blueGrey.shade800;
+    }
+    final readable = status.replaceAll('_', ' ');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: fg.withValues(alpha: 0.2)),
+      ),
+      child: Text(
+        readable,
+        style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+      ),
+    );
+  }
+
+  Widget _mtoRequestCard(MadeToOrderRequest req, BuildContext dialogContext) {
+    final validIdUrl =
+        (req.validIdUrl == null || req.validIdUrl!.isEmpty) ? null : _absoluteMediaUrl(req.validIdUrl!);
+    final quoted = req.quotedTotal != null &&
+        req.quotedDownpayment != null &&
+        req.quotedRemaining != null;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+      decoration: AdminConsoleSurfaces.profilePanelDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      req.itemName.trim().isEmpty ? '—' : req.itemName,
+                      style: GoogleFonts.poppins(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AdminConsoleSurfaces.walnutText,
+                        height: 1.25,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      req.userName,
+                      style: GoogleFonts.poppins(fontSize: 13, color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+              _mtoStatusChip(req.status),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Divider(height: 1, color: Colors.grey.shade200),
+          const SizedBox(height: 10),
+          _mtoDetailLabelValue('Request ref', req.requestRef.isEmpty ? '—' : req.requestRef),
+          if (quoted)
+            _mtoDetailLabelValue(
+              'Quote',
+              'Total ₱${req.quotedTotal!.toStringAsFixed(2)} · DP ₱${req.quotedDownpayment!.toStringAsFixed(2)} · '
+                  'Bal ₱${req.quotedRemaining!.toStringAsFixed(2)}',
+            )
+          else
+            _mtoDetailLabelValue('Down payment (required)', '₱${req.downPaymentAmount.toStringAsFixed(2)}'),
+          if ((req.preferredSize ?? '').trim().isNotEmpty)
+            _mtoDetailLabelValue('Size', req.preferredSize!.trim()),
+          if ((req.materials ?? '').trim().isNotEmpty)
+            _mtoDetailLabelValue('Materials', req.materials!.trim()),
+          if ((req.notes ?? '').trim().isNotEmpty)
+            _mtoDetailLabelValue('Customer notes', req.notes!.trim()),
+          if ((req.adminMessage ?? '').trim().isNotEmpty)
+            _mtoDetailLabelValue('Admin note', req.adminMessage!.trim()),
+          if (validIdUrl != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Valid ID',
+              style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.black54),
+            ),
+            const SizedBox(height: 6),
+            GestureDetector(
+              onTap: () => _showImageDialog(validIdUrl),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.network(validIdUrl, height: 96, width: double.infinity, fit: BoxFit.cover),
+              ),
+            ),
+          ],
+          if (req.status != 'declined' && req.status != 'order_created') ...[
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AdminConsoleSurfaces.walnutText,
+                    side: BorderSide(color: AdminConsoleSurfaces.accentBrown.withValues(alpha: 0.55)),
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  ),
+                  onPressed: () async {
+                    final nav = Navigator.of(dialogContext);
+                    final ok = await _showQuoteMtoDialog(req);
+                    if (ok && mounted) {
+                      nav.pop();
+                      await _showMadeToOrderRequests();
+                    }
+                  },
+                  child: Text('Quote', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                ),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: CupertinoColors.systemRed,
+                    side: BorderSide(color: CupertinoColors.systemRed.withValues(alpha: 0.45)),
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                  ),
+                  onPressed: () async {
+                    final nav = Navigator.of(dialogContext);
+                    final ok = await _showDeclineMtoDialog(req);
+                    if (ok && mounted) {
+                      nav.pop();
+                      await _showMadeToOrderRequests();
+                    }
+                  },
+                  child: Text('Decline', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _showMadeToOrderRequests() async {
     try {
       final requests = await _db.getMadeToOrderRequests();
       if (!mounted) return;
+      final screenW = MediaQuery.sizeOf(context).width;
+      final screenH = MediaQuery.sizeOf(context).height;
       showDialog(
         context: context,
-        builder: (context) => Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
-          child: Container(
-            width: MediaQuery.of(context).size.width * 0.88,
-            height: MediaQuery.of(context).size.height * 0.82,
-            decoration: AdminConsoleSurfaces.detailCardDecoration(),
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Made-to-Order Requests',
-                        style: GoogleFonts.poppins(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
+        builder: (dialogContext) => AdminProfileStyleDetailDialog(
+          maxWidth: math.min(980, screenW - 24),
+          maxHeight: screenH * 0.9,
+          title: 'Made-to-order requests',
+          subtitle: 'Quote, decline, or reopen this list after each action.',
+          bodyExpands: true,
+          body: requests.isEmpty
+              ? Center(
+                  child: Text(
+                    'No made-to-order requests yet',
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      color: Colors.black54,
+                      decoration: TextDecoration.none,
                     ),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+                  itemCount: requests.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 16),
+                  itemBuilder: (context, index) {
+                    return _mtoRequestCard(requests[index], dialogContext);
+                  },
                 ),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: requests.isEmpty
-                      ? Center(
-                          child: Text(
-                            'No made-to-order requests yet',
-                            style: GoogleFonts.poppins(
-                              fontSize: 14,
-                              color: Colors.black54,
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                        )
-                      : ListView.separated(
-                          itemCount: requests.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 14),
-                          itemBuilder: (context, index) {
-                            final req = requests[index];
-                            final validIdUrl = (req.validIdUrl == null || req.validIdUrl!.isEmpty)
-                                ? null
-                                : _absoluteMediaUrl(req.validIdUrl!);
-                            return Container(
-                              padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-                              decoration: AdminConsoleSurfaces.detailCardDecoration(),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '${req.userName} • ${req.itemName}',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.black,
-                                      decoration: TextDecoration.none,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    req.quotedTotal != null &&
-                                            req.quotedDownpayment != null &&
-                                            req.quotedRemaining != null
-                                        ? 'Status: ${req.status} · Total ₱${req.quotedTotal!.toStringAsFixed(2)} '
-                                            '(DP ₱${req.quotedDownpayment!.toStringAsFixed(2)} / '
-                                            'Bal ₱${req.quotedRemaining!.toStringAsFixed(2)})'
-                                        : 'Status: ${req.status}',
-                                    style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
-                                  ),
-                                  if ((req.preferredSize ?? '').isNotEmpty)
-                                    Text('Size: ${req.preferredSize}', style: GoogleFonts.poppins(fontSize: 13)),
-                                  if ((req.materials ?? '').isNotEmpty)
-                                    Text('Materials: ${req.materials}', style: GoogleFonts.poppins(fontSize: 13)),
-                                  if ((req.notes ?? '').isNotEmpty)
-                                    Text('Notes: ${req.notes}', style: GoogleFonts.poppins(fontSize: 13)),
-                                  if (validIdUrl != null) ...[
-                                    const SizedBox(height: 8),
-                                    Text('Valid ID:', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600)),
-                                    const SizedBox(height: 4),
-                                    GestureDetector(
-                                      onTap: () => _showImageDialog(validIdUrl),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: Image.network(validIdUrl, height: 90, fit: BoxFit.cover),
-                                      ),
-                                    ),
-                                  ],
-                                  if (req.status != 'declined' && req.status != 'order_created') ...[
-                                    const SizedBox(height: 10),
-                                    Wrap(
-                                      spacing: 8,
-                                      runSpacing: 6,
-                                      children: [
-                                        OutlinedButton(
-                                          onPressed: () async {
-                                            final nav = Navigator.of(context);
-                                            final ok = await _showQuoteMtoDialog(req);
-                                            if (ok && mounted) {
-                                              nav.pop();
-                                              await _showMadeToOrderRequests();
-                                            }
-                                          },
-                                          child: Text('Quote', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-                                        ),
-                                        OutlinedButton(
-                                          style: OutlinedButton.styleFrom(
-                                            foregroundColor: CupertinoColors.systemRed,
-                                          ),
-                                          onPressed: () async {
-                                            final nav = Navigator.of(context);
-                                            final ok = await _showDeclineMtoDialog(req);
-                                            if (ok && mounted) {
-                                              nav.pop();
-                                              await _showMadeToOrderRequests();
-                                            }
-                                          },
-                                          child: Text('Decline', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
-          ),
         ),
       );
     } catch (e) {
@@ -2135,56 +2212,56 @@ class _OrderDetailsDialog extends StatelessWidget {
   /// Core metadata rows; split into two columns on wide modals to reduce vertical scroll.
   List<Widget> _orderInfoRows() {
     return [
-      _DetailRow(label: 'Order ID', value: order.id),
-      _DetailRow(label: 'Customer', value: order.userName.isNotEmpty ? order.userName : 'Guest'),
-      _DetailRow(label: 'Status', value: order.status[0].toUpperCase() + order.status.substring(1)),
-      _DetailRow(
+      AdminProfileStyleDetailRow(dense: true, showDivider: false, label: 'Order ID', value: order.id),
+      AdminProfileStyleDetailRow(dense: true, showDivider: false, label: 'Customer', value: order.userName.isNotEmpty ? order.userName : 'Guest'),
+      AdminProfileStyleDetailRow(dense: true, showDivider: false, label: 'Status', value: order.status[0].toUpperCase() + order.status.substring(1)),
+      AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Total Amount',
         value: '₱${order.totalAmount.toStringAsFixed(2)}',
       ),
-      _DetailRow(
+      AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Mode of Payment',
         value: _paymentMethodLabel(order.shippingAddress['paymentMethod']?.toString()),
       ),
-      _DetailRow(
+      AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Payment plan',
         value: order.shippingAddress['paymentPlan']?.toString() ?? '—',
       ),
-      _DetailRow(
+      AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Order Option',
         value: order.shippingAddress['orderOption']?.toString() ?? '—',
       ),
-      _DetailRow(
+      AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Payment Status',
         value: order.shippingAddress['paymentStatus']?.toString() ?? '—',
       ),
       if (order.status.toLowerCase() == 'cancelled' &&
           order.shippingAddress['cancellationReason'] != null &&
           order.shippingAddress['cancellationReason'].toString().trim().isNotEmpty)
-        _DetailRow(
+        AdminProfileStyleDetailRow(dense: true, showDivider: false,
           label: 'Cancellation reason',
           value: order.shippingAddress['cancellationReason'].toString(),
         ),
       if (order.shippingAddress['estimatedDeliveryAt'] != null &&
           order.shippingAddress['estimatedDeliveryAt'].toString().isNotEmpty)
-        _DetailRow(
+        AdminProfileStyleDetailRow(dense: true, showDivider: false,
           label: 'Est. delivery (from confirm +10–12d)',
           value: _formatAdminDeliveryDate(
             order.shippingAddress['estimatedDeliveryAt'].toString(),
           ),
         ),
       if (parseShippingDouble(order.shippingAddress, 'downpayment') != null)
-        _DetailRow(
+        AdminProfileStyleDetailRow(dense: true, showDivider: false,
           label: 'Down Payment (line)',
           value: '₱${parseShippingDouble(order.shippingAddress, 'downpayment')!.toStringAsFixed(2)}',
         ),
       if (parseShippingDouble(order.shippingAddress, 'remainingBalance') != null)
-        _DetailRow(
+        AdminProfileStyleDetailRow(dense: true, showDivider: false,
           label: 'Remaining Balance',
           value: '₱${parseShippingDouble(order.shippingAddress, 'remainingBalance')!.toStringAsFixed(2)}',
         ),
       if (parseFirstInstallmentPaidAt(order) != null)
-        _DetailRow(
+        AdminProfileStyleDetailRow(dense: true, showDivider: false,
           label: 'First GCash (window start)',
           value: parseFirstInstallmentPaidAt(order)!.toLocal().toString().substring(0, 19),
         ),
@@ -2204,15 +2281,15 @@ class _OrderDetailsDialog extends StatelessWidget {
         ),
       ],
       if (order.shippingAddress['phone'] != null)
-        _DetailRow(
+        AdminProfileStyleDetailRow(dense: true, showDivider: false,
           label: 'Contact Phone',
           value: order.shippingAddress['phone'].toString(),
         ),
-      _DetailRow(
+      AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Created',
         value: order.createdAt.toLocal().toString().substring(0, 19),
       ),
-      _DetailRow(
+      AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Last Updated',
         value: order.updatedAt.toLocal().toString().substring(0, 19),
       ),
@@ -2224,54 +2301,17 @@ class _OrderDetailsDialog extends StatelessWidget {
     final screenW = MediaQuery.sizeOf(context).width;
     final maxDialogW = math.min(1240.0, screenW - 16);
 
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 28),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
+    return AdminProfileStyleDetailDialog(
+      maxWidth: maxDialogW,
+      maxHeight: MediaQuery.of(context).size.height * 0.94,
+      title: 'Order Details',
+      subtitle: 'Payments, fulfillment, catalog lines, and shipping context.',
+      headerTrailing: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Icon(Icons.receipt_long_rounded, size: 40, color: AdminConsoleSurfaces.accentBrown),
       ),
-      child: Container(
-        constraints: BoxConstraints(
-          maxWidth: maxDialogW,
-          maxHeight: MediaQuery.of(context).size.height * 0.95,
-        ),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.all(Radius.circular(24)),
-        ),
+      body: AdminConsoleSurfaces.detailCard(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
-              child: Row(
-                children: [
-                  const SizedBox(width: 40),
-                  Expanded(
-                    child: Text(
-                      'Order Details',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-            ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-                child: AdminConsoleSurfaces.detailCard(
-                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     LayoutBuilder(
@@ -2294,7 +2334,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                                 children: rows.sublist(0, mid),
                               ),
                             ),
-                            const SizedBox(width: 20),
+                            const SizedBox(width: 14),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2309,7 +2349,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                     Text(
                       'Products (${order.productIds.length})',
                       style: GoogleFonts.poppins(
-                        color: Colors.black,
+                        color: AdminConsoleSurfaces.walnutText,
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
                         decoration: TextDecoration.none,
@@ -2406,7 +2446,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                     Text(
                       'Shipping Address',
                       style: GoogleFonts.poppins(
-                        color: Colors.black,
+                        color: AdminConsoleSurfaces.walnutText,
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
                         decoration: TextDecoration.none,
@@ -2521,7 +2561,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                             Text(
                               'Valid ID',
                               style: GoogleFonts.poppins(
-                                color: Colors.black,
+                                color: AdminConsoleSurfaces.walnutText,
                                 fontSize: 18,
                                 fontWeight: FontWeight.w600,
                                 decoration: TextDecoration.none,
@@ -2644,7 +2684,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                         Text(
                           'Payment Proof',
                           style: GoogleFonts.poppins(
-                            color: Colors.black,
+                            color: AdminConsoleSurfaces.walnutText,
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
                             decoration: TextDecoration.none,
@@ -2654,7 +2694,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.grey[50],
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: Colors.grey[200]!),
                           ),
@@ -2915,12 +2955,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                       ],
                   ],
                 ),
-                ),
               ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -2935,46 +2970,6 @@ class _ProductThumbPlaceholder extends StatelessWidget {
       color: const Color(0xFFE8EAED),
       child: Center(
         child: Icon(Icons.chair_outlined, size: 26, color: Colors.grey[500]),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-  static const double _detailFontSize = 16;
-
-  @override
-  Widget build(BuildContext context) {
-    if (value.trim().isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              color: Colors.black54,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              decoration: TextDecoration.none,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value.trim(),
-            style: GoogleFonts.poppins(
-              color: const Color(0xFF1A1A1A),
-              fontSize: _detailFontSize,
-              fontWeight: FontWeight.w600,
-              decoration: TextDecoration.none,
-            ),
-          ),
-        ],
       ),
     );
   }

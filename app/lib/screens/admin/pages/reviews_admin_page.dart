@@ -586,163 +586,76 @@ class _ReviewDetailsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 780),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.all(Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const SizedBox(width: 40),
-                      Expanded(
-                        child: Text(
-                          'Review Details',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.poppins(
-                            color: Colors.black,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                            decoration: TextDecoration.none,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.of(context).pop(),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  CircleAvatar(
-                    radius: 36,
-                    backgroundColor: Colors.grey[200],
-                    backgroundImage: const AssetImage('assets/images/logo2.png'),
-                    onBackgroundImageError: (_, __) {},
-                  ),
-                ],
-              ),
-            ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-                child: AdminConsoleSurfaces.detailCard(
-                  child: Column(
-                  children: [
-                    _DetailRow(
-                      label: 'Product',
-                      value: review.productName.isNotEmpty ? review.productName : 'Unknown Product',
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Product ID',
-                      value: review.productId,
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Customer',
-                      value: review.userName.isNotEmpty ? review.userName : 'Anonymous',
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Customer ID',
-                      value: review.userId,
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Rating',
-                      value: '${review.rating} / 5 ${'⭐' * review.rating}',
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Status',
-                      value: review.status[0].toUpperCase() + review.status.substring(1),
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Created',
-                      value: review.createdAt.toLocal().toString().substring(0, 19),
-                      fontSize: _detailFontSize,
-                    ),
-                    if (review.updatedAt != null)
-                      _DetailRow(
-                        label: 'Last Updated',
-                        value: review.updatedAt!.toLocal().toString().substring(0, 19),
-                        fontSize: _detailFontSize,
-                      ),
-                    _DetailRow(
-                      label: 'Review Content',
-                      value: review.content.isEmpty ? '(No comment provided)' : review.content,
-                      fontSize: _detailFontSize,
-                    ),
-                    const SizedBox(height: 20),
-                    // Read‑only admin view: no approve / reject actions. Admins
-                    // can inspect the full review details, but all moderation
-                    // happens automatically at creation time.
-                  ],
-                ),
-                ),
-              ),
-            ),
-          ],
+    final headerAvatar = CircleAvatar(
+      radius: 34,
+      backgroundColor: AdminConsoleSurfaces.accentBrown.withValues(alpha: 0.15),
+      child: ClipOval(
+        child: Image.asset(
+          'assets/images/logo2.png',
+          width: 56,
+          height: 56,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Icon(Icons.storefront_rounded, color: AdminConsoleSurfaces.walnutText),
         ),
       ),
     );
-  }
-}
 
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.label,
-    required this.value,
-    this.fontSize = 16,
-  });
-
-  final String label;
-  final String value;
-  final double fontSize;
-
-  @override
-  Widget build(BuildContext context) {
-    if (value.trim().isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return AdminProfileStyleDetailDialog(
+      title: 'Review Details',
+      subtitle: 'Read-only snapshot of what the customer submitted.',
+      headerTrailing: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              color: Colors.black54,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              decoration: TextDecoration.none,
-            ),
-          ),
+          headerAvatar,
           const SizedBox(height: 4),
-          Text(
-            value.trim(),
-            style: GoogleFonts.poppins(
-              color: const Color(0xFF1A1A1A),
-              fontSize: fontSize,
-              fontWeight: FontWeight.w600,
-              decoration: TextDecoration.none,
-            ),
-          ),
+          Text('Store', style: GoogleFonts.poppins(fontSize: 11, color: Colors.black45)),
         ],
+      ),
+      body: AdminConsoleSurfaces.detailCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AdminProfileStyleDetailRow(
+              label: 'Product',
+              value: review.productName.isNotEmpty ? review.productName : 'Unknown Product',
+              fontSize: _detailFontSize,
+            ),
+            AdminProfileStyleDetailRow(label: 'Product ID', value: review.productId, fontSize: _detailFontSize),
+            AdminProfileStyleDetailRow(
+              label: 'Customer',
+              value: review.userName.isNotEmpty ? review.userName : 'Anonymous',
+              fontSize: _detailFontSize,
+            ),
+            AdminProfileStyleDetailRow(label: 'Customer ID', value: review.userId, fontSize: _detailFontSize),
+            AdminProfileStyleDetailRow(
+              label: 'Rating',
+              value: '${review.rating} / 5 ${'⭐' * review.rating}',
+              fontSize: _detailFontSize,
+            ),
+            AdminProfileStyleDetailRow(
+              label: 'Status',
+              value: review.status[0].toUpperCase() + review.status.substring(1),
+              fontSize: _detailFontSize,
+            ),
+            AdminProfileStyleDetailRow(
+              label: 'Created',
+              value: review.createdAt.toLocal().toString().substring(0, 19),
+              fontSize: _detailFontSize,
+            ),
+            if (review.updatedAt != null)
+              AdminProfileStyleDetailRow(
+                label: 'Last Updated',
+                value: review.updatedAt!.toLocal().toString().substring(0, 19),
+                fontSize: _detailFontSize,
+              ),
+            AdminProfileStyleDetailRow(
+              label: 'Review Content',
+              value: review.content.isEmpty ? '(No comment provided)' : review.content,
+              fontSize: _detailFontSize,
+              showDivider: false,
+            ),
+          ],
+        ),
       ),
     );
   }

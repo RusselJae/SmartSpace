@@ -1108,148 +1108,110 @@ class _AdminDetailsDialog extends StatelessWidget {
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
+  String _initials(String fullName) {
+    final parts = fullName.trim().split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      final s = parts.first;
+      return s.length >= 2 ? s.substring(0, 2).toUpperCase() : s[0].toUpperCase();
+    }
+    return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.all(Radius.circular(24)),
+    const fs = 15.0;
+    final initials = _initials(admin.fullName);
+    final avatar = CircleAvatar(
+      radius: 34,
+      backgroundColor: AdminConsoleSurfaces.accentBrown.withValues(alpha: 0.2),
+      child: Text(
+        initials,
+        style: GoogleFonts.poppins(
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+          color: AdminConsoleSurfaces.walnutText,
         ),
+      ),
+    );
+
+    return AdminProfileStyleDetailDialog(
+      title: 'Admin Details',
+      subtitle: 'Role, overrides, and sign-in metadata (read-only credentials).',
+      headerTrailing: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          avatar,
+          const SizedBox(height: 4),
+          Text(
+            'Initials',
+            style: GoogleFonts.poppins(fontSize: 11, color: Colors.black45),
+          ),
+        ],
+      ),
+      body: AdminConsoleSurfaces.detailCard(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 22, 16, 12),
+            AdminProfileStyleDetailRow(label: 'Full Name', value: admin.fullName, fontSize: fs),
+            AdminProfileStyleDetailRow(label: 'Email', value: admin.email, fontSize: fs),
+            AdminProfileStyleDetailRow(
+              label: 'Role',
+              value: admin.role.replaceAll('_', ' '),
+              fontSize: fs,
+            ),
+            AdminProfileStyleDetailRow(
+              label: 'Account',
+              value: admin.isDisabled ? 'Disabled (cannot sign in)' : 'Enabled',
+              fontSize: fs,
+            ),
+            AdminProfileStyleDetailRow(
+              label: 'Permission overrides',
+              value: admin.extraPermissions.isEmpty && admin.revokedPermissions.isEmpty
+                  ? 'None (role defaults only)'
+                  : 'Extra: ${admin.extraPermissions.length}, Revoked: ${admin.revokedPermissions.length}',
+              fontSize: fs,
+            ),
+            AdminProfileStyleDetailRow(
+              label: 'Created',
+              value: _formatDateTime(admin.createdAt),
+              fontSize: fs,
+            ),
+            AdminProfileStyleDetailRow(
+              label: 'Last Login',
+              value: admin.lastLoginAt != null ? _formatDateTime(admin.lastLoginAt!) : 'Never',
+              fontSize: fs,
+              showDivider: false,
+            ),
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.orange.withAlpha(36),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.orange.shade200.withValues(alpha: 0.65)),
+              ),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(width: 40),
+                  Icon(Icons.lock_outline_rounded, size: 20, color: Colors.orange.shade800),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Admin Details',
-                      textAlign: TextAlign.center,
+                      'Credentials cannot be edited for security reasons.',
                       style: GoogleFonts.poppins(
-                        color: Colors.black,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        decoration: TextDecoration.none,
+                        fontSize: 12.5,
+                        height: 1.35,
+                        color: Colors.orange.shade900,
                       ),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
                   ),
                 ],
               ),
             ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-                child: AdminConsoleSurfaces.detailCard(
-                  child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _DetailRow(label: 'Full Name', value: admin.fullName),
-                    _DetailRow(label: 'Email', value: admin.email),
-                    _DetailRow(
-                      label: 'Role',
-                      value: admin.role.replaceAll('_', ' '),
-                    ),
-                    _DetailRow(
-                      label: 'Account',
-                      value: admin.isDisabled ? 'Disabled (cannot sign in)' : 'Enabled',
-                    ),
-                    _DetailRow(
-                      label: 'Permission overrides',
-                      value: admin.extraPermissions.isEmpty && admin.revokedPermissions.isEmpty
-                          ? 'None (role defaults only)'
-                          : 'Extra: ${admin.extraPermissions.length}, Revoked: ${admin.revokedPermissions.length}',
-                    ),
-                    _DetailRow(
-                      label: 'Created',
-                      value: _formatDateTime(admin.createdAt),
-                    ),
-                    _DetailRow(
-                      label: 'Last Login',
-                      value: admin.lastLoginAt != null
-                          ? _formatDateTime(admin.lastLoginAt!)
-                          : 'Never',
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withAlpha(30),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.lock_outline, size: 18, color: Colors.orange),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Credentials cannot be edited for security reasons.',
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                color: Colors.orange[900],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                ),
-              ),
-            ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// Helper widget for displaying a label-value pair in the details dialog.
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-  static const double _detailFontSize = 16;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Colors.black54,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: GoogleFonts.poppins(
-              fontSize: _detailFontSize,
-              color: const Color(0xFF1A1A1A),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -599,181 +599,80 @@ class _UserDetailsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
+    final avatar = CircleAvatar(
+      radius: 34,
+      backgroundColor: AdminConsoleSurfaces.accentBrown.withValues(alpha: 0.18),
+      backgroundImage: (user.avatarUrl != null && user.avatarUrl!.trim().isNotEmpty)
+          ? NetworkImage(user.avatarUrl!.trim())
+          : null,
+      child: (user.avatarUrl == null || user.avatarUrl!.trim().isEmpty)
+          ? Icon(Icons.person_rounded, size: 36, color: AdminConsoleSurfaces.walnutText.withValues(alpha: 0.7))
+          : null,
+    );
+
+    return AdminProfileStyleDetailDialog(
+      title: 'Customer Details',
+      subtitle: 'How this shopper shows up in orders and support.',
+      headerTrailing: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          avatar,
+          const SizedBox(height: 4),
+          Text(
+            'Profile',
+            style: GoogleFonts.poppins(fontSize: 11, color: Colors.black45),
+          ),
+        ],
       ),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 780),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.all(Radius.circular(24)),
-        ),
+      body: AdminConsoleSurfaces.detailCard(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const SizedBox(width: 40),
-                      Expanded(
-                        child: Text(
-                          'Customer Details',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.poppins(
-                            color: Colors.black,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                            decoration: TextDecoration.none,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.of(context).pop(),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  CircleAvatar(
-                    radius: 36,
-                    backgroundColor: Colors.grey[200],
-                    backgroundImage: (user.avatarUrl != null &&
-                            user.avatarUrl!.trim().isNotEmpty)
-                        ? NetworkImage(user.avatarUrl!.trim())
-                        : null,
-                    child: (user.avatarUrl == null || user.avatarUrl!.trim().isEmpty)
-                        ? Icon(Icons.person, size: 38, color: Colors.grey[600])
-                        : null,
-                  ),
-                ],
+            AdminProfileStyleDetailRow(label: 'Name', value: user.fullName, fontSize: _detailFontSize),
+            AdminProfileStyleDetailRow(label: 'Email', value: user.email, fontSize: _detailFontSize),
+            if (user.username.isNotEmpty)
+              AdminProfileStyleDetailRow(label: 'Username', value: user.username, fontSize: _detailFontSize),
+            if (user.phoneNumber != null)
+              AdminProfileStyleDetailRow(label: 'Phone', value: user.phoneNumber!, fontSize: _detailFontSize),
+            if (user.gender != null)
+              AdminProfileStyleDetailRow(
+                label: 'Gender',
+                value: user.gender![0].toUpperCase() + user.gender!.substring(1),
+                fontSize: _detailFontSize,
               ),
+            AdminProfileStyleDetailRow(
+              label: 'Joined',
+              value: user.createdAt.toLocal().toString().substring(0, 19),
+              fontSize: _detailFontSize,
             ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-                child: AdminConsoleSurfaces.detailCard(
-                  child: Column(
-                  children: [
-                    _DetailRow(
-                      label: 'Name',
-                      value: user.fullName,
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Email',
-                      value: user.email,
-                      fontSize: _detailFontSize,
-                    ),
-                    if (user.username.isNotEmpty)
-                      _DetailRow(
-                        label: 'Username',
-                        value: user.username,
-                        fontSize: _detailFontSize,
-                      ),
-                    if (user.phoneNumber != null)
-                      _DetailRow(
-                        label: 'Phone',
-                        value: user.phoneNumber!,
-                        fontSize: _detailFontSize,
-                      ),
-                    if (user.gender != null)
-                      _DetailRow(
-                        label: 'Gender',
-                        value: user.gender![0].toUpperCase() + user.gender!.substring(1),
-                        fontSize: _detailFontSize,
-                      ),
-                    _DetailRow(
-                      label: 'Joined',
-                      value: user.createdAt.toLocal().toString().substring(0, 19),
-                      fontSize: _detailFontSize,
-                    ),
-                    _DetailRow(
-                      label: 'Last Login',
-                      value: user.lastLoginAt.toLocal().toString().substring(0, 19),
-                      fontSize: _detailFontSize,
-                    ),
-                    if (user.preferredStyle.isNotEmpty)
-                      _DetailRow(
-                        label: 'Preferred Style',
-                        value: user.preferredStyle,
-                        fontSize: _detailFontSize,
-                      ),
-                    if (user.minBudget > 0 || user.maxBudget > 0)
-                      _DetailRow(
-                        label: 'Budget Range',
-                        value: '₱${user.minBudget.toStringAsFixed(0)} - ₱${user.maxBudget.toStringAsFixed(0)}',
-                        fontSize: _detailFontSize,
-                      ),
-                    FutureBuilder<List<AddressEntry>>(
-                      future: MySQLDatabaseService().getAddresses(user.id),
-                      builder: (context, snapshot) {
-                        final addressValue = snapshot.hasData
-                            ? _formatDefaultAddress(snapshot.data!)
-                            : 'Loading...';
-                        return _DetailRow(
-                          label: 'Address',
-                          value: addressValue,
-                          fontSize: _detailFontSize,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                ),
+            AdminProfileStyleDetailRow(
+              label: 'Last Login',
+              value: user.lastLoginAt.toLocal().toString().substring(0, 19),
+              fontSize: _detailFontSize,
+            ),
+            if (user.preferredStyle.isNotEmpty)
+              AdminProfileStyleDetailRow(label: 'Preferred Style', value: user.preferredStyle, fontSize: _detailFontSize),
+            if (user.minBudget > 0 || user.maxBudget > 0)
+              AdminProfileStyleDetailRow(
+                label: 'Budget Range',
+                value: '₱${user.minBudget.toStringAsFixed(0)} - ₱${user.maxBudget.toStringAsFixed(0)}',
+                fontSize: _detailFontSize,
               ),
+            FutureBuilder<List<AddressEntry>>(
+              future: MySQLDatabaseService().getAddresses(user.id),
+              builder: (context, snapshot) {
+                final addressValue =
+                    snapshot.hasData ? _formatDefaultAddress(snapshot.data!) : 'Loading...';
+                return AdminProfileStyleDetailRow(
+                  label: 'Address',
+                  value: addressValue,
+                  fontSize: _detailFontSize,
+                  showDivider: false,
+                );
+              },
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.label,
-    required this.value,
-    this.fontSize = 16,
-  });
-
-  final String label;
-  final String value;
-  final double fontSize;
-
-  @override
-  Widget build(BuildContext context) {
-    if (value.trim().isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              color: Colors.black54,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              decoration: TextDecoration.none,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value.trim(),
-            style: GoogleFonts.poppins(
-              color: const Color(0xFF1A1A1A),
-              fontSize: fontSize,
-              fontWeight: FontWeight.w600,
-              decoration: TextDecoration.none,
-            ),
-          ),
-        ],
       ),
     );
   }

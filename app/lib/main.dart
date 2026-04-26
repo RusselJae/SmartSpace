@@ -394,21 +394,39 @@ class _AppInitializerState extends State<_AppInitializer> {
         AuthService().initializeSession(),
         MySQLDatabaseService().initialize(),
       ]);
-      await PushNotificationsService.instance.initialize();
-      onboardingDone = await OnboardingStorage.isComplete();
+    } catch (e) {
+      developer.log('⚠️ Core bootstrap initialization failed: $e');
+    }
 
-      // Only block the cold splash for downloads when we are headed straight home.
-      if (onboardingDone) {
-        final prefetchSw = Stopwatch()..start();
-        try {
-          await CatalogModelPrefetch.warmCacheForStorefront()
-              .timeout(const Duration(seconds: 90));
-        } catch (e) {
-          developer.log('⚠️ Model cache warm-up timed out or failed: $e');
-        }
-        prefetchSw.stop();
-        prefetchWasQuick = prefetchSw.elapsedMilliseconds < 500;
+    // Read onboarding completion independently so optional startup failures
+    // (push, prefetch, legal fetch) do not force returning users through onboarding again.
+    try {
+      onboardingDone = await OnboardingStorage.isComplete();
+    } catch (e) {
+      developer.log('⚠️ Could not read onboarding state: $e');
+      onboardingDone = false;
+    }
+
+    try {
+      await PushNotificationsService.instance.initialize();
+    } catch (e) {
+      developer.log('⚠️ Push notifications bootstrap failed: $e');
+    }
+
+    // Only block the cold splash for downloads when we are headed straight home.
+    if (onboardingDone) {
+      final prefetchSw = Stopwatch()..start();
+      try {
+        await CatalogModelPrefetch.warmCacheForStorefront()
+            .timeout(const Duration(seconds: 90));
+      } catch (e) {
+        developer.log('⚠️ Model cache warm-up timed out or failed: $e');
       }
+      prefetchSw.stop();
+      prefetchWasQuick = prefetchSw.elapsedMilliseconds < 500;
+    }
+
+    try {
       final auth = AuthService();
       final user = auth.currentUser;
       if (onboardingDone && user != null) {
@@ -418,8 +436,7 @@ class _AppInitializerState extends State<_AppInitializer> {
         _mustAcceptLatestTerms = accepted < _latestTermsVersion;
       }
     } catch (e) {
-      developer.log('⚠️ Cold start bootstrap failed: $e');
-      onboardingDone = false;
+      developer.log('⚠️ Terms acceptance check failed: $e');
     }
 
     // First install / slow network: allow a longer beat. Cache-hot reopen: trim it.

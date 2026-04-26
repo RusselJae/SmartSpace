@@ -231,6 +231,21 @@ orderRouter.get(
 );
 
 orderRouter.get(
+  '/user/:userId',
+  asyncHandler(async (req, res) => {
+    const userId = String(req.params.userId ?? '').trim();
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'userId is required' });
+    }
+    const orders = await listOrders();
+    return res.json({
+      success: true,
+      data: orders.filter((o) => o.userId === userId),
+    });
+  }),
+);
+
+orderRouter.get(
   '/',
   (req, res, next) => {
     const userId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';

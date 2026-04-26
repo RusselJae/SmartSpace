@@ -48,6 +48,20 @@ export const sendPushToTokens = async (
       priority: 'high',
       notification: {
         channelId: 'smartspace_general',
+        priority: 'high',
+        defaultSound: true,
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+      },
+      payload: {
+        aps: {
+          sound: 'default',
+          badge: 1,
+        },
       },
     },
   });

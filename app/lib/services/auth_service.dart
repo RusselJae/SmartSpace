@@ -1,12 +1,15 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
 import '../models/user.dart';
 import 'cart_service.dart';
+import 'mysql_database_service.dart';
 
 /// Authentication service for user sign in and sign up
 class AuthService {
@@ -53,6 +56,25 @@ class AuthService {
     _currentUser = user;
     await _persistUser(user);
     await CartService().syncWithUser(_currentUser?.id);
+    await _registerDeviceTokenIfPossible(user);
+  }
+
+  Future<void> _registerDeviceTokenIfPossible(User user) async {
+    // Web push registration flow is different; keep mobile registration simple.
+    if (kIsWeb) return;
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token == null || token.trim().isEmpty) return;
+      final db = MySQLDatabaseService();
+      await db.initialize();
+      await db.registerUserDeviceToken(
+        userId: user.id,
+        token: token,
+        platform: defaultTargetPlatform == TargetPlatform.android ? 'android' : 'ios',
+      );
+    } catch (e) {
+      developer.log('⚠️ Device-token registration skipped: $e');
+    }
   }
 
   /// Sign up a new user
@@ -103,6 +125,7 @@ class AuthService {
             _currentUser = User.fromJson(userData);
             await _persistUser(_currentUser!);
             await CartService().syncWithUser(_currentUser?.id);
+            await _registerDeviceTokenIfPossible(_currentUser!);
             developer.log('✅ User signed up successfully: ${_currentUser?.email}');
             return _currentUser!;
           } catch (parseError) {
@@ -173,6 +196,7 @@ class AuthService {
           _currentUser = user;
           await _persistUser(user);
           await CartService().syncWithUser(_currentUser?.id);
+          await _registerDeviceTokenIfPossible(user);
           developer.log('✅ User signed in successfully: ${_currentUser?.email}');
           return _currentUser!;
         }

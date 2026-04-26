@@ -846,7 +846,7 @@ class MySQLDatabaseService {
     }
     developer.log('📡 Fetching orders from API...');
     final path = forUserId != null && forUserId.trim().isNotEmpty
-        ? '/orders?userId=${Uri.encodeComponent(forUserId.trim())}'
+        ? '/orders/user/${Uri.encodeComponent(forUserId.trim())}'
         : '/orders';
     final data = await _sendRequest(method: 'GET', path: path);
     final list = _asMapList(data, 'orders');

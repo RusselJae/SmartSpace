@@ -64,6 +64,7 @@ class _ProfileTabState extends State<ProfileTab> {
     // Reload user from server to get latest avatar
     try {
       final serverUser = await MySQLDatabaseService().getUserById(user.id) ?? user;
+      await _auth.updateCurrentUser(serverUser);
       
       final extras = await _storage.loadExtras(serverUser);
       _avatarPath = extras.avatarPath;

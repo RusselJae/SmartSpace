@@ -24,8 +24,20 @@ class ApiConfig {
         if (webUrl != null && webUrl.isNotEmpty) {
           return _normalizedBaseUrl(webUrl);
         }
-        // Hard fallback when index.html has no flutterConfig (production web = Railway).
-        return 'https://smartspace-production.up.railway.app/api';
+        // IMPORTANT:
+        // We intentionally do NOT hardcode a production host here.
+        //
+        // When Flutter Web is served with an older/cached `index.html` (service worker,
+        // CDN cache, hard refresh timing), `window.flutterConfig` can be missing briefly.
+        // A hardcoded production fallback would silently send requests to a stale domain,
+        // which is exactly the kind of "why is it still calling the old URL?" bug.
+        //
+        // If `flutterConfig` is missing, fall back to the same behavior as non-web:
+        // try `.env` (if your build/runtime provides it), then default to localhost.
+        developer.log(
+          '⚠️  WebConfig missing (window.flutterConfig.apiBaseUrl not found). '
+          'Falling back to API_BASE_URL / localhost defaults.',
+        );
     }
     
     // Try .env file (works for mobile/desktop, and web if .env is in assets)

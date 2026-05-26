@@ -86,6 +86,7 @@ class _AdminShellState extends State<AdminShell> {
   final AdminNotificationsService _notifications =
       AdminNotificationsService.instance;
   final GlobalKey _notificationsAnchorKey = GlobalKey();
+  bool _isNotificationsPanelOpen = false;
 
   int _indexForLabel(String label) {
     final i = _visibleDestinations.indexWhere((d) => d.label == label);
@@ -102,10 +103,13 @@ class _AdminShellState extends State<AdminShell> {
     await _notifications.markLowStockSeen();
     await _notifications.markCancelledOrdersSeen();
     if (!mounted) return;
-    _showNotificationsFloatingPanel(context);
+    setState(() => _isNotificationsPanelOpen = true);
+    await _showNotificationsFloatingPanel(context);
+    if (!mounted) return;
+    setState(() => _isNotificationsPanelOpen = false);
   }
 
-  void _showNotificationsFloatingPanel(BuildContext context) {
+  Future<void> _showNotificationsFloatingPanel(BuildContext context) {
     final box =
         _notificationsAnchorKey.currentContext?.findRenderObject()
             as RenderBox?;
@@ -135,7 +139,7 @@ class _AdminShellState extends State<AdminShell> {
     // Use a standard dialog shell with explicit outside-tap dismiss handling.
     // This avoids edge cases where general dialog barriers can immediately consume
     // the same pointer event used to open the panel on web.
-    showDialog<void>(
+    return showDialog<void>(
       context: context,
       useRootNavigator: true,
       barrierDismissible: false,
@@ -450,6 +454,8 @@ class _AdminShellState extends State<AdminShell> {
                       onOpenProfile: () => _showProfileModal(context),
                       onOpenNotifications: _openNotificationsFromHeader,
                       notificationsAnchorKey: _notificationsAnchorKey,
+                      supportActive: _visibleDestinations[_index].label == 'Support',
+                      notificationsActive: _isNotificationsPanelOpen,
                     ),
                     // Instant panel swap — no cross-fade / slide from AnimatedSwitcher.
                     Expanded(
@@ -485,6 +491,8 @@ class _AdminShellState extends State<AdminShell> {
               onOpenProfile: () => _showProfileModal(context),
               onOpenNotifications: _openNotificationsFromHeader,
               notificationsAnchorKey: _notificationsAnchorKey,
+              supportActive: _visibleDestinations[_index].label == 'Support',
+              notificationsActive: _isNotificationsPanelOpen,
             ),
             Expanded(
               child: _AdminContentWrapper(key: ValueKey(_index), child: page),
@@ -698,6 +706,8 @@ class _AdminHeader extends StatefulWidget {
     required this.onOpenProfile,
     required this.onOpenSettings,
     required this.notificationsAnchorKey,
+    required this.supportActive,
+    required this.notificationsActive,
   });
 
   final String title;
@@ -710,6 +720,8 @@ class _AdminHeader extends StatefulWidget {
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenSettings;
   final GlobalKey notificationsAnchorKey;
+  final bool supportActive;
+  final bool notificationsActive;
 
   @override
   State<_AdminHeader> createState() => _AdminHeaderState();
@@ -815,7 +827,11 @@ class _AdminHeaderState extends State<_AdminHeader> {
                     icon: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        const Icon(Icons.forum_outlined, size: 24),
+                        Icon(
+                          Icons.forum_outlined,
+                          size: 24,
+                          color: widget.supportActive ? Colors.white : null,
+                        ),
                         if (supportUnread > 0)
                           Positioned(
                             right: -4,
@@ -848,6 +864,9 @@ class _AdminHeaderState extends State<_AdminHeader> {
                           ),
                       ],
                     ),
+                    style: IconButton.styleFrom(
+                      backgroundColor: widget.supportActive ? const Color(0xFF111827) : null,
+                    ),
                   );
                 },
               ),
@@ -862,7 +881,11 @@ class _AdminHeaderState extends State<_AdminHeader> {
                     icon: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        const Icon(Icons.notifications_outlined, size: 24),
+                        Icon(
+                          Icons.notifications_outlined,
+                          size: 24,
+                          color: widget.notificationsActive ? Colors.white : null,
+                        ),
                         if (count > 0)
                           Positioned(
                             right: -2,
@@ -892,6 +915,10 @@ class _AdminHeaderState extends State<_AdminHeader> {
                     ),
                     onPressed: widget.onOpenNotifications,
                     tooltip: 'Notifications',
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          widget.notificationsActive ? const Color(0xFF111827) : null,
+                    ),
                   );
                 },
               ),

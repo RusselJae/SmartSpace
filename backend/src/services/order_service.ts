@@ -30,6 +30,8 @@ type OrderRow = RowDataPacket & {
   readonly order_option?: string | null;
   readonly payment_status: string;
   readonly payment_proof_url: string | null;
+  /** Last processed PayMongo webhook event id for explicit idempotency. */
+  readonly last_paymongo_event_id?: string | null;
   readonly valid_id_proof_url?: string | null;
   readonly cancellation_reason?: string | null;
   readonly payment_default_cancelled_at?: Date | string | null;
@@ -385,6 +387,28 @@ const restoreInventoryForOrder = async (executor: Pool | Connection, orderId: st
 const approxEqualPesos = (a: number, b: number): boolean => Math.abs(a - b) < 1.0;
 
 /**
+ * Ensures the orders table has a dedicated idempotency column for PayMongo webhooks.
+ * This keeps duplicate-event protection independent from invoice tables.
+ */
+const ensureLastPaymongoEventIdColumn = async (pool: Pool): Promise<boolean> => {
+  try {
+    await pool.query(
+      `ALTER TABLE orders
+       ADD COLUMN last_paymongo_event_id VARCHAR(191) NULL DEFAULT NULL
+       COMMENT 'Last processed PayMongo webhook event id' AFTER payment_proof_url`,
+    );
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('Duplicate column') || msg.toLowerCase().includes('duplicate column name')) {
+      return true;
+    }
+    console.warn('ensureLastPaymongoEventIdColumn:', msg);
+    return false;
+  }
+};
+
+/**
  * First PayMongo tranche succeeded: mark down payment received and anchor `first_installment_paid_at`
  * (3-month policy window). Tolerates missing ENUM value or missing migration column.
  */
@@ -469,14 +493,49 @@ export const markOrderPaidViaPaymongo = async (
   const plan = row.payment_plan ?? null;
   const paidAmount = options?.amountPesos ?? null;
   const eventId = options?.eventId ?? null;
+  const normalizedEventId = eventId != null ? eventId.trim() : '';
   const isDownPlan = plan === 'downpayment';
 
-  // Idempotency guard: if we already processed this exact webhook event for a PayMongo order,
-  // don't subtract remaining again.
-  if (eventId != null && row.payment_proof_url === eventId) {
-    console.log(`PayMongo webhook: duplicate event ${eventId} for order ${orderId} — ignored`);
+  const hasEventId = normalizedEventId.length > 0;
+  const hasWebhookIdColumn = hasEventId
+    ? await ensureLastPaymongoEventIdColumn(pool)
+    : false;
+
+  // Idempotency guard (primary): explicit webhook ID column on orders.
+  if (hasEventId && hasWebhookIdColumn && row.last_paymongo_event_id === normalizedEventId) {
+    console.log(`PayMongo webhook: duplicate event ${normalizedEventId} for order ${orderId} — ignored`);
     return;
   }
+
+  // Idempotency guard (fallback): invoice event ledger for older DBs.
+  if (hasEventId && !hasWebhookIdColumn) {
+    try {
+      await ensureInvoiceTables();
+      const [dupRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM order_payment_events
+         WHERE order_id = ? AND paymongo_event_id = ?
+         LIMIT 1`,
+        [orderId, normalizedEventId],
+      );
+      if (dupRows.length > 0) {
+        console.log(`PayMongo webhook: duplicate event ${normalizedEventId} for order ${orderId} — ignored`);
+        return;
+      }
+    } catch (e) {
+      // Keep webhook processing resilient when invoice tables are not present.
+      console.warn(`PayMongo webhook idempotency check skipped for ${orderId}:`, e);
+    }
+  }
+
+  const persistWebhookEventId = async (): Promise<void> => {
+    if (!hasEventId || !hasWebhookIdColumn) return;
+    await pool.query(
+      `UPDATE orders
+       SET last_paymongo_event_id = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [normalizedEventId, orderId],
+    );
+  };
 
   const looksLikeInstallmentStructure = rem > 0.01 && dp < orderTotal - 0.01;
 
@@ -488,23 +547,12 @@ export const markOrderPaidViaPaymongo = async (
   if (treatAsSingleFullPayment) {
     await pool.query(
       `UPDATE orders
-       SET status = 'confirmed',
-           payment_status = 'completed',
+       SET payment_status = 'completed',
            remaining_balance = 0,
            updated_at = NOW()
        WHERE id = ?`,
       [orderId],
     );
-    if (eventId != null) {
-      try {
-        await pool.query(`UPDATE orders SET payment_proof_url = ?, updated_at = NOW() WHERE id = ?`, [
-          eventId,
-          orderId,
-        ]);
-      } catch {
-        // Ignore idempotency storage failures; payment update is already done.
-      }
-    }
     // Lay-away / one-shot full pay: ETA starts at full settlement (Hulugan one-shot included).
     await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
     await notifyAdminsOrderFullyPaid({
@@ -512,6 +560,7 @@ export const markOrderPaidViaPaymongo = async (
       paidAmount: paidAmount ?? orderTotal,
       previousRemaining: rem,
     });
+    await persistWebhookEventId();
     console.log(`✅ PayMongo full payment recorded for order ${orderId}`);
 
     // Invoice updates only apply to PayMongo downpayment plans.
@@ -532,11 +581,6 @@ export const markOrderPaidViaPaymongo = async (
       await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
     }
 
-    if (previousStatus !== 'confirmed') {
-      EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
-        console.error('Failed to send order confirmation email (PayMongo):', error);
-      });
-    }
     return;
   }
 
@@ -548,17 +592,7 @@ export const markOrderPaidViaPaymongo = async (
       if (normalizeOrderOption(row.order_option) === 'hulugan') {
         await trySetHuluganEstimatedDeliveryAfterDownPayment(pool, orderId);
       }
-      // Store webhook event id for idempotency (prevents duplicate first-tranche webhooks).
-      if (eventId != null) {
-        try {
-          await pool.query(`UPDATE orders SET payment_proof_url = ?, updated_at = NOW() WHERE id = ?`, [
-            eventId,
-            orderId,
-          ]);
-        } catch {
-          // ignore
-        }
-      }
+      await persistWebhookEventId();
       console.log(`✅ PayMongo down payment recorded for order ${orderId} (balance still due)`);
 
       if (isDownPlan) {
@@ -592,16 +626,7 @@ export const markOrderPaidViaPaymongo = async (
       paidAmount <= rem + 0.01
     ) {
       const persistEventId = async (): Promise<void> => {
-        if (eventId != null) {
-          try {
-            await pool.query(`UPDATE orders SET payment_proof_url = ?, updated_at = NOW() WHERE id = ?`, [
-              eventId,
-              orderId,
-            ]);
-          } catch {
-            // ignore
-          }
-        }
+        // Event IDs are tracked in `order_payment_events.paymongo_event_id`.
       };
 
       // Paying essentially all of `remaining_balance` while the row still says `pending`:
@@ -609,8 +634,7 @@ export const markOrderPaidViaPaymongo = async (
       if (approxEqualPesos(paidAmount, rem)) {
         await pool.query(
           `UPDATE orders
-           SET status = 'confirmed',
-               payment_status = 'completed',
+           SET payment_status = 'completed',
                remaining_balance = 0,
                updated_at = NOW()
            WHERE id = ?`,
@@ -623,6 +647,7 @@ export const markOrderPaidViaPaymongo = async (
           paidAmount,
           previousRemaining: rem,
         });
+        await persistWebhookEventId();
         console.log(`✅ PayMongo balance settled for order ${orderId} (pending row matched remaining)`);
 
         if (isDownPlan) {
@@ -641,11 +666,6 @@ export const markOrderPaidViaPaymongo = async (
           await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
         }
 
-        if (previousStatus !== 'confirmed') {
-          EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
-            console.error('Failed to send order confirmation email (PayMongo balance):', error);
-          });
-        }
         return;
       }
 
@@ -667,6 +687,7 @@ export const markOrderPaidViaPaymongo = async (
         await trySetHuluganEstimatedDeliveryAfterDownPayment(pool, orderId);
       }
       await persistEventId();
+      await persistWebhookEventId();
       console.log(
         `✅ PayMongo pending plan payment for ${orderId}: paid=${paidAmount}, newRemaining=${newRemaining}`,
       );
@@ -674,8 +695,7 @@ export const markOrderPaidViaPaymongo = async (
       if (newRemaining <= 0.01) {
         await pool.query(
           `UPDATE orders
-           SET status = 'confirmed',
-               payment_status = 'completed',
+           SET payment_status = 'completed',
                remaining_balance = 0,
                updated_at = NOW()
            WHERE id = ?`,
@@ -687,6 +707,7 @@ export const markOrderPaidViaPaymongo = async (
           paidAmount,
           previousRemaining: rem,
         });
+        await persistWebhookEventId();
         console.log(`✅ PayMongo balance settled for order ${orderId} (pending single-shot overpay)`);
       }
 
@@ -706,34 +727,18 @@ export const markOrderPaidViaPaymongo = async (
         await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
       }
 
-      if (newRemaining <= 0.01 && previousStatus !== 'confirmed') {
-        EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
-          console.error('Failed to send order confirmation email (PayMongo balance):', error);
-        });
-      }
       return;
     }
 
     if (row.payment_status === 'downpayment_received' && approxEqualPesos(paidAmount, rem)) {
       await pool.query(
         `UPDATE orders
-         SET status = 'confirmed',
-             payment_status = 'completed',
+         SET payment_status = 'completed',
              remaining_balance = 0,
              updated_at = NOW()
          WHERE id = ?`,
         [orderId],
       );
-      if (eventId != null) {
-        try {
-          await pool.query(`UPDATE orders SET payment_proof_url = ?, updated_at = NOW() WHERE id = ?`, [
-            eventId,
-            orderId,
-          ]);
-        } catch {
-          // ignore
-        }
-      }
       // Lay-away second tranche (or non-hulugan): ETA from final payment; hulugan keeps DP-based ETA.
       await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
       await notifyAdminsOrderFullyPaid({
@@ -741,6 +746,7 @@ export const markOrderPaidViaPaymongo = async (
         paidAmount,
         previousRemaining: rem,
       });
+      await persistWebhookEventId();
       console.log(`✅ PayMongo balance settled for order ${orderId}`);
 
       if (isDownPlan) {
@@ -759,11 +765,6 @@ export const markOrderPaidViaPaymongo = async (
         await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
       }
 
-      if (previousStatus !== 'confirmed') {
-        EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
-          console.error('Failed to send order confirmation email (PayMongo balance):', error);
-        });
-      }
       return;
     }
 
@@ -784,24 +785,12 @@ export const markOrderPaidViaPaymongo = async (
         [newRemaining, orderId],
       );
 
-      if (eventId != null) {
-        try {
-          await pool.query(`UPDATE orders SET payment_proof_url = ?, updated_at = NOW() WHERE id = ?`, [
-            eventId,
-            orderId,
-          ]);
-        } catch {
-          // ignore
-        }
-      }
-
       // If this partial payment actually completes the balance (due to rounding),
       // settle as completed.
       if (newRemaining <= 0.01) {
         await pool.query(
           `UPDATE orders
-           SET status = 'confirmed',
-               payment_status = 'completed',
+           SET payment_status = 'completed',
                remaining_balance = 0,
                updated_at = NOW()
            WHERE id = ?`,
@@ -813,6 +802,7 @@ export const markOrderPaidViaPaymongo = async (
           paidAmount,
           previousRemaining: rem,
         });
+        await persistWebhookEventId();
         console.log(`✅ PayMongo balance settled for order ${orderId} (rounding during partial)`);
       }
 
@@ -843,8 +833,7 @@ export const markOrderPaidViaPaymongo = async (
     if (row.payment_status === 'pending' && approxEqualPesos(paidAmount, orderTotal)) {
       await pool.query(
         `UPDATE orders
-         SET status = 'confirmed',
-             payment_status = 'completed',
+         SET payment_status = 'completed',
              remaining_balance = 0,
              updated_at = NOW()
          WHERE id = ?`,
@@ -856,12 +845,8 @@ export const markOrderPaidViaPaymongo = async (
         paidAmount,
         previousRemaining: rem,
       });
+      await persistWebhookEventId();
       console.log(`✅ PayMongo full payment (amount matched total) for order ${orderId}`);
-      if (previousStatus !== 'confirmed') {
-        EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
-          console.error('Failed to send order confirmation email (PayMongo):', error);
-        });
-      }
       return;
     }
 
@@ -878,6 +863,7 @@ export const markOrderPaidViaPaymongo = async (
     if (normalizeOrderOption(row.order_option) === 'hulugan') {
       await trySetHuluganEstimatedDeliveryAfterDownPayment(pool, orderId);
     }
+    await persistWebhookEventId();
     console.log(`✅ PayMongo down payment recorded for order ${orderId} (no amount in webhook — fallback)`);
     return;
   }
@@ -891,8 +877,7 @@ export const markOrderPaidViaPaymongo = async (
 
   await pool.query(
     `UPDATE orders
-     SET status = 'confirmed',
-         payment_status = 'completed',
+     SET payment_status = 'completed',
          remaining_balance = 0,
          updated_at = NOW()
      WHERE id = ?`,
@@ -904,12 +889,8 @@ export const markOrderPaidViaPaymongo = async (
     paidAmount: paidAmount ?? orderTotal,
     previousRemaining: rem,
   });
+  await persistWebhookEventId();
   console.log(`✅ PayMongo full payment recorded for order ${orderId} (fallback tail)`);
-  if (previousStatus !== 'confirmed') {
-    EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
-      console.error('Failed to send order confirmation email (PayMongo):', error);
-    });
-  }
 };
 
 /**
@@ -1508,12 +1489,12 @@ export const confirmPayment = async (
   const paymentMethod = order.payment_method;
   const userId = order.user_id;
   const orderTotal = Number(order.total_amount);
+  const existingStatus = String(order.status ?? 'pending');
   
   // Determine payment status based on payment method
   // COD: downpayment_paid (20% paid, 80% remaining)
   // GCash: completed (full payment)
   const paymentStatus = paymentMethod === 'cod' ? 'downpayment_paid' : 'completed';
-  const orderStatus = paymentMethod === 'cod' ? 'pending' : 'confirmed';
   
   // Update order payment status
   await pool.query(
@@ -1522,7 +1503,7 @@ export const confirmPayment = async (
          status = ?,
          updated_at = NOW()
      WHERE id = ?`,
-    [paymentStatus, orderStatus, orderId],
+    [paymentStatus, existingStatus, orderId],
   );
   
   console.log(`✅ Payment confirmed by admin ${adminId} for order ${orderId}`);

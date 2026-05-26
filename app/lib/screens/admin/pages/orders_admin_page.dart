@@ -2187,6 +2187,19 @@ String _absoluteMediaUrl(String raw) {
   return '$baseUrl/$trimmed';
 }
 
+/// True when the value looks like a resolvable image URL/path.
+/// This guards against legacy values (e.g. webhook event IDs) being treated as screenshot URLs.
+bool _isLikelyImageUrl(String raw) {
+  final candidate = raw.trim();
+  if (candidate.isEmpty) return false;
+  if (candidate.startsWith('evt_')) return false;
+  if (candidate.length < 8) return false;
+  return candidate.contains('/') ||
+      candidate.startsWith('http://') ||
+      candidate.startsWith('https://') ||
+      candidate.startsWith('/uploads/');
+}
+
 /// Pretty-print API ISO date for admin detail rows.
 String _formatAdminDeliveryDate(String iso) {
   try {
@@ -2689,9 +2702,14 @@ class _OrderDetailsDialog extends StatelessWidget {
 
                     // Payment Proof Section
                     // Check for payment proof URL in order field first, then fall back to shippingAddress
-                    if (order.paymentProofUrl != null ||
-                        order.shippingAddress['paymentProofUrl'] != null ||
-                        order.shippingAddress['paymentProof'] != null)
+                    if (() {
+                      final rawProofUrl = (order.paymentProofUrl ??
+                              order.shippingAddress['paymentProofUrl'] as String? ??
+                              order.shippingAddress['paymentProof'] as String? ??
+                              '')
+                          .trim();
+                      return _isLikelyImageUrl(rawProofUrl);
+                    }())
                       ...[
                         const SizedBox(height: 12),
                         Text(
@@ -2721,7 +2739,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                                       order.shippingAddress['paymentProofUrl'] as String? ??
                                       order.shippingAddress['paymentProof'] as String?;
                                   
-                                  if (proofUrl == null || proofUrl.isEmpty) {
+                                  if (proofUrl == null || proofUrl.isEmpty || !_isLikelyImageUrl(proofUrl)) {
                                     return Text(
                                       'No payment proof available',
                                       style: GoogleFonts.poppins(
@@ -2732,19 +2750,7 @@ class _OrderDetailsDialog extends StatelessWidget {
                                     );
                                   }
                                   
-                                  // Convert relative URL to absolute if needed
-                                  String finalImageUrl = proofUrl;
-                                  
-                                  // If URL is relative (starts with /), construct full URL
-                                  if (finalImageUrl.startsWith('/')) {
-                                    // Remove /api from base URL if present, then append the image path
-                                    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
-                                    finalImageUrl = '$baseUrl$finalImageUrl';
-                                  } else if (!finalImageUrl.startsWith('http')) {
-                                    // If it's a relative path without leading slash, prepend base URL
-                                    final baseUrl = ApiConfig.baseUrl.replaceAll('/api', '');
-                                    finalImageUrl = '$baseUrl/$finalImageUrl';
-                                  }
+                                  final finalImageUrl = _absoluteMediaUrl(proofUrl);
                                   
                                   return Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,

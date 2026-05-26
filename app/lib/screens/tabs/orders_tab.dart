@@ -225,24 +225,17 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
           return true;
           
         case 'to_ship':
-          // Confirmed orders that are ready to ship (not yet shipped)
-          if (status == 'cancelled') return false;
-          if (status == 'confirmed' && 
-              (paymentStatus == 'completed' || paymentStatus == 'downpayment_received')) {
-            return true;
-          }
-          return false;
+          // Only admin can move orders into fulfillment stages.
+          // "To Ship" is strictly admin-confirmed but not yet shipped.
+          return status == 'confirmed';
           
         case 'to_deliver':
           // Shipped orders awaiting delivery
           return status == 'shipped';
           
         case 'confirm':
-          // Confirmed orders (general confirmed status)
-          if (status == 'cancelled') return false;
-          return status == 'confirmed' || 
-                 paymentStatus == 'completed' || 
-                 paymentStatus == 'downpayment_received';
+          // Confirmed orders only (admin-controlled fulfillment state).
+          return status == 'confirmed';
           
         case 'cancelled':
           return status == 'cancelled';
@@ -1124,10 +1117,9 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       } else if (status == 'shipped') {
         displayCategory = 'Delivered';
         categoryColor = _getFilterColor('to_deliver');
-      } else if (status == 'confirmed' && 
-                 (paymentStatus == 'completed' || paymentStatus == 'downpayment_received')) {
-        displayCategory = 'Shipped';
-        categoryColor = _getFilterColor('to_ship');
+      } else if (status == 'confirmed') {
+        displayCategory = 'Confirmed';
+        categoryColor = _getFilterColor('confirm');
       } else if (status == 'pending' || status == 'pending_payment_verification') {
         displayCategory = 'Pay';
         categoryColor = _getFilterColor('to_pay');

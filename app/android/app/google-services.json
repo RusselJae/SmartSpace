@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "808088680792",
+    "project_id": "smartspace-9344f",
+    "storage_bucket": "smartspace-9344f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:808088680792:android:0f7ec0b52840ccd2514d2d",
+        "android_client_info": {
+          "package_name": "com.example.smartspace_ar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDBFRllBlnIL9bQmmv0Fd77nEzOuLOAzAo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

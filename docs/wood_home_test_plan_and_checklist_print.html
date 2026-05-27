@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wood Home Furniture — Test plan, test cases &amp; unit testing</title>
+  <style>
+    /* ------------------------------------------------------------------
+       PDF / print styling (Chrome/Edge: Print → Save as PDF)
+       - Cover + checklist: A4 portrait
+       - Table 2 (test cases): A4 landscape (named page "testplan")
+       - Table 1 (master plan) & Table 3 (unit): portrait
+       ------------------------------------------------------------------ */
+    :root {
+      --ink: #1a1512;
+      --muted: #5c534c;
+      --rule: #c4bbb2;
+      --accent: #5c4033;
+      --table-head: #ede6df;
+      --body-size: 10.5pt;
+      --table-size: 7pt;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: var(--body-size);
+      line-height: 1.45;
+      color: var(--ink);
+      background: #d8d2cb;
+    }
+
+    @page {
+      size: A4;
+      margin: 16mm 14mm 18mm 14mm;
+    }
+
+    @page :first {
+      margin-top: 14mm;
+    }
+
+    @page testplan {
+      size: A4 landscape;
+      margin: 10mm 12mm 12mm 12mm;
+    }
+
+    @page unittest {
+      size: A4 landscape;
+      margin: 10mm 12mm 12mm 12mm;
+    }
+
+    .sheet {
+      max-width: 210mm;
+      margin: 0 auto 24px;
+      padding: 20mm 18mm;
+      background: #fff;
+      min-height: 297mm;
+    }
+
+    @media screen {
+      body { padding: 24px 12px 48px; }
+      .sheet {
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+        border-radius: 2px;
+      }
+      .print-hint {
+        max-width: 210mm;
+        margin: 0 auto 16px;
+        padding: 12px 16px;
+        background: #fff9f0;
+        border: 1px solid #e0c9a8;
+        border-radius: 6px;
+        font-size: 10pt;
+      }
+      .print-hint code { font-size: 9.5pt; }
+    }
+
+    @media print {
+      body { background: #fff; padding: 0; }
+      .sheet {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+        min-height: 0;
+      }
+      .no-print { display: none !important; }
+      a { color: inherit; text-decoration: none; }
+    }
+
+    /* ----- Cover ----- */
+    .cover {
+      text-align: center;
+      padding: 8mm 6mm 12mm;
+      page-break-after: always;
+      border-bottom: 3px solid var(--accent);
+    }
+
+    .cover .kicker {
+      font-size: 9pt;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8mm;
+    }
+
+    .cover h1 {
+      font-size: 22pt;
+      font-weight: 700;
+      margin: 0 0 4mm;
+      line-height: 1.2;
+      color: var(--accent);
+    }
+
+    .cover .subtitle {
+      font-size: 12pt;
+      color: var(--muted);
+      margin-bottom: 14mm;
+    }
+
+    .meta-grid {
+      display: table;
+      width: 70%;
+      margin: 0 auto;
+      border-collapse: collapse;
+      font-size: 10pt;
+      text-align: left;
+    }
+
+    .meta-grid tr { border-bottom: 1px solid var(--rule); }
+    .meta-grid th,
+    .meta-grid td {
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+
+    .meta-grid th {
+      width: 32%;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    /* ----- Headings & body ----- */
+    h2 {
+      font-size: 14pt;
+      margin: 10mm 0 5mm;
+      padding-bottom: 3px;
+      border-bottom: 2px solid var(--accent);
+      color: var(--accent);
+      page-break-after: avoid;
+    }
+
+    h3 {
+      font-size: 11.5pt;
+      margin: 7mm 0 3mm;
+      color: var(--ink);
+      page-break-after: avoid;
+    }
+
+    p.instructions {
+      margin: 0 0 5mm;
+      padding: 10px 12px;
+      background: #f7f4f0;
+      border-left: 4px solid var(--accent);
+      font-size: 9.5pt;
+    }
+
+    .muted {
+      font-size: 9pt;
+      color: var(--muted);
+      font-style: italic;
+      margin: 0 0 4mm;
+    }
+
+    /* ----- Table 1 — Master test plan (portrait) ----- */
+    #part-table1 {
+      page: auto;
+      page-break-before: always;
+    }
+
+    table.master {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8pt;
+      table-layout: fixed;
+      margin-bottom: 6mm;
+    }
+
+    table.master th,
+    table.master td {
+      border: 1px solid var(--rule);
+      padding: 5px 6px;
+      vertical-align: top;
+      word-wrap: break-word;
+    }
+
+    table.master th {
+      background: var(--table-head);
+      color: var(--accent);
+      font-weight: 600;
+      text-align: left;
+    }
+
+    /* ----- Table 2 — Test cases (landscape) ----- */
+    #part-table2 {
+      page: testplan;
+      page-break-before: always;
+    }
+
+    #part-table2 h2:first-of-type {
+      margin-top: 0;
+    }
+
+    /* ----- Table 3 — Unit testing (landscape) ----- */
+    #part-table3 {
+      page: unittest;
+      page-break-before: always;
+    }
+
+    table.unit {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 7.5pt;
+      table-layout: fixed;
+    }
+
+    table.unit th,
+    table.unit td {
+      border: 1px solid var(--rule);
+      padding: 4px 5px;
+      vertical-align: top;
+      word-wrap: break-word;
+    }
+
+    table.unit th {
+      background: var(--table-head);
+      color: var(--accent);
+      font-weight: 600;
+      text-align: left;
+    }
+
+    table.unit thead {
+      display: table-header-group;
+    }
+
+    .table-wrap {
+      overflow: visible;
+      margin-bottom: 5mm;
+    }
+
+    table.tp {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--table-size);
+      table-layout: fixed;
+    }
+
+    table.tp thead {
+      display: table-header-group;
+    }
+
+    table.tp th,
+    table.tp td {
+      border: 1px solid var(--rule);
+      padding: 4px 5px;
+      vertical-align: top;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      hyphens: auto;
+    }
+
+    table.tp th {
+      background: var(--table-head);
+      font-weight: 600;
+      text-align: left;
+      color: var(--accent);
+    }
+
+    table.tp tr {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    table.tp col.c-process { width: 8%; }
+    table.tp col.c-no { width: 4%; }
+    table.tp col.c-case { width: 10%; }
+    table.tp col.c-step { width: 3%; }
+    table.tp col.c-desc { width: 22%; }
+    table.tp col.c-status { width: 6%; }
+    table.tp col.c-exp { width: 20%; }
+    table.tp col.c-act { width: 14%; }
+    table.tp col.c-comment { width: 13%; }
+
+    /* ----- Appendix checklist (portrait) ----- */
+    #appendix-checklist {
+      page: auto;
+      page-break-before: always;
+    }
+
+    .sig-line {
+      margin: 6mm 0 8mm;
+      padding: 8px 0;
+      border: 1px dashed var(--rule);
+      font-size: 10pt;
+    }
+
+    ul.checklist {
+      margin: 0 0 6mm;
+      padding-left: 0;
+      list-style: none;
+    }
+
+    ul.checklist li {
+      position: relative;
+      padding: 6px 0 6px 28px;
+      border-bottom: 1px dotted #ddd;
+      font-size: 9.5pt;
+      break-inside: avoid;
+    }
+
+    ul.checklist li::before {
+      content: "☐";
+      position: absolute;
+      left: 0;
+      font-size: 14pt;
+      line-height: 1.2;
+      color: var(--accent);
+    }
+
+    .subhead {
+      font-size: 10pt;
+      font-weight: 700;
+      margin: 5mm 0 2mm;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* ----- Revision ----- */
+    table.rev {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9pt;
+      margin-top: 8mm;
+    }
+
+    table.rev th,
+    table.rev td {
+      border: 1px solid var(--rule);
+      padding: 6px 8px;
+      text-align: left;
+    }
+
+    table.rev th {
+      background: var(--table-head);
+      color: var(--accent);
+    }
+
+    .footer-note {
+      margin-top: 10mm;
+      font-size: 8pt;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="print-hint no-print">
+    <strong>Save as PDF:</strong> Use <kbd>Ctrl</kbd>+<kbd>P</kbd> (Windows) or <kbd>Cmd</kbd>+<kbd>P</kbd> (macOS) →
+    <strong>Destination: Save as PDF</strong> → enable <strong>Background graphics</strong> if you want shaded table headers.
+    <strong>Table 2</strong> (test cases) and <strong>Table 3</strong> (unit testing) use <strong>landscape</strong> where the browser supports named <code>@page</code> rules. <strong>Table 1</strong> (master plan) stays portrait.
+  </div>
+
+  <div class="sheet">
+
+    <header class="cover">
+      <div class="kicker">SmartSpace · Wood Home Furniture</div>
+      <h1>Test plan, test cases &amp; unit testing</h1>
+      <p class="subtitle">Three separate tables + Appendix A (system checklist)</p>
+      <table class="meta-grid" role="presentation">
+        <tbody>
+          <tr><th scope="row">Product</th><td>SmartSpace storefront &amp; admin console</td></tr>
+          <tr><th scope="row">Document</th><td>Table 1 Master plan · Table 2 Test cases · Table 3 Unit testing · Appendix A</td></tr>
+          <tr><th scope="row">Version</th><td>1.2</td></tr>
+          <tr><th scope="row">Date</th><td>2026-04-19</td></tr>
+        </tbody>
+      </table>
+    </header>
+
+    <p class="instructions">
+      <strong>Table 1 — Master test plan:</strong> scope, objectives, entry/exit criteria — update <strong>Status</strong> / <strong>Notes</strong> at plan level.<br />
+      <strong>Table 2 — Test cases:</strong> manual / E2E steps — set <strong>Status</strong> per row; fill <strong>Actual result</strong> and <strong>Comment</strong> when not passed.<br />
+      <strong>Table 3 — Unit testing:</strong> automated (or planned) checks against routes/services — record tool + status when suites exist.<br />
+      <strong>Appendix A:</strong> smoke checklist — mark when verified.
+    </p>
+
+    <section id="part-table1">
+      <h2>Table 1 — Master test plan</h2>
+      <p class="muted">Separate from Table 2 and Table 3. One row per module / cross-cut.</p>
+      <div class="table-wrap">
+        <table class="master" aria-label="Master test plan">
+          <thead>
+            <tr>
+              <th>Plan ID</th><th>Module</th><th>Objective</th><th>In-scope (summary)</th><th>Test levels</th>
+              <th>Entry criteria</th><th>Exit criteria</th><th>Owner</th><th>Status</th><th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>TP-01</td><td>Account management</td><td>Identity, auth, profiles, admin oversight</td><td>Registration through admin audit</td><td>Manual TC + API unit</td><td>Staging API + app; test accounts</td><td>All TC-A* signed; no P0</td><td></td><td></td><td></td></tr>
+            <tr><td>TP-02</td><td>Product catalog</td><td>Browse and administer catalog + assets</td><td>Catalog, wishlist; admin CRUD; 3D path</td><td>Manual TC + API unit</td><td>Product fixtures</td><td>All TC-B* signed; no P0</td><td></td><td></td><td></td></tr>
+            <tr><td>TP-03</td><td>Commerce</td><td>Cart → checkout → payment → orders</td><td>Cart, PayMongo, proofs, MTO; admin orders</td><td>Manual TC + API unit</td><td>Payment test keys if used</td><td>All TC-C* signed; no P0</td><td></td><td></td><td></td></tr>
+            <tr><td>TP-04</td><td>AR visualization</td><td>3D/AR and model readiness</td><td>AR launcher/view; admin model fields</td><td>Manual TC (devices)</td><td>At least one .glb product</td><td>All TC-D* signed</td><td></td><td></td><td></td></tr>
+            <tr><td>TP-05</td><td>Support &amp; engagement</td><td>Chat, reviews, FAQs, legal</td><td>Support; reviews; FAQ/legal + gating</td><td>Manual TC + API unit</td><td>FAQ/legal present</td><td>All TC-E* signed</td><td></td><td></td><td></td></tr>
+            <tr><td>TP-00</td><td>Cross-cutting</td><td>Release readiness</td><td>Regression TP-01–05; Appendix A</td><td>Manual + automated sum</td><td>All module entry met</td><td>Appendix checked; release notes</td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="part-table2">
+      <h2>Table 2 — Test cases</h2>
+      <p class="muted">Columns: Process · TC ID · Test case · Step · Description · Expected result · Status · Actual result · Comment</p>
+
+      <h3>Module A — Account Management</h3>
+      <div class="table-wrap">
+        <table class="tp" aria-label="Module A test plan">
+          <colgroup>
+            <col class="c-process" /><col class="c-no" /><col class="c-case" /><col class="c-step" /><col class="c-desc" />
+            <col class="c-exp" /><col class="c-status" /><col class="c-act" /><col class="c-comment" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Process</th><th>TC ID</th><th>Test case</th><th>Step</th><th>Description</th>
+              <th>Expected result</th><th>Status</th><th>Actual result</th><th>Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>1</td><td>Open sign-up; enter valid email</td><td>Input accepted; format validated</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>2</td><td>Enter first name and last name</td><td>Input accepted</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>3</td><td>Select date of birth</td><td>Date stored / validated per UI rules</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>4</td><td>Enter username</td><td>Input accepted; uniqueness handled on submit</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>5</td><td>Enter password meeting strength rules</td><td>Strength indicator / validation per app</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>6</td><td>Confirm password (matching)</td><td>Match validation before submit</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>7</td><td>Accept current Terms and Privacy (required versions)</td><td>Cannot submit until both accepted</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>8</td><td>Submit registration</td><td>Account created (201); user routed to verification / welcome flow</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A1</td><td>Customer registration</td><td>9</td><td>Register again with same email</td><td>Duplicate rejected with clear message (e.g. email taken)</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A2</td><td>Email verification</td><td>1</td><td>Complete registration; open verification email or deep link</td><td>Token/code path reachable</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A2</td><td>Email verification</td><td>2</td><td>Apply valid verification token or code</td><td>Email marked verified; success UI or HTML landing</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A2</td><td>Email verification</td><td>3</td><td>Use expired or invalid token</td><td>Clear error; option to resend if offered</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A3</td><td>Customer sign-in</td><td>1</td><td>Enter email or username as identifier</td><td>Identifier field accepts value</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A3</td><td>Customer sign-in</td><td>2</td><td>Enter correct password; sign in</td><td>Authenticated; access to main tabs</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A3</td><td>Customer sign-in</td><td>3</td><td>Enter wrong password</td><td>401; invalid credentials message</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A3</td><td>Customer sign-in</td><td>4</td><td>Sign in before email verified (if applicable)</td><td>Blocked with verify-email guidance (403-style messaging)</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A4</td><td>Password recovery</td><td>1</td><td>Request forgot-password with registered email</td><td>Generic success acknowledgment</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A4</td><td>Password recovery</td><td>2</td><td>Open reset link; set strong new password</td><td>Password updated; can sign in</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A4</td><td>Password recovery</td><td>3</td><td>Submit reset with invalid/expired token</td><td>Error; cannot change password</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A5</td><td>Profile &amp; security</td><td>1</td><td>Update profile fields (name, username, phone, gender, DOB)</td><td>Changes persist after save</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A5</td><td>Profile &amp; security</td><td>2</td><td>Upload valid avatar image</td><td>Avatar updates; invalid types rejected</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A5</td><td>Profile &amp; security</td><td>3</td><td>Change password with correct current password</td><td>Success message; new password works</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A5</td><td>Profile &amp; security</td><td>4</td><td>Change password with wrong current password</td><td>Rejected with clear error</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A6</td><td>Delivery addresses</td><td>1</td><td>Add address: recipient name, phone, region, street, optional postal code</td><td>Address created; appears in list</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A6</td><td>Delivery addresses</td><td>2</td><td>Set default address</td><td>Default flag respected at checkout</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>A6</td><td>Delivery addresses</td><td>3</td><td>Edit and delete owned address</td><td>Updates persist; delete removes row</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A7</td><td>Administrator sign-in</td><td>1</td><td>Open admin login; enter email and password</td><td>Fields accept input</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A7</td><td>Administrator sign-in</td><td>2</td><td>Submit invalid credentials</td><td>Error: incorrect email/password (no silent success)</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A7</td><td>Administrator sign-in</td><td>3</td><td>Submit valid credentials for verified admin</td><td>JWT/session established; shell loads</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A8</td><td>Admin bootstrap / invite</td><td>1</td><td>With zero admins, complete first-admin signup</td><td>Super admin created; can sign in after verify if required</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A8</td><td>Admin bootstrap / invite</td><td>2</td><td>As super admin, create operations admin with weak password</td><td>Rejected per password policy</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A8</td><td>Admin bootstrap / invite</td><td>3</td><td>As super admin, create admin with duplicate email</td><td>Rejected with duplicate message</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A9</td><td>Customer user oversight</td><td>1</td><td>Navigate to Users; list loads</td><td>Paginated/table data matches API</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A9</td><td>Customer user oversight</td><td>2</td><td>Open user detail; perform permitted action</td><td>Action succeeds only with correct permission</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A10</td><td>Admin roster &amp; audit</td><td>1</td><td>Open Admins; list displays</td><td>Roles visible</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A10</td><td>Admin roster &amp; audit</td><td>2</td><td>Resend admin verification email (if exposed)</td><td>Success or clear API message</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>A10</td><td>Admin roster &amp; audit</td><td>3</td><td>Open Activity Logs; filter recent events</td><td>Entries correspond to privileged actions</td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Module B — Product Catalog</h3>
+      <div class="table-wrap">
+        <table class="tp" aria-label="Module B test plan">
+          <colgroup>
+            <col class="c-process" /><col class="c-no" /><col class="c-case" /><col class="c-step" /><col class="c-desc" />
+            <col class="c-exp" /><col class="c-status" /><col class="c-act" /><col class="c-comment" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Process</th><th>TC ID</th><th>Test case</th><th>Step</th><th>Description</th>
+              <th>Expected result</th><th>Status</th><th>Actual result</th><th>Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>User Side</td><td>B1</td><td>Browse catalog</td><td>1</td><td>Open Home / catalog tab</td><td>Products load without crash</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>B1</td><td>Browse catalog</td><td>2</td><td>Scroll / pull to refresh (if applicable)</td><td>Data refreshes; loading state shown</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>B2</td><td>Product detail</td><td>1</td><td>Open a product with images and description</td><td>Detail matches API</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>B2</td><td>Product detail</td><td>2</td><td>Open out-of-stock product; attempt Buy now</td><td>Blocked with stock message</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>B3</td><td>Wishlist</td><td>1</td><td>Add product to wishlist (signed in)</td><td>Item appears in wishlist tab</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>B3</td><td>Wishlist</td><td>2</td><td>Remove item</td><td>Removed from list</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>B4</td><td>Product CRUD</td><td>1</td><td>Create product with required fields</td><td>Product visible in admin list and API</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>B4</td><td>Product CRUD</td><td>2</td><td>Edit price, stock, and copy</td><td>Storefront reflects after refresh</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>B4</td><td>Product CRUD</td><td>3</td><td>Deactivate or remove (per app rules)</td><td>No longer purchasable if policy says so</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>B5</td><td>Digital assets</td><td>1</td><td>Upload / attach product images</td><td>Images resolve in storefront</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>B5</td><td>Digital assets</td><td>2</td><td>Set model path and base scale; save</td><td>3D preview loads in admin form</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>B5</td><td>Digital assets</td><td>3</td><td>Remove model via provided control</td><td>Model no longer referenced; cleanup per API</td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Module C — Commerce (orders, cart, payments, MTO)</h3>
+      <div class="table-wrap">
+        <table class="tp" aria-label="Module C test plan">
+          <colgroup>
+            <col class="c-process" /><col class="c-no" /><col class="c-case" /><col class="c-step" /><col class="c-desc" />
+            <col class="c-exp" /><col class="c-status" /><col class="c-act" /><col class="c-comment" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Process</th><th>TC ID</th><th>Test case</th><th>Step</th><th>Description</th>
+              <th>Expected result</th><th>Status</th><th>Actual result</th><th>Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>User Side</td><td>C1</td><td>Shopping cart</td><td>1</td><td>Add item to cart</td><td>Badge/count updates</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C1</td><td>Shopping cart</td><td>2</td><td>Change quantity; remove line</td><td>Totals and lines correct</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C2</td><td>Checkout — PayMongo</td><td>1</td><td>From cart, proceed while signed in with valid address</td><td>Order summary loads</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C2</td><td>Checkout — PayMongo</td><td>2</td><td>Start PayMongo session; complete test payment</td><td>Success return deep link; order state updated</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C2</td><td>Checkout — PayMongo</td><td>3</td><td>Abandon / cancel payment</td><td>Order not falsely marked paid</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C3</td><td>Payment proof</td><td>1</td><td>For eligible order, upload valid image proof with order id</td><td>Proof stored; confirmation in UI</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C3</td><td>Payment proof</td><td>2</td><td>Upload oversize or wrong file type</td><td>Rejected with message</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C4</td><td>Orders lifecycle</td><td>1</td><td>Open Orders tab; list shows recent orders</td><td>Data matches account</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C4</td><td>Orders lifecycle</td><td>2</td><td>Open order detail</td><td>Status, items, totals consistent</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C4</td><td>Orders lifecycle</td><td>3</td><td>Cancel within allowed minutes (if enabled)</td><td>Order shows cancelled / policy text</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C4</td><td>Orders lifecycle</td><td>4</td><td>Upload valid ID when flow requires</td><td>File attached; allowed types only</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C5</td><td>Made-to-order</td><td>1</td><td>Submit MTO request with required fields and attachments</td><td>Request reference returned; visible in “my requests”</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>C5</td><td>Made-to-order</td><td>2</td><td>Open quote checkout when status allows</td><td>Payment path gated correctly</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>C6</td><td>Order operations</td><td>1</td><td>Open Orders admin; filter by status</td><td>List accurate</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>C6</td><td>Order operations</td><td>2</td><td>Advance order status / confirm payment (per workflow)</td><td>Customer-visible status consistent</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>C6</td><td>Order operations</td><td>3</td><td>Open / regenerate invoice view if supported</td><td>HTML or artifact matches order</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>C7</td><td>Commerce settings</td><td>1</td><td>Open Settings; change order cancellation window (minutes); save</td><td>Value persists</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>C7</td><td>Commerce settings</td><td>2</td><td>Adjust shipping rule fields (free ship threshold, cities, fees); save</td><td>Checkout totals follow new rules</td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Module D — AR visualization</h3>
+      <div class="table-wrap">
+        <table class="tp" aria-label="Module D test plan">
+          <colgroup>
+            <col class="c-process" /><col class="c-no" /><col class="c-case" /><col class="c-step" /><col class="c-desc" />
+            <col class="c-exp" /><col class="c-status" /><col class="c-act" /><col class="c-comment" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Process</th><th>TC ID</th><th>Test case</th><th>Step</th><th>Description</th>
+              <th>Expected result</th><th>Status</th><th>Actual result</th><th>Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>User Side</td><td>D1</td><td>3D / AR from product</td><td>1</td><td>From product detail, open 3D / AR experience</td><td>Model loads (viewer or launcher)</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>D1</td><td>3D / AR from product</td><td>2</td><td>On ARCore-capable Android, launch AR placement</td><td>Scene Viewer / placement works; floor placement</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>D1</td><td>3D / AR from product</td><td>3</td><td>On unsupported device or web</td><td>Graceful banner / fallback; no hard crash</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>D2</td><td>Dimensions / UX</td><td>1</td><td>Rotate / zoom in 3D mode</td><td>Controls responsive</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>D2</td><td>Dimensions / UX</td><td>2</td><td>If dimension readout exists, compare to known product size</td><td>Readout plausible</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>D3</td><td>Model readiness</td><td>1</td><td>Verify product modelPath set for flagship SKU</td><td>User AR entry visible</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>D3</td><td>Model readiness</td><td>2</td><td>Clear model path; publish</td><td>Storefront hides or degrades AR entry cleanly</td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Module E — Support &amp; engagement</h3>
+      <div class="table-wrap">
+        <table class="tp" aria-label="Module E test plan">
+          <colgroup>
+            <col class="c-process" /><col class="c-no" /><col class="c-case" /><col class="c-step" /><col class="c-desc" />
+            <col class="c-exp" /><col class="c-status" /><col class="c-act" /><col class="c-comment" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Process</th><th>TC ID</th><th>Test case</th><th>Step</th><th>Description</th>
+              <th>Expected result</th><th>Status</th><th>Actual result</th><th>Comment</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>User Side</td><td>E1</td><td>Support chat</td><td>1</td><td>Open support from profile / help</td><td>Conversation created or resumed</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E1</td><td>Support chat</td><td>2</td><td>Send text message</td><td>Message appears in thread</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E1</td><td>Support chat</td><td>3</td><td>Attach allowed image or document under size limit</td><td>Attachment uploads and displays</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E1</td><td>Support chat</td><td>4</td><td>Attach disallowed type</td><td>Clear rejection</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E2</td><td>Reviews</td><td>1</td><td>Submit rating + text for purchased/eligible product</td><td>Review created (pending if moderated)</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E2</td><td>Reviews</td><td>2</td><td>Submit empty or invalid rating</td><td>Client/server validation blocks</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E3</td><td>Notifications &amp; legal</td><td>1</td><td>Trigger low-risk notification (e.g. support reply)</td><td>Badge or list updates</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E3</td><td>Notifications &amp; legal</td><td>2</td><td>Open FAQs screen</td><td>Published FAQ content loads</td><td></td><td></td><td></td></tr>
+            <tr><td>User Side</td><td>E3</td><td>Notifications &amp; legal</td><td>3</td><td>When terms version increases, accept new terms</td><td>Full catalog/checkout access restored</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>E4</td><td>Support inbox</td><td>1</td><td>Open Support tab; list conversations</td><td>Unread counts reasonable</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>E4</td><td>Support inbox</td><td>2</td><td>Reply to customer</td><td>Message visible on user device</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>E4</td><td>Support inbox</td><td>3</td><td>Set conversation status (open/closed/etc.)</td><td>State persists</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>E5</td><td>Reviews moderation</td><td>1</td><td>Open Reviews; list pending</td><td>Matches API</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>E5</td><td>Reviews moderation</td><td>2</td><td>Approve / reject / delete per policy</td><td>Storefront shows only allowed statuses</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>E6</td><td>Content management</td><td>1</td><td>Edit FAQ entry; save</td><td>Storefront FAQ updates</td><td></td><td></td><td></td></tr>
+            <tr><td>Admin Side</td><td>E6</td><td>Content management</td><td>2</td><td>Publish new Terms or Privacy version</td><td>Sign-up and gating fetch new version</td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="part-table3">
+      <h2>Table 3 — Unit testing</h2>
+      <p class="muted">Automated or planned checks — separate from Table 1 and Table 2.</p>
+      <div class="table-wrap">
+        <table class="unit" aria-label="Unit testing matrix">
+          <thead>
+            <tr>
+              <th>UT ID</th><th>Layer</th><th>Module</th><th>Target</th><th>Scenario</th>
+              <th>Expected</th><th>Tool</th><th>Status</th><th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>UT-A01</td><td>API</td><td>Account</td><td>POST /api/users</td><td>Valid body + terms version</td><td>201; user returned</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-A02</td><td>API</td><td>Account</td><td>POST /api/users</td><td>Duplicate email</td><td>409; message</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-A03</td><td>API</td><td>Account</td><td>POST /api/users/auth/login</td><td>Bad password</td><td>401 JSON</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-A04</td><td>API</td><td>Account</td><td>POST /api/users/:id/change-password</td><td>Wrong current</td><td>400</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-A05</td><td>Service</td><td>Account</td><td>user_service.createUser</td><td>Password shorter than minimum</td><td>Throws / validates</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-A06</td><td>API</td><td>Account</td><td>POST /api/addresses</td><td>Missing required fields</td><td>400</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-A07</td><td>API</td><td>Admin</td><td>POST /api/admin-auth/login</td><td>Invalid body</td><td>400</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-A08</td><td>API</td><td>Admin</td><td>POST /api/admins (bootstrap)</td><td>First admin role</td><td>super_admin</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-B01</td><td>API</td><td>Catalog</td><td>GET /api/products</td><td>List</td><td>200; array</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-B02</td><td>API</td><td>Catalog</td><td>GET /api/products/:id</td><td>Unknown id</td><td>404</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-C01</td><td>API</td><td>Commerce</td><td>GET /api/cart/:userId</td><td>Valid user</td><td>200</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-C02</td><td>API</td><td>Commerce</td><td>POST /api/payment-proofs/upload</td><td>No file</td><td>400</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-C03</td><td>API</td><td>Commerce</td><td>POST /api/payment-proofs/upload</td><td>Missing orderId</td><td>400</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-D01</td><td>App</td><td>AR</td><td>ModelPathHelper.normalize</td><td>Relative/absolute URL</td><td>Stable URL</td><td>Dart test</td><td></td><td>When added</td></tr>
+            <tr><td>UT-E01</td><td>API</td><td>Support</td><td>support_chat_route</td><td>Valid message payload</td><td>Success per contract</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-E02</td><td>API</td><td>Reviews</td><td>POST /api/reviews</td><td>Zod-invalid body</td><td>400</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-E03</td><td>API</td><td>Content</td><td>GET /api/faqs</td><td>Public list</td><td>200</td><td>Jest</td><td></td><td></td></tr>
+            <tr><td>UT-E04</td><td>API</td><td>Content</td><td>Legal content GET</td><td>Known key</td><td>Versioned payload</td><td>Jest</td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="appendix-checklist">
+      <h2>Appendix A — System checklist</h2>
+      <p class="sig-line">Tester: _______________________________ &nbsp;&nbsp; Date: _______________________________</p>
+      <p class="muted">Mark each item when verified. Expected results describe correct behavior for Wood Home / SmartSpace.</p>
+
+      <h3>A. Account management</h3>
+      <p class="subhead">Customer (storefront)</p>
+      <ul class="checklist">
+        <li>Enter valid registration data (email, names, DOB, username, password, confirm, terms/privacy). <strong>Expected:</strong> Submit succeeds; account created; verification path offered.</li>
+        <li>Submit registration with duplicate email. <strong>Expected:</strong> Clear “email already taken” (or equivalent).</li>
+        <li>Sign in with valid credentials. <strong>Expected:</strong> Main app shell loads; personalized data loads.</li>
+        <li>Sign in with wrong password. <strong>Expected:</strong> Error message; no partial auth state.</li>
+        <li>Forgot password flow end-to-end. <strong>Expected:</strong> Reset completes; new password works.</li>
+        <li>Edit profile and save. <strong>Expected:</strong> Changes persist on reopen.</li>
+        <li>Add default shipping address. <strong>Expected:</strong> Checkout can pre-fill; single default enforced.</li>
+      </ul>
+      <p class="subhead">Administrator (console)</p>
+      <ul class="checklist">
+        <li>Wrong admin email/password. <strong>Expected:</strong> Incorrect-credentials message; remain on login.</li>
+        <li>Valid admin credentials. <strong>Expected:</strong> Redirect to admin Dashboard (not storefront).</li>
+        <li>Open Users. <strong>Expected:</strong> List loads for permitted role; forbidden otherwise.</li>
+        <li>Open Admins / Activity Logs as super admin. <strong>Expected:</strong> Data visible; restricted for others where applicable.</li>
+        <li>First-server bootstrap admin (if applicable). <strong>Expected:</strong> First admin is super_admin; later invites obey role rules.</li>
+      </ul>
+
+      <h3>B. Product catalog</h3>
+      <p class="subhead">Customer</p>
+      <ul class="checklist">
+        <li>Catalog home loads. <strong>Expected:</strong> Products and images load without unexplained blank state.</li>
+        <li>Product detail. <strong>Expected:</strong> Price, stock, description match admin/API.</li>
+        <li>Wishlist add/remove. <strong>Expected:</strong> Consistent after refresh or restart if server-backed.</li>
+      </ul>
+      <p class="subhead">Administrator</p>
+      <ul class="checklist">
+        <li>Create minimal product. <strong>Expected:</strong> Visible in API and storefront after refresh.</li>
+        <li>Set stock to zero. <strong>Expected:</strong> Buy/add blocked with stock messaging on user side.</li>
+        <li>Attach 3D model path + scale. <strong>Expected:</strong> Admin preview renders; user AR entry when intended.</li>
+      </ul>
+
+      <h3>C. Commerce</h3>
+      <p class="subhead">Customer</p>
+      <ul class="checklist">
+        <li>Guest vs signed-in cart rules. <strong>Expected:</strong> Match policy (e.g. checkout requires sign-in).</li>
+        <li>PayMongo happy path. <strong>Expected:</strong> Return URL handled; order/payment state correct.</li>
+        <li>Upload payment proof. <strong>Expected:</strong> File tied to order; success feedback in UI.</li>
+        <li>Cancel within configured minutes. <strong>Expected:</strong> Order shows cancelled; inventory policy honored.</li>
+      </ul>
+      <p class="subhead">Administrator</p>
+      <ul class="checklist">
+        <li>Change order status. <strong>Expected:</strong> User Orders reflects new status after refresh.</li>
+        <li>Confirm payment / review proof. <strong>Expected:</strong> No unsafe double-confirmation.</li>
+        <li>Settings: cancellation window. <strong>Expected:</strong> User cancel affordance matches minutes setting.</li>
+      </ul>
+
+      <h3>D. AR visualization</h3>
+      <p class="subhead">Customer</p>
+      <ul class="checklist">
+        <li>Launch AR from product with model. <strong>Expected:</strong> Placement on supported Android; sensible fallback elsewhere.</li>
+        <li>3D-only rotate/zoom. <strong>Expected:</strong> Smooth interaction; no hard errors in logs.</li>
+      </ul>
+      <p class="subhead">Administrator</p>
+      <ul class="checklist">
+        <li>Broken modelPath. <strong>Expected:</strong> Error or placeholder; not infinite spinner.</li>
+      </ul>
+
+      <h3>E. Support &amp; engagement</h3>
+      <p class="subhead">Customer</p>
+      <ul class="checklist">
+        <li>Send support message. <strong>Expected:</strong> Appears in admin Support inbox.</li>
+        <li>Submit review. <strong>Expected:</strong> Pending until moderated if applicable.</li>
+      </ul>
+      <p class="subhead">Administrator</p>
+      <ul class="checklist">
+        <li>Reply in Support. <strong>Expected:</strong> Customer sees reply; unread badge updates.</li>
+        <li>Reject or delete abusive review. <strong>Expected:</strong> Removed from public product reviews.</li>
+      </ul>
+
+      <h2>Revision history</h2>
+      <table class="rev" aria-label="Revision history">
+        <thead>
+          <tr><th>Version</th><th>Date</th><th>Author</th><th>Changes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1.0</td><td>2026-04-19</td><td>QA template</td><td>Initial combined test plan + system checklist</td></tr>
+          <tr><td>1.1</td><td>2026-04-19</td><td>QA</td><td>Print/PDF HTML styling (landscape test tables, cover sheet)</td></tr>
+          <tr><td>1.2</td><td>2026-04-19</td><td>QA</td><td>Split: Table 1 master plan · Table 2 test cases · Table 3 unit testing</td></tr>
+        </tbody>
+      </table>
+
+      <p class="footer-note">Wood Home Furniture · SmartSpace — internal QA document. Re-export PDF after content edits.</p>
+    </section>
+
+  </div>
+</body>
+</html>

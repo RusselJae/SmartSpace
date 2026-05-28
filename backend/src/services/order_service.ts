@@ -5,6 +5,7 @@ import { OrderRecord } from '../models/order_record';
 import { parseJsonRecord, parseStringArray } from '../utils/parser';
 import { EmailService } from './email_service';
 import { ensureInvoiceTables } from './order_invoice_service';
+import { createNotificationForUser } from './user_notification_service';
 
 type OrderRow = RowDataPacket & {
   readonly id: string;
@@ -185,6 +186,78 @@ const notifyAdminsOrderFullyPaid = async (params: {
       { label: 'Payment Received', value: `₱${params.paidAmount.toFixed(2)}` },
       { label: 'Previous Remaining Balance', value: `₱${params.previousRemaining.toFixed(2)}` },
     ],
+  });
+};
+
+const toShortOrderRef = (orderId: string): string => orderId.substring(0, 8).toUpperCase();
+
+const buildOrderStatusNotification = (
+  status: string,
+  orderId: string,
+): { type: string; title: string; body: string } => {
+  const shortRef = toShortOrderRef(orderId);
+  switch (status) {
+    case 'confirmed':
+      return {
+        type: 'order_confirmed',
+        title: 'Order confirmed',
+        body: `Order #${shortRef} has been confirmed and is now being prepared.`,
+      };
+    case 'shipped':
+      return {
+        type: 'order_shipped',
+        title: 'Order shipped',
+        body: `Order #${shortRef} is now on the way.`,
+      };
+    case 'delivered':
+      return {
+        type: 'order_delivered',
+        title: 'Order delivered',
+        body: `Order #${shortRef} has been delivered.`,
+      };
+    case 'cancelled':
+      return {
+        type: 'order_cancelled',
+        title: 'Order cancelled',
+        body: `Order #${shortRef} was cancelled.`,
+      };
+    case 'pending':
+      return {
+        type: 'order_pending',
+        title: 'Order pending',
+        body: `Order #${shortRef} is pending for processing.`,
+      };
+    default:
+      return {
+        type: 'order_status_updated',
+        title: 'Order status updated',
+        body: `Order #${shortRef} status is now ${status}.`,
+      };
+  }
+};
+
+const notifyUserOrderStatusChanged = async (params: {
+  readonly userId: string;
+  readonly orderId: string;
+  readonly previousStatus: string;
+  readonly nextStatus: string;
+}): Promise<void> => {
+  const previous = params.previousStatus.trim().toLowerCase();
+  const next = params.nextStatus.trim().toLowerCase();
+  if (!next || previous === next) return;
+
+  const notification = buildOrderStatusNotification(next, params.orderId);
+  await createNotificationForUser({
+    userId: params.userId,
+    type: notification.type,
+    title: notification.title,
+    body: notification.body,
+    data: {
+      orderId: params.orderId,
+      previousStatus: previous,
+      status: next,
+    },
+    push: true,
   });
 };
 
@@ -498,7 +571,19 @@ export const markOrderPaidViaPaymongo = async (
   const userId = row.user_id;
   const orderTotal = Number(row.total_amount);
   const previousStatus = row.status;
+  const previousStatusNormalized = String(previousStatus).trim().toLowerCase();
   const dp = Number(row.downpayment_amount ?? 0);
+  // Keep fulfillment status controlled by admins only:
+  // - Payment settlement should not auto-confirm or auto-advance orders.
+  // - For pre-fulfillment states, we normalize back to `pending`.
+  // - For terminal/fulfillment states (cancelled/shipped/delivered), we preserve status.
+  const statusForPaidUpdate =
+    previousStatusNormalized === 'cancelled' ||
+    previousStatusNormalized === 'shipped' ||
+    previousStatusNormalized === 'delivered'
+      ? previousStatus
+      : 'pending';
+
   const plan = row.payment_plan ?? null;
   const paidAmount = options?.amountPesos ?? null;
   const eventId = options?.eventId ?? null;
@@ -557,10 +642,11 @@ export const markOrderPaidViaPaymongo = async (
     await pool.query(
       `UPDATE orders
        SET payment_status = 'completed',
+           status = ?,
            remaining_balance = 0,
            updated_at = NOW()
        WHERE id = ?`,
-      [orderId],
+      [statusForPaidUpdate, orderId],
     );
     // Lay-away / one-shot full pay: ETA starts at full settlement (Hulugan one-shot included).
     await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
@@ -644,10 +730,11 @@ export const markOrderPaidViaPaymongo = async (
         await pool.query(
           `UPDATE orders
            SET payment_status = 'completed',
+               status = ?,
                remaining_balance = 0,
                updated_at = NOW()
            WHERE id = ?`,
-          [orderId],
+          [statusForPaidUpdate, orderId],
         );
         await persistEventId();
         await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
@@ -705,10 +792,11 @@ export const markOrderPaidViaPaymongo = async (
         await pool.query(
           `UPDATE orders
            SET payment_status = 'completed',
+               status = ?,
                remaining_balance = 0,
                updated_at = NOW()
            WHERE id = ?`,
-          [orderId],
+          [statusForPaidUpdate, orderId],
         );
         await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
         await notifyAdminsOrderFullyPaid({
@@ -743,10 +831,11 @@ export const markOrderPaidViaPaymongo = async (
       await pool.query(
         `UPDATE orders
          SET payment_status = 'completed',
+             status = ?,
              remaining_balance = 0,
              updated_at = NOW()
          WHERE id = ?`,
-        [orderId],
+        [statusForPaidUpdate, orderId],
       );
       // Lay-away second tranche (or non-hulugan): ETA from final payment; hulugan keeps DP-based ETA.
       await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
@@ -800,10 +889,11 @@ export const markOrderPaidViaPaymongo = async (
         await pool.query(
           `UPDATE orders
            SET payment_status = 'completed',
+               status = ?,
                remaining_balance = 0,
                updated_at = NOW()
            WHERE id = ?`,
-          [orderId],
+          [statusForPaidUpdate, orderId],
         );
         await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
         await notifyAdminsOrderFullyPaid({
@@ -843,10 +933,11 @@ export const markOrderPaidViaPaymongo = async (
       await pool.query(
         `UPDATE orders
          SET payment_status = 'completed',
+           status = ?,
              remaining_balance = 0,
              updated_at = NOW()
          WHERE id = ?`,
-        [orderId],
+      [statusForPaidUpdate, orderId],
       );
       await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
       await notifyAdminsOrderFullyPaid({
@@ -1459,6 +1550,17 @@ export const updateOrderStatus = async (orderId: string, status: string): Promis
       console.error('Failed to send admin cancellation alert email:', error);
     });
   }
+
+  // Keep customer notifications centralized in the same write path so all status
+  // changes (admin actions, policy jobs, and route-level transitions) emit push updates.
+  notifyUserOrderStatusChanged({
+    userId,
+    orderId,
+    previousStatus,
+    nextStatus: status,
+  }).catch((error) => {
+    console.error('Failed to send order status push notification:', error);
+  });
 };
 
 /**
@@ -1545,7 +1647,6 @@ export const confirmPayment = async (
   const paymentMethod = order.payment_method;
   const userId = order.user_id;
   const orderTotal = Number(order.total_amount);
-  const existingStatus = String(order.status ?? 'pending');
   
   // Determine payment status based on payment method
   // COD: downpayment_paid (20% paid, 80% remaining)
@@ -1556,10 +1657,10 @@ export const confirmPayment = async (
   await pool.query(
     `UPDATE orders 
      SET payment_status = ?,
-         status = ?,
+        status = 'pending',
          updated_at = NOW()
      WHERE id = ?`,
-    [paymentStatus, existingStatus, orderId],
+    [paymentStatus, orderId],
   );
   
   console.log(`✅ Payment confirmed by admin ${adminId} for order ${orderId}`);

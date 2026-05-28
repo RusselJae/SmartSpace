@@ -179,6 +179,12 @@ class ArEditorActivity : ComponentActivity() {
     private var overlaysVisible: Boolean = true
     private var overlaysEyeButton: ImageButton? = null
     private var tipsHintButton: ImageButton? = null
+    private var placeModelButton: Button? = null
+    private var placementReticle: View? = null
+    // Scene-Viewer-like placement flow:
+    // - true: wait for explicit "PLACE MODEL" action.
+    // - false: model is already placed/restored and editable.
+    private var pendingManualPlacement: Boolean = true
 
     /** Short AR how‑to; hidden as soon as the model is anchored in the scene. */
     private var arTipsBanner: TextView? = null
@@ -219,6 +225,9 @@ class ArEditorActivity : ComponentActivity() {
 
             // Load persisted placement+scale state (if any).
             loadRestoredStateAndApplyToFields()
+            // Restored sessions should place automatically; fresh sessions wait
+            // for explicit "PLACE MODEL" to reduce floating/jitter impressions.
+            pendingManualPlacement = !restoreIsPlaced
         }
 
         // --------------------------------------------------------------------
@@ -249,9 +258,9 @@ class ArEditorActivity : ComponentActivity() {
                         Config.DepthMode.DISABLED
                     }
 
-                // Enable more forgiving instant placement so users can place
-                // furniture even before full plane tracking is stable.
-                config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+                // Prefer strict plane-anchored placement for better floor contact
+                // (reduces the "floating" feel from approximate instant placement).
+                config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
 
                 // Re-enable environmental HDR so indirect light + reflections
                 // match the real room better (ambient-only looked too dark).
@@ -264,7 +273,10 @@ class ArEditorActivity : ComponentActivity() {
             // appear automatically at 100% size when the scene opens.
             onSessionUpdated = { _: Session, _ ->
                 try {
-                    tryAutoPlaceModel()
+                    // Only auto-place when we're restoring a previously placed model.
+                    if (!pendingManualPlacement) {
+                        tryAutoPlaceModel()
+                    }
                     // Keep overlay labels/persistence in sync with gesture edits
                     // (drag/pinch/rotate) that don't pass through our +/- handlers.
                     updateScaleAndSizeLabels()
@@ -489,6 +501,9 @@ class ArEditorActivity : ComponentActivity() {
         attachArTipsBanner(rootLayout)
         // Top-left hint icon to re-open usage instructions on demand.
         attachTipsHintButton(rootLayout)
+        // Scene-Viewer style center reticle + explicit "PLACE MODEL" affordance.
+        attachPlacementReticle(rootLayout)
+        attachPlaceModelButton(rootLayout)
 
         // One-button toggle: hide/show BOTH overlays together.
         attachOverlaysEyeToggleButton(rootLayout)
@@ -499,6 +514,7 @@ class ArEditorActivity : ComponentActivity() {
         // Push overlays inside status / nav / gesture insets so nothing sits under
         // system bars or the landscape nav rail.
         applyWindowInsetsToOverlays(rootLayout)
+        updatePlacementUiVisibility()
 
         // --------------------------------------------------------------------
         // 4. Camera permission check (basic handling).
@@ -516,6 +532,79 @@ class ArEditorActivity : ComponentActivity() {
         // built‑in [ModelLoader]. Once loaded, taps can reuse this single
         // [ModelInstance] and attach it to new anchors instantly.
         preloadModelInstance()
+    }
+
+    private fun attachPlacementReticle(root: FrameLayout) {
+        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
+        val reticle = View(this).apply {
+            setBackgroundColor(0xDDFFFFFF.toInt())
+            alpha = 0.92f
+        }
+        placementReticle = reticle
+        val size = dpToPx(10)
+        root.addView(
+            reticle,
+            FrameLayout.LayoutParams(size, size, Gravity.CENTER)
+        )
+    }
+
+    private fun attachPlaceModelButton(root: FrameLayout) {
+        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
+        val btn = Button(this).apply {
+            text = "PLACE MODEL"
+            setAllCaps(false)
+            textSize = 14f
+            setTextColor(0xFFFFFFFF.toInt())
+            background = ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_overlay_control)
+            setPadding(dpToPx(18), dpToPx(10), dpToPx(18), dpToPx(10))
+            contentDescription = "Place model on detected floor"
+            setOnClickListener { manualPlaceAtScreenCenter() }
+        }
+        placeModelButton = btn
+        root.addView(
+            btn,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            ).apply {
+                bottomMargin = dpToPx(94)
+                marginStart = dpToPx(16)
+                marginEnd = dpToPx(16)
+            }
+        )
+    }
+
+    private fun updatePlacementUiVisibility() {
+        val show = pendingManualPlacement && anchorNode == null && modelNode == null
+        placementReticle?.visibility = if (show) View.VISIBLE else View.GONE
+        placeModelButton?.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun manualPlaceAtScreenCenter() {
+        val instance = modelInstance
+        if (instance == null) {
+            Toast.makeText(this, "Model still loading. Please wait.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val x = arSceneView.width / 2.0f
+        val y = arSceneView.height / 2.0f
+        val hit = arSceneView.hitTestAR(
+            xPx = x,
+            yPx = y,
+            planeTypes = setOf(Plane.Type.HORIZONTAL_UPWARD_FACING)
+        )
+        if (hit == null) {
+            Toast.makeText(this, "Scan floor slowly, then try again.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (arSceneView.width > 0 && arSceneView.height > 0) {
+            lastHitXNorm = x / arSceneView.width
+            lastHitYNorm = y / arSceneView.height
+        }
+        pendingManualPlacement = false
+        placeAnchoredModel(hit, instance)
+        updatePlacementUiVisibility()
     }
 
     /**
@@ -991,6 +1080,13 @@ class ArEditorActivity : ComponentActivity() {
                     lp.marginStart = 0
                     lp.marginEnd = 0
                     lp.bottomMargin = insetBottom + dp(12)
+                    v.layoutParams = lp
+                }
+            }
+            placeModelButton?.let { v ->
+                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                    lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    lp.bottomMargin = insetBottom + dp(82)
                     v.layoutParams = lp
                 }
             }
@@ -1701,7 +1797,9 @@ class ArEditorActivity : ComponentActivity() {
             // Case A: no model placed yet -> preload and let auto-place happen.
             if (anchorNode == null || modelNode == null) {
                 modelInstance = instance
-                tryAutoPlaceModel()
+                if (!pendingManualPlacement) {
+                    tryAutoPlaceModel()
+                }
                 return@loadModelInstanceAsync
             }
 
@@ -1946,6 +2044,8 @@ class ArEditorActivity : ComponentActivity() {
         // Keep track of what we've placed so we don't try to auto-place again.
         this.anchorNode = anchorNode
         this.modelNode = modelNode
+        pendingManualPlacement = false
+        updatePlacementUiVisibility()
 
         // Refresh the overlay so users immediately see an accurate scale/size
         // read‑out once the model appears in the scene.

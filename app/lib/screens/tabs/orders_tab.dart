@@ -1701,6 +1701,31 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
     return _remainingBalance;
   }
 
+  /// Fallback guard:
+  /// Some orders can still open this screen with `allowCustomAmount = false`
+  /// even when they are already in the remaining-balance phase.
+  /// In that case we should still let users type a custom amount.
+  bool get _hasFollowUpBalancePhase {
+    if (_remainingBalance <= 0.01) return false;
+
+    final status = _paymentStatus;
+    final looksLikeFollowUpStatus = status == 'downpayment_received' ||
+        status == 'downpayment_paid' ||
+        status == 'partially_paid';
+
+    // Amount-based signal for follow-up: if remaining is already below total,
+    // a previous charge happened and this is no longer the first fixed tranche.
+    final remainingIsBelowTotal =
+        _remainingBalance < (widget.order.totalAmount - 0.01);
+
+    return looksLikeFollowUpStatus || remainingIsBelowTotal;
+  }
+
+  /// Single source for field editability inside this screen.
+  bool get _canEditAmount {
+    return widget.allowCustomAmount || _hasFollowUpBalancePhase;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1721,7 +1746,7 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
     }
 
     final parsed = double.tryParse(_amountController.text.replaceAll(',', '').trim());
-    final amountToPay = widget.allowCustomAmount
+    final amountToPay = _canEditAmount
         ? (() {
             if (parsed == null || parsed <= 0) return 0.0;
             return parsed > _remainingBalance ? _remainingBalance : parsed;
@@ -1900,7 +1925,7 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
                 const SizedBox(height: 6),
                 TextField(
                   controller: _amountController,
-                  readOnly: !widget.allowCustomAmount,
+                  readOnly: !_canEditAmount,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
                     filled: true,
@@ -1913,7 +1938,7 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
                     ),
                   ),
                 ),
-                if (widget.allowCustomAmount) ...[
+                if (_canEditAmount) ...[
                   const SizedBox(height: 6),
                   Text(
                     'You can pay any amount up to the remaining balance.',

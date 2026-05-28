@@ -2567,6 +2567,41 @@ class MySQLDatabaseService {
       );
     }).toList(growable: false);
   }
+
+  /// Prior snapshots for Terms or Privacy (public API).
+  ///
+  /// This does not require admin auth and allows end-users to view older versions
+  /// for transparency/compliance.
+  Future<List<LegalContentHistoryEntry>> getPublicLegalContentHistory(
+    String key, {
+    int limit = 40,
+  }) async {
+    if (!_useApi) {
+      return const [];
+    }
+    if (key != 'terms' && key != 'privacy') {
+      return const [];
+    }
+    final data = await _sendRequest(
+      method: 'GET',
+      path: '/content/legal/$key/history?limit=$limit',
+    );
+    if (data is! Map<String, dynamic>) {
+      return const [];
+    }
+    final raw = data['entries'];
+    if (raw is! List) {
+      return const [];
+    }
+    return raw.map((e) {
+      final m = Map<String, dynamic>.from(e as Map);
+      return LegalContentHistoryEntry(
+        version: (m['version'] as num?)?.toInt() ?? 0,
+        content: m['content'] as String?,
+        createdAt: m['createdAt'] != null ? DateTime.tryParse(m['createdAt'].toString()) : null,
+      );
+    }).toList(growable: false);
+  }
 }
 
 class LegalContentPayload {

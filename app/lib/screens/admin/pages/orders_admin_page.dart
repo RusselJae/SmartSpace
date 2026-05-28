@@ -2240,6 +2240,14 @@ class _OrderDetailsDialog extends StatelessWidget {
     return [
       AdminProfileStyleDetailRow(dense: true, showDivider: false, label: 'Order ID', value: order.id),
       AdminProfileStyleDetailRow(dense: true, showDivider: false, label: 'Customer', value: order.userName.isNotEmpty ? order.userName : 'Guest'),
+      AdminProfileStyleDetailRow(
+        dense: true,
+        showDivider: false,
+        label: 'Terms accepted (version)',
+        value: order.termsVersionAcceptedAtOrder != null
+            ? 'v${order.termsVersionAcceptedAtOrder}'
+            : '—',
+      ),
       AdminProfileStyleDetailRow(dense: true, showDivider: false, label: 'Status', value: order.status[0].toUpperCase() + order.status.substring(1)),
       AdminProfileStyleDetailRow(dense: true, showDivider: false,
         label: 'Total Amount',

@@ -46,6 +46,135 @@ class _TermsAndConditionsScreenState extends State<TermsAndConditionsScreen> {
     }
   }
 
+  Future<void> _openHistory() async {
+    try {
+      await _db.initialize();
+      final entries = await _db.getPublicLegalContentHistory('terms', limit: 50);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          title: Text(
+            'Version history — Terms & Conditions',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
+          ),
+          content: SizedBox(
+            width: 480,
+            height: 360,
+            child: entries.isEmpty
+                ? Text(
+                    'No previous versions yet.',
+                    style: GoogleFonts.poppins(fontSize: 13, height: 1.4),
+                  )
+                : ListView.separated(
+                    itemCount: entries.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final e = entries[i];
+                      final subtitle = e.createdAt?.toLocal().toString() ?? '';
+                      return ListTile(
+                        title: Text(
+                          'Version ${e.version}',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(subtitle, style: GoogleFonts.poppins(fontSize: 12)),
+                        trailing: const Icon(Icons.visibility_outlined),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          _showSnapshotSheet(
+                            label: 'Terms & Conditions',
+                            version: e.version,
+                            content: e.content ?? '',
+                            when: subtitle,
+                          );
+                        },
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
+          ],
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load version history')),
+      );
+    }
+  }
+
+  void _showSnapshotSheet({
+    required String label,
+    required int version,
+    required String content,
+    required String when,
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.65,
+        maxChildSize: 0.92,
+        minChildSize: 0.4,
+        builder: (_, scroll) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '$label — v$version',
+                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(when, style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54)),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: Scrollbar(
+                controller: scroll,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: scroll,
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: content.trim().isEmpty
+                      ? SelectableText(
+                          '(empty)',
+                          style: GoogleFonts.poppins(fontSize: 14, height: 1.55, color: const Color(0xFF1A1A1A)),
+                        )
+                      : SizedBox(
+                          height: null,
+                          child: LegalContentRenderer(
+                            content: content,
+                            dividerColor: const Color(0xFFE0D4C8),
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const mediumBrown = Color(0xFF8D6E63);
@@ -70,6 +199,17 @@ class _TermsAndConditionsScreenState extends State<TermsAndConditionsScreen> {
           style: GoogleFonts.poppins(
             fontWeight: FontWeight.w600,
             color: mediumBrown,
+          ),
+        ),
+        trailing: CupertinoButton(
+          padding: EdgeInsets.zero,
+          onPressed: _loading ? null : _openHistory,
+          child: Text(
+            'History',
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w600,
+              color: mediumBrown,
+            ),
           ),
         ),
       ),

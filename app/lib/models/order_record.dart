@@ -10,6 +10,7 @@ class OrderRecord {
     required this.createdAt,
     required this.updatedAt,
     this.paymentProofUrl,
+    this.termsVersionAcceptedAtOrder,
   });
 
   final String id;
@@ -22,6 +23,7 @@ class OrderRecord {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? paymentProofUrl;
+  final int? termsVersionAcceptedAtOrder;
 
   factory OrderRecord.fromJson(Map<String, dynamic> json) {
     DateTime parseDate(dynamic value) {
@@ -46,6 +48,7 @@ class OrderRecord {
       createdAt: parseDate(json['createdAt']),
       updatedAt: parseDate(json['updatedAt']),
       paymentProofUrl: json['paymentProofUrl'] as String?,
+      termsVersionAcceptedAtOrder: (json['termsVersionAcceptedAtOrder'] as num?)?.toInt(),
     );
   }
 
@@ -61,6 +64,8 @@ class OrderRecord {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       if (paymentProofUrl != null) 'paymentProofUrl': paymentProofUrl,
+      if (termsVersionAcceptedAtOrder != null)
+        'termsVersionAcceptedAtOrder': termsVersionAcceptedAtOrder,
     };
   }
 }

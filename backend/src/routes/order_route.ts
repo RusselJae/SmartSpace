@@ -292,7 +292,11 @@ orderRouter.post(
         message: 'Please accept the latest Terms and Conditions before placing an order.',
       });
     }
-    const order = await createOrder(input);
+    // Snapshot the exact version accepted at checkout time for admin auditing.
+    const order = await createOrder({
+      ...input,
+      termsVersionAcceptedAtOrder: user.termsVersionAccepted ?? undefined,
+    });
     res.status(201).json({ success: true, data: order });
   }),
 );

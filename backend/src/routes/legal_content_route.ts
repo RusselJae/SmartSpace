@@ -36,6 +36,29 @@ legalContentRouter.get(
 );
 
 /**
+ * GET /api/content/legal/:key/history
+ * Public endpoint – prior published snapshots for a legal key.
+ *
+ * This is intentionally read-only and does not expose admin activity logs.
+ * Useful for compliance transparency so customers can view previous versions.
+ */
+legalContentRouter.get(
+  '/legal/:key/history',
+  asyncHandler(async (req, res) => {
+    const { key } = req.params;
+    if (!isValidLegalKey(key)) {
+      return res.status(400).json({
+        success: false,
+        message: "key must be 'terms' or 'privacy'",
+      });
+    }
+    const limit = Number(req.query.limit ?? 40);
+    const entries = await listLegalContentHistory(key as LegalContentKey, limit);
+    res.json({ success: true, data: { entries } });
+  }),
+);
+
+/**
  * GET /api/content/admin/legal/:key/history
  * Admin-only: prior saved versions (snapshots taken before each publish).
  */

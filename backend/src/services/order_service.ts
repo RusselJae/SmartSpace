@@ -10,6 +10,11 @@ type OrderRow = RowDataPacket & {
   readonly id: string;
   readonly user_id: string;
   readonly user_name: string | null;
+  /**
+   * Snapshot: Terms version accepted at order creation time.
+   * Optional for backwards compatibility (older DBs won't have the column).
+   */
+  readonly terms_version_accepted_at_order?: number | null;
   readonly contact_name: string;
   readonly contact_phone: string;
   readonly shipping_label: string | null;
@@ -124,6 +129,10 @@ const mapOrder = async (row: OrderRow): Promise<OrderRecord> => {
     status: row.status,
     shippingAddress: shippingAddress,
     paymentProofUrl: row.payment_proof_url ?? undefined,
+    termsVersionAcceptedAtOrder:
+      row.terms_version_accepted_at_order != null
+        ? Number(row.terms_version_accepted_at_order)
+        : undefined,
     createdAt: createdAt,
     updatedAt: updatedAt,
   };
@@ -942,6 +951,14 @@ export interface CreateOrderInput {
   readonly shippingAddress: Record<string, unknown>;
   readonly status?: string;
   /**
+   * Snapshot of the Terms & Conditions version the user had accepted when the
+   * order was created.
+   *
+   * This must be provided by the route layer after verifying the user has
+   * accepted the latest terms.
+   */
+  readonly termsVersionAcceptedAtOrder?: number;
+  /**
    * When set, inserts these order lines instead of resolving prices from [productIds].
    * Used for made-to-order (custom line totals).
    */
@@ -1099,21 +1116,60 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
     paymentPlan ?? null,
   ];
 
+  const ensureTermsVersionAcceptedAtOrderColumn = async (): Promise<boolean> => {
+    try {
+      await pool.query(
+        `ALTER TABLE orders
+         ADD COLUMN terms_version_accepted_at_order INT NULL DEFAULT NULL
+         COMMENT 'Terms version accepted at order creation time'`,
+      );
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Duplicate column') || msg.toLowerCase().includes('duplicate column name')) {
+        return true;
+      }
+      console.warn('ensureTermsVersionAcceptedAtOrderColumn:', msg);
+      return false;
+    }
+  };
+
+  // Best-effort: if DB can alter, we persist the snapshot; if not, orders still work.
+  const hasTermsSnapshotColumn = await ensureTermsVersionAcceptedAtOrderColumn();
+
   // One DB transaction: order + line items + inventory reservation must commit together.
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
     try {
-      await conn.query(
-      `INSERT INTO orders (
-        id, user_id, contact_name, contact_phone, shipping_label, 
-        shipping_line1, shipping_line2, shipping_region, shipping_postal,
-        subtotal_amount, shipping_fee, total_amount, downpayment_amount, remaining_balance,
-        status, payment_method, payment_plan, order_option, payment_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-      [...insertParamsBase, orderOption ?? null],
-    );
+      if (hasTermsSnapshotColumn) {
+        await conn.query(
+          `INSERT INTO orders (
+            id, user_id, contact_name, contact_phone, shipping_label,
+            shipping_line1, shipping_line2, shipping_region, shipping_postal,
+            subtotal_amount, shipping_fee, total_amount, downpayment_amount, remaining_balance,
+            status, payment_method, payment_plan, order_option, payment_status,
+            terms_version_accepted_at_order,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW(), NOW())`,
+          [
+            ...insertParamsBase,
+            orderOption ?? null,
+            input.termsVersionAcceptedAtOrder ?? null,
+          ],
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO orders (
+            id, user_id, contact_name, contact_phone, shipping_label, 
+            shipping_line1, shipping_line2, shipping_region, shipping_postal,
+            subtotal_amount, shipping_fee, total_amount, downpayment_amount, remaining_balance,
+            status, payment_method, payment_plan, order_option, payment_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+          [...insertParamsBase, orderOption ?? null],
+        );
+      }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('order_option') || msg.includes('Unknown column')) {

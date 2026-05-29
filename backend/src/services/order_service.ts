@@ -189,6 +189,55 @@ const notifyAdminsOrderFullyPaid = async (params: {
   });
 };
 
+/** Fire-and-forget: new checkout — admins get inbox mail even when offline. */
+const notifyAdminsNewOrderPlaced = (params: {
+  readonly orderId: string;
+  readonly userId: string;
+  readonly customerName: string;
+  readonly totalAmount: number;
+  readonly paymentMethod: string;
+  readonly status: string;
+}): void => {
+  const shortRef = params.orderId.substring(0, 8).toUpperCase();
+  EmailService.sendAdminEventEmail({
+    title: 'New order placed',
+    message: `A customer placed order #${shortRef}. Review it in the admin Orders panel.`,
+    details: [
+      { label: 'Order ID', value: params.orderId },
+      { label: 'User ID', value: params.userId },
+      { label: 'Customer', value: params.customerName || 'n/a' },
+      { label: 'Total', value: `₱${params.totalAmount.toFixed(2)}` },
+      { label: 'Payment method', value: params.paymentMethod },
+      { label: 'Status', value: params.status },
+    ],
+  }).catch((error) => {
+    console.error('Failed to send admin new-order alert email:', error);
+  });
+};
+
+/** Fire-and-forget: user uploaded proof — pending admin verification. */
+const notifyAdminsPaymentProofUploaded = (params: {
+  readonly orderId: string;
+  readonly userId: string;
+  readonly totalAmount: number;
+  readonly paymentMethod: string;
+}): void => {
+  const shortRef = params.orderId.substring(0, 8).toUpperCase();
+  EmailService.sendAdminEventEmail({
+    title: 'Payment proof uploaded',
+    message: `Order #${shortRef} has a new payment proof awaiting verification.`,
+    details: [
+      { label: 'Order ID', value: params.orderId },
+      { label: 'User ID', value: params.userId },
+      { label: 'Amount', value: `₱${params.totalAmount.toFixed(2)}` },
+      { label: 'Payment method', value: params.paymentMethod },
+      { label: 'Status', value: 'pending_payment_verification' },
+    ],
+  }).catch((error) => {
+    console.error('Failed to send admin payment-proof alert email:', error);
+  });
+};
+
 const toShortOrderRef = (orderId: string): string => orderId.substring(0, 8).toUpperCase();
 
 const buildOrderStatusNotification = (
@@ -1393,6 +1442,16 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
   if (rows.length === 0) {
     throw new Error('Failed to create order');
   }
+
+  notifyAdminsNewOrderPlaced({
+    orderId: id,
+    userId: input.userId,
+    customerName: contactName,
+    totalAmount: input.totalAmount,
+    paymentMethod,
+    status,
+  });
+
   return await mapOrder(rows[0]);
 };
 
@@ -1620,6 +1679,14 @@ export const uploadPaymentProof = async (
   }
   
   console.log(`📸 Payment proof uploaded for order ${orderId}: ${proofUrl}`);
+
+  const order = orderRows[0];
+  notifyAdminsPaymentProofUploaded({
+    orderId,
+    userId: order.user_id,
+    totalAmount: Number(order.total_amount),
+    paymentMethod: String(order.payment_method ?? 'unknown'),
+  });
 };
 
 /**

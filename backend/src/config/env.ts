@@ -74,6 +74,13 @@ type EnvironmentConfig = {
     readonly secret: string;
     readonly expiresIn: string;
   };
+  /**
+   * Extra inboxes for operational admin alerts (comma-separated).
+   * Merged with active `admins` rows — no login required to receive mail.
+   */
+  readonly adminAlerts: {
+    readonly extraEmails: readonly string[];
+  };
 };
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -184,6 +191,12 @@ export const config: EnvironmentConfig = {
       return 'dev-insecure-admin-jwt-change-me';
     })(),
     expiresIn: (process.env.ADMIN_JWT_EXPIRES_IN ?? '7d').trim(),
+  },
+  adminAlerts: {
+    extraEmails: (process.env.ADMIN_ALERT_EMAILS ?? '')
+      .split(/[,;]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length > 0 && s.includes('@')),
   },
 };
 

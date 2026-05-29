@@ -75,9 +75,9 @@ dependencies {
     // Pull in the official ARCore runtime so our availability checks compile.
     implementation("com.google.ar:core:1.44.0")
     // SceneView core (3D engine).
-    implementation("io.github.sceneview:sceneview:2.2.1")
+    implementation("io.github.sceneview:sceneview:2.3.3")
     // ARSceneView module, which exposes io.github.sceneview.ar.ARSceneView.
-    implementation("io.github.sceneview:arsceneview:2.2.1")
+    implementation("io.github.sceneview:arsceneview:2.3.3")
 
     // Needed by flutter_local_notifications (uses java.time / newer JDK APIs on Android).
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")

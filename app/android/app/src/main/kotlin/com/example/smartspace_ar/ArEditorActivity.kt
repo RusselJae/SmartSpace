@@ -80,6 +80,10 @@ class ArEditorActivity : ComponentActivity() {
     companion object {
         // Simple request code for camera permission prompts.
         private const val CAMERA_PERMISSION_REQUEST = 1001
+        /** Finger must move this far before we treat the gesture as a placement drag. */
+        private const val DRAG_THRESHOLD_PX = 12f
+        /** Avoid creating a new ARCore anchor on every MOVE event. */
+        private const val REANCHOR_MIN_INTERVAL_MS = 80L
     }
 
     // Values passed in from Flutter via the starting Intent. We continue to
@@ -179,12 +183,16 @@ class ArEditorActivity : ComponentActivity() {
     private var overlaysVisible: Boolean = true
     private var overlaysEyeButton: ImageButton? = null
     private var tipsHintButton: ImageButton? = null
-    private var placeModelButton: Button? = null
-    private var placementReticle: View? = null
-    // Scene-Viewer-like placement flow:
-    // - true: wait for explicit "PLACE MODEL" action.
-    // - false: model is already placed/restored and editable.
-    private var pendingManualPlacement: Boolean = true
+    /** Locks drag / pinch / rotate and overlay scale controls once the user is happy. */
+    private var placementLockButton: ImageButton? = null
+    private var isModelTransformLocked: Boolean = false
+    /** +/- and reset controls disabled while the model transform is locked. */
+    private val overlayTransformControls: MutableList<View> = mutableListOf()
+    /** Custom floor drag: re-anchor to hit-test, not local model offset. */
+    private var isPlacementDragging: Boolean = false
+    private var dragStartX: Float = 0f
+    private var dragStartY: Float = 0f
+    private var lastReanchorAtMs: Long = 0L
 
     /** Short AR how‑to; hidden as soon as the model is anchored in the scene. */
     private var arTipsBanner: TextView? = null
@@ -225,9 +233,6 @@ class ArEditorActivity : ComponentActivity() {
 
             // Load persisted placement+scale state (if any).
             loadRestoredStateAndApplyToFields()
-            // Restored sessions should place automatically; fresh sessions wait
-            // for explicit "PLACE MODEL" to reduce floating/jitter impressions.
-            pendingManualPlacement = !restoreIsPlaced
         }
 
         // --------------------------------------------------------------------
@@ -262,9 +267,13 @@ class ArEditorActivity : ComponentActivity() {
                 // (reduces the "floating" feel from approximate instant placement).
                 config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
 
-                // Re-enable environmental HDR so indirect light + reflections
-                // match the real room better (ambient-only looked too dark).
+                // HDR for sun direction; neutral IBL + disabled live reflections keep
+                // wood tones close to the in-app ModelViewer (see applyCatalogMatchedArRendering).
                 config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+            }
+
+            onSessionCreated = { _ ->
+                post { applyCatalogMatchedArRendering() }
             }
 
             // Once per ARCore frame, if we have a loaded model and haven't
@@ -273,10 +282,8 @@ class ArEditorActivity : ComponentActivity() {
             // appear automatically at 100% size when the scene opens.
             onSessionUpdated = { _: Session, _ ->
                 try {
-                    // Only auto-place when we're restoring a previously placed model.
-                    if (!pendingManualPlacement) {
-                        tryAutoPlaceModel()
-                    }
+                    // Auto-place at screen centre (or restored point) as soon as a floor is found.
+                    tryAutoPlaceModel()
                     // Keep overlay labels/persistence in sync with gesture edits
                     // (drag/pinch/rotate) that don't pass through our +/- handlers.
                     updateScaleAndSizeLabels()
@@ -287,97 +294,138 @@ class ArEditorActivity : ComponentActivity() {
                 }
             }
 
-            // Allow the user to re-anchor the already placed model by tapping
-            // on another horizontal plane. We keep rotation/scale on the
-            // existing node and simply move it under a new AnchorNode.
+            // Drag = re-anchor to floor under finger (not local position offset).
+            // Return false so pinch/rotate still reach SceneView when not dragging.
             onTouchEvent = { motionEvent: MotionEvent, _ ->
-                if (motionEvent.action == MotionEvent.ACTION_UP) {
-                    val instance = modelInstance
-                    val currentModel = modelNode
-                    val currentAnchor = anchorNode
-                    if (instance != null && currentModel != null && currentAnchor != null) {
-                        val hit: HitResult? = hitTestAR(
-                            xPx = motionEvent.x,
-                            yPx = motionEvent.y,
-                            planeTypes = setOf(Plane.Type.HORIZONTAL_UPWARD_FACING)
-                        )
-                        if (hit != null) {
-                            // Persist the last "point X" as a normalized screen
-                            // coordinate so restoring works across orientation changes.
-                            if (arSceneView.width > 0 && arSceneView.height > 0) {
-                                lastHitXNorm = motionEvent.x / arSceneView.width
-                                lastHitYNorm = motionEvent.y / arSceneView.height
-                            }
-                            reanchorModel(hit, currentModel, currentAnchor)
-                        }
-                    }
-                }
-                // Return false so that ARSceneView's internal gesture system
-                // (scale/rotate) still receives the event stream.
+                handlePlacementDragTouch(motionEvent)
                 false
             }
         }
 
+        rootLayout.addView(
+            arSceneView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        // Build and attach a minimal overlay toolbar that:
+        // - Surfaces a readable scale + size status.
+        // - Provides explicit +/- buttons as an alternative to pinch gesture.
+        // - Gives short AR usage hints that work in both portrait & landscape.
+        attachOverlayToolbar(rootLayout)
+
+        // Option A: bottom-left variant carousel (left side in both orientations).
+        attachVariantCarouselPlaceholder(rootLayout)
+
+        // Center-top AR usage tips (dismissed once the model is placed).
+        attachArTipsBanner(rootLayout)
+        // Top-left hint icon to re-open usage instructions on demand.
+        attachTipsHintButton(rootLayout)
+        // One-button toggle: hide/show BOTH overlays together.
+        attachOverlaysEyeToggleButton(rootLayout)
+        // Lock icon directly under the eye toggle.
+        attachPlacementLockButton(rootLayout)
+        // Bottom utility actions appear only when overlays are hidden.
+        attachHiddenActionsBar(rootLayout)
+
+        setContentView(rootLayout)
+        // Push overlays inside status / nav / gesture insets so nothing sits under
+        // system bars or the landscape nav rail.
+        applyWindowInsetsToOverlays(rootLayout)
+
         // --------------------------------------------------------------------
-        // Anti-floating pass (1/3): depth occlusion (when supported).
+        // 4. Camera permission check (basic handling).
         // --------------------------------------------------------------------
         //
-        // Depth occlusion is the biggest realism cue: real-world geometry can
-        // visually overlap the model so it doesn't read like it's hovering.
+        // This keeps the Activity from crashing on devices where the camera
+        // permission hasn't been granted yet.
+        ensureCameraPermission()
+
+        // --------------------------------------------------------------------
+        // 5. Kick off background model loading for auto-place.
+        // --------------------------------------------------------------------
         //
-        // SceneView exposes this on ARCameraStream, but the API name can vary,
-        // so we enable it via reflection.
+        // We resolve the GLB referenced by [modelSrc] using SceneView's
+        // built‑in [ModelLoader]. Once loaded, taps can reuse this single
+        // [ModelInstance] and attach it to new anchors instantly.
+        preloadModelInstance()
+    }
+
+    /**
+     * Match product-detail [ModelViewer] look: neutral studio IBL, not chrome-like live HDR
+     * reflections from sky/walls. Also enables depth occlusion when supported.
+     */
+    private fun applyCatalogMatchedArRendering() {
         try {
-            val cameraStream =
-                arSceneView.javaClass.methods
-                    .firstOrNull { it.name == "getCameraStream" && it.parameterCount == 0 }
-                    ?.invoke(arSceneView)
-            if (cameraStream != null) {
-                listOf(
-                    "setDepthOcclusionEnabled",
-                    "setIsDepthOcclusionEnabled",
-                    "setDepthOcclusion"
-                ).forEach { mName ->
-                    try {
-                        cameraStream.javaClass.methods
-                            .firstOrNull { it.name == mName && it.parameterCount == 1 }
-                            ?.invoke(cameraStream, true)
-                    } catch (_: Throwable) {
-                    }
-                }
-                try {
-                    val f = cameraStream.javaClass.declaredFields.firstOrNull { it.name == "isDepthOcclusionEnabled" }
-                    if (f != null) {
-                        f.isAccessible = true
-                        if (f.type == Boolean::class.javaPrimitiveType || f.type == Boolean::class.java) {
-                            f.setBoolean(cameraStream, true)
-                        }
-                    }
-                } catch (_: Throwable) {
-                }
+            val neutralEnv = arSceneView.environmentLoader.createKTX1Environment(
+                "environments/neutral/neutral_ibl.ktx",
+                "environments/neutral/neutral_skybox.ktx"
+            )
+            arSceneView.environment = neutralEnv
+            // Neutral IBL only — keep the live camera feed (do not apply studio skybox).
+            arSceneView.indirectLight = neutralEnv.indirectLight
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "Failed to apply neutral IBL environment", t)
+        }
+
+        try {
+            arSceneView.lightEstimator?.apply {
+                // Live HDR cubemap from the camera makes wood/marble read as silver outdoors.
+                environmentalHdrReflections = false
+                environmentalHdrSpecularFilter = false
             }
         } catch (_: Throwable) {
         }
 
-        // Hide AR visual guides (plane mesh + feature-point dots).
-        //
-        // Important:
-        // - ARCore itself does NOT draw point-cloud dots; apps/libraries do.
-        // - SceneView's API surface has shifted between versions, so we use
-        //   reflection and attempt multiple known patterns.
-        //
-        // Goal: clean camera feed while keeping plane detection and hit-tests working.
         try {
+            arSceneView.cameraStream?.isDepthOcclusionEnabled = true
+        } catch (_: Throwable) {
+        }
+
+        hideArDebugVisualizers()
+    }
+
+    /** Floor hit-test used for auto-place and drag-to-reanchor. */
+    private fun hitTestFloor(xPx: Float, yPx: Float): HitResult? {
+        return arSceneView.hitTestAR(
+            xPx = xPx,
+            yPx = yPx,
+            planeTypes = setOf(Plane.Type.HORIZONTAL_UPWARD_FACING),
+            depthPoint = true
+        )
+    }
+
+    private fun hideArDebugVisualizers() {
+        try {
+            listOf("setIsPointCloudVisible", "setPointCloudVisible").forEach { methodName ->
+                try {
+                    arSceneView.javaClass.methods
+                        .firstOrNull { it.name == methodName && it.parameterCount == 1 }
+                        ?.invoke(arSceneView, false)
+                } catch (_: Throwable) {
+                }
+            }
+            listOf("setIsPlaneRendererVisible", "setPlaneRendererVisible").forEach { methodName ->
+                try {
+                    arSceneView.javaClass.methods
+                        .firstOrNull { it.name == methodName && it.parameterCount == 1 }
+                        ?.invoke(arSceneView, false)
+                } catch (_: Throwable) {
+                }
+            }
+
             fun disableRenderer(obj: Any?) {
                 if (obj == null) return
                 val clazz = obj.javaClass
-                // Try common "enabled/visible" setters.
                 listOf("setEnabled", "setVisible", "setIsEnabled", "setIsVisible").forEach { name ->
                     clazz.methods.firstOrNull { it.name == name && it.parameterCount == 1 }?.let { m ->
-                        try { m.invoke(obj, false) } catch (_: Throwable) {}
+                        try {
+                            m.invoke(obj, false)
+                        } catch (_: Throwable) {
+                        }
                     }
                 }
-                // Try mutable boolean fields if present.
                 listOf("isEnabled", "enabled", "isVisible", "visible").forEach { fieldName ->
                     try {
                         val f = clazz.declaredFields.firstOrNull { it.name == fieldName }
@@ -387,7 +435,8 @@ class ArEditorActivity : ComponentActivity() {
                                 f.setBoolean(obj, false)
                             }
                         }
-                    } catch (_: Throwable) {}
+                    } catch (_: Throwable) {
+                    }
                 }
             }
 
@@ -402,209 +451,175 @@ class ArEditorActivity : ComponentActivity() {
                 }
             }
 
-            // Plane mesh renderer (common).
             tryDisableFromGetter("getPlaneRenderer")
-            // Feature-point / point-cloud / debug renderers (varies by version).
             tryDisableFromGetter("getPointCloudRenderer")
             tryDisableFromGetter("getPointCloud")
             tryDisableFromGetter("getPointCloudNode")
             tryDisableFromGetter("getDebugRenderer")
             tryDisableFromGetter("getArCoreDebugRenderer")
 
-            // Last-resort: scan fields on ARSceneView for any renderer/visualizer-like object
-            // (some versions expose these as properties instead of getters).
-            arSceneView.javaClass.declaredFields.forEach { f ->
-                try {
-                    f.isAccessible = true
-                    val name = f.name.lowercase()
-                    val typeName = (f.type.name ?: "").lowercase()
-                    val looksRelevant =
-                        name.contains("plane") ||
-                            name.contains("point") ||
-                            name.contains("cloud") ||
-                            name.contains("debug") ||
-                            typeName.contains("plane") ||
-                            typeName.contains("point") ||
-                            typeName.contains("cloud") ||
-                            typeName.contains("debug")
-                    if (!looksRelevant) return@forEach
-                    disableRenderer(f.get(arSceneView))
-                } catch (_: Throwable) {
-                }
-            }
-
-            // Also scan camera stream (some implementations hang visualizers off the stream).
-            try {
-                val stream =
-                    arSceneView.javaClass.methods
-                        .firstOrNull { it.name == "getCameraStream" && it.parameterCount == 0 }
-                        ?.invoke(arSceneView)
-                if (stream != null) {
-                    stream.javaClass.declaredFields.forEach { f ->
-                        try {
-                            f.isAccessible = true
-                            val name = f.name.lowercase()
-                            val typeName = (f.type.name ?: "").lowercase()
-                            val looksRelevant =
-                                name.contains("plane") ||
-                                    name.contains("point") ||
-                                    name.contains("cloud") ||
-                                    name.contains("debug") ||
-                                    typeName.contains("plane") ||
-                                    typeName.contains("point") ||
-                                    typeName.contains("cloud") ||
-                                    typeName.contains("debug")
-                            if (!looksRelevant) return@forEach
-                            disableRenderer(f.get(stream))
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-            } catch (_: Throwable) {
-            }
+            arSceneView.planeRenderer?.let { disableRenderer(it) }
         } catch (_: Throwable) {
         }
-
-        // Indoor ARCore scenes often read a little flat; nudge Filament's main directional
-        // slightly brighter while keeping HDR estimation enabled above.
-        arSceneView.post {
-            try {
-                val node = arSceneView.mainLightNode
-                if (node != null) {
-                    val i = node.intensity
-                    if (i.isFinite() && i > 0f) {
-                        node.intensity = (i * 1.42f).coerceIn(1f, 500_000f)
-                    }
-                }
-            } catch (_: Throwable) {
-            }
-        }
-
-        rootLayout.addView(
-            arSceneView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-
-        // Build and attach a minimal overlay toolbar that:
-        // - Surfaces a readable scale + size status.
-        // - Provides explicit +/- buttons as an alternative to pinch gesture.
-        // - Gives short AR usage hints that work in both portrait & landscape.
-        attachOverlayToolbar(rootLayout)
-
-        // Option A: bottom-left variant carousel (left side in both orientations).
-        attachVariantCarouselPlaceholder(rootLayout)
-
-        // Center-top AR usage tips (dismissed once the model is placed).
-        attachArTipsBanner(rootLayout)
-        // Top-left hint icon to re-open usage instructions on demand.
-        attachTipsHintButton(rootLayout)
-        // Scene-Viewer style center reticle + explicit "PLACE MODEL" affordance.
-        attachPlacementReticle(rootLayout)
-        attachPlaceModelButton(rootLayout)
-
-        // One-button toggle: hide/show BOTH overlays together.
-        attachOverlaysEyeToggleButton(rootLayout)
-        // Bottom utility actions appear only when overlays are hidden.
-        attachHiddenActionsBar(rootLayout)
-
-        setContentView(rootLayout)
-        // Push overlays inside status / nav / gesture insets so nothing sits under
-        // system bars or the landscape nav rail.
-        applyWindowInsetsToOverlays(rootLayout)
-        updatePlacementUiVisibility()
-
-        // --------------------------------------------------------------------
-        // 4. Camera permission check (basic handling).
-        // --------------------------------------------------------------------
-        //
-        // This keeps the Activity from crashing on devices where the camera
-        // permission hasn't been granted yet.
-        ensureCameraPermission()
-
-        // --------------------------------------------------------------------
-        // 5. Kick off background model loading for tap‑to‑place.
-        // --------------------------------------------------------------------
-        //
-        // We resolve the GLB referenced by [modelSrc] using SceneView's
-        // built‑in [ModelLoader]. Once loaded, taps can reuse this single
-        // [ModelInstance] and attach it to new anchors instantly.
-        preloadModelInstance()
     }
 
-    private fun attachPlacementReticle(root: FrameLayout) {
+    private fun attachPlacementLockButton(root: FrameLayout) {
         fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
-        val reticle = View(this).apply {
-            setBackgroundColor(0xDDFFFFFF.toInt())
-            alpha = 0.92f
+        val btnSize = dpToPx(44)
+        val btn = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_lock_open)
+            setBackgroundColor(0x00000000)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            adjustViewBounds = true
+            minimumWidth = btnSize
+            minimumHeight = btnSize
+            setPadding(dpToPx(10), dpToPx(10), dpToPx(10), dpToPx(10))
+            contentDescription = "Lock model position"
+            visibility = View.GONE
+            setOnClickListener { toggleModelTransformLock() }
         }
-        placementReticle = reticle
-        val size = dpToPx(10)
-        root.addView(
-            reticle,
-            FrameLayout.LayoutParams(size, size, Gravity.CENTER)
-        )
-    }
-
-    private fun attachPlaceModelButton(root: FrameLayout) {
-        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
-        val btn = Button(this).apply {
-            text = "PLACE MODEL"
-            setAllCaps(false)
-            textSize = 14f
-            setTextColor(0xFFFFFFFF.toInt())
-            background = ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_overlay_control)
-            setPadding(dpToPx(18), dpToPx(10), dpToPx(18), dpToPx(10))
-            contentDescription = "Place model on detected floor"
-            setOnClickListener { manualPlaceAtScreenCenter() }
-        }
-        placeModelButton = btn
+        placementLockButton = btn
         root.addView(
             btn,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                Gravity.TOP or Gravity.END
             ).apply {
-                bottomMargin = dpToPx(94)
-                marginStart = dpToPx(16)
                 marginEnd = dpToPx(16)
+                // Final offset is tuned in [applyWindowInsetsToOverlays] (below eye icon).
+                topMargin = dpToPx(60)
             }
         )
     }
 
-    private fun updatePlacementUiVisibility() {
-        val show = pendingManualPlacement && anchorNode == null && modelNode == null
-        placementReticle?.visibility = if (show) View.VISIBLE else View.GONE
-        placeModelButton?.visibility = if (show) View.VISIBLE else View.GONE
+    private fun toggleModelTransformLock() {
+        if (modelNode == null || anchorNode == null) return
+        isModelTransformLocked = !isModelTransformLocked
+        applyModelTransformLockState()
+        updatePlacementLockButtonUi()
+        if (isModelTransformLocked) {
+            maybePersistUserEdits(force = true)
+            Toast.makeText(this, "Position locked", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "You can move the model again", Toast.LENGTH_SHORT).show()
+        }
     }
 
-    private fun manualPlaceAtScreenCenter() {
-        val instance = modelInstance
-        if (instance == null) {
-            Toast.makeText(this, "Model still loading. Please wait.", Toast.LENGTH_SHORT).show()
+    /**
+     * Placement moves use custom hit-test re-anchoring in [handlePlacementDragTouch],
+     * not SceneView's built-in [AnchorNode] drag (which detaches anchors differently).
+     */
+    private fun configurePlacedAnchorNode(anchor: AnchorNode) {
+        anchor.isEditable = false
+        anchor.isPositionEditable = false
+        anchor.isRotationEditable = false
+        anchor.isScaleEditable = false
+        anchor.isSmoothTransformEnabled = false
+        anchor.updateAnchorPose = true
+    }
+
+    /**
+     * Finger drag on the floor: repeatedly hit-test and [reanchorModel] (throttled).
+     * Ignored while [isModelTransformLocked] or before a model is placed.
+     */
+    private fun handlePlacementDragTouch(motionEvent: MotionEvent) {
+        if (isModelTransformLocked || modelNode == null || anchorNode == null) {
+            isPlacementDragging = false
             return
         }
-        val x = arSceneView.width / 2.0f
-        val y = arSceneView.height / 2.0f
-        val hit = arSceneView.hitTestAR(
-            xPx = x,
-            yPx = y,
-            planeTypes = setOf(Plane.Type.HORIZONTAL_UPWARD_FACING)
-        )
-        if (hit == null) {
-            Toast.makeText(this, "Scan floor slowly, then try again.", Toast.LENGTH_SHORT).show()
+        if (motionEvent.pointerCount > 1) {
+            isPlacementDragging = false
             return
         }
+
+        when (motionEvent.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                isPlacementDragging = false
+                dragStartX = motionEvent.x
+                dragStartY = motionEvent.y
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = kotlin.math.abs(motionEvent.x - dragStartX)
+                val dy = kotlin.math.abs(motionEvent.y - dragStartY)
+                if (dx > DRAG_THRESHOLD_PX || dy > DRAG_THRESHOLD_PX) {
+                    isPlacementDragging = true
+                }
+                if (isPlacementDragging) {
+                    tryReanchorAtScreen(motionEvent.x, motionEvent.y)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (isPlacementDragging) {
+                    tryReanchorAtScreen(motionEvent.x, motionEvent.y, force = true)
+                    maybePersistUserEdits(force = true)
+                }
+                isPlacementDragging = false
+            }
+        }
+    }
+
+    /**
+     * Hit-test the floor and move the anchor to that pose. Throttled during MOVE;
+     * [force] skips throttle on pointer up for a final snap.
+     */
+    private fun tryReanchorAtScreen(xPx: Float, yPx: Float, force: Boolean = false): Boolean {
+        val currentModel = modelNode ?: return false
+        val currentAnchor = anchorNode ?: return false
+
+        val nowMs = SystemClock.elapsedRealtime()
+        if (!force && nowMs - lastReanchorAtMs < REANCHOR_MIN_INTERVAL_MS) {
+            return false
+        }
+
+        val hit = hitTestFloor(xPx, yPx) ?: return false
+
+        lastReanchorAtMs = nowMs
+        reanchorModel(hit, currentModel, currentAnchor)
+
         if (arSceneView.width > 0 && arSceneView.height > 0) {
-            lastHitXNorm = x / arSceneView.width
-            lastHitYNorm = y / arSceneView.height
+            lastHitXNorm = xPx / arSceneView.width
+            lastHitYNorm = yPx / arSceneView.height
         }
-        pendingManualPlacement = false
-        placeAnchoredModel(hit, instance)
-        updatePlacementUiVisibility()
+        return true
+    }
+
+    private fun applyModelTransformLockState() {
+        val node = modelNode ?: return
+        val anchor = anchorNode ?: return
+        val editable = !isModelTransformLocked
+
+        configurePlacedAnchorNode(anchor)
+
+        // Position moves via [handlePlacementDragTouch]; never local ModelNode offset drag.
+        node.isEditable = true
+        node.isPositionEditable = false
+        node.isRotationEditable = editable
+        node.isScaleEditable = editable
+        node.isSmoothTransformEnabled = false
+
+        overlayTransformControls.forEach { control ->
+            control.isEnabled = editable
+            control.alpha = if (editable) 1f else 0.42f
+        }
+    }
+
+    private fun updatePlacementLockButtonUi() {
+        val btn = placementLockButton ?: return
+        val placed = anchorNode != null && modelNode != null
+        btn.visibility = if (placed) View.VISIBLE else View.GONE
+        if (!placed) return
+        btn.setImageResource(
+            if (isModelTransformLocked) R.drawable.ic_lock else R.drawable.ic_lock_open
+        )
+        btn.contentDescription =
+            if (isModelTransformLocked) "Unlock model position" else "Lock model position"
+    }
+
+    private fun registerOverlayTransformControl(view: View) {
+        overlayTransformControls += view
+        view.isEnabled = !isModelTransformLocked
+        view.alpha = if (isModelTransformLocked) 0.42f else 1f
     }
 
     /**
@@ -855,6 +870,8 @@ class ArEditorActivity : ComponentActivity() {
 
             row.addView(minusButton, btnParams)
             row.addView(plusButton, btnParams)
+            registerOverlayTransformControl(minusButton)
+            registerOverlayTransformControl(plusButton)
 
             return row
         }
@@ -895,6 +912,7 @@ class ArEditorActivity : ComponentActivity() {
                 ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_overlay_control)
             setOnClickListener { resetScaleToBase() }
         }
+        registerOverlayTransformControl(resetButton)
 
         val resetRow = FrameLayout(this).apply {
             setPadding(0, 4, 0, 4)
@@ -1047,6 +1065,14 @@ class ArEditorActivity : ComponentActivity() {
                     v.layoutParams = lp
                 }
             }
+            placementLockButton?.let { v ->
+                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                    lp.gravity = Gravity.TOP or Gravity.END
+                    lp.topMargin = insetTop + dp(56)
+                    lp.marginEnd = insetEnd + navRailExtra + dp(16)
+                    v.layoutParams = lp
+                }
+            }
             tipsHintButton?.let { v ->
                 (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
                     lp.topMargin = insetTop + dp(8)
@@ -1083,13 +1109,6 @@ class ArEditorActivity : ComponentActivity() {
                     v.layoutParams = lp
                 }
             }
-            placeModelButton?.let { v ->
-                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                    lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                    lp.bottomMargin = insetBottom + dp(82)
-                    v.layoutParams = lp
-                }
-            }
             insets
         }
         ViewCompat.requestApplyInsets(root)
@@ -1108,9 +1127,9 @@ class ArEditorActivity : ComponentActivity() {
 
         // Short phrases only; we rotate every few seconds so the banner stays readable.
         val tips = listOf(
-            "Point at a flat surface.",
-            "Drag to move. Pinch to scale.",
-            "Two fingers to rotate."
+            "Scan the floor — model places automatically.",
+            "Drag on the floor to move. Pinch and rotate to adjust.",
+            "Tap the lock when you're happy with it."
         )
 
         val tv = TextView(this).apply {
@@ -1177,9 +1196,9 @@ class ArEditorActivity : ComponentActivity() {
         AlertDialog.Builder(this)
             .setTitle("How to use AR")
             .setMessage(
-                "1) Point camera at a flat surface.\n\n" +
-                    "2) Drag model to move it, pinch to scale.\n\n" +
-                    "3) Use two fingers to rotate the model."
+                "1) Point at the floor — the model appears automatically.\n\n" +
+                    "2) Drag, pinch, and rotate to adjust size and position.\n\n" +
+                    "3) Tap the lock icon to freeze position. Tap again to edit."
             )
             .setPositiveButton("Got it", null)
             .show()
@@ -1593,6 +1612,7 @@ class ArEditorActivity : ComponentActivity() {
         hide(variantCarouselContainer)
         hide(overlaysEyeButton)
         hide(hiddenActionsBar)
+        hide(placementLockButton)
         hide(arTipsBanner)
 
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -1797,9 +1817,7 @@ class ArEditorActivity : ComponentActivity() {
             // Case A: no model placed yet -> preload and let auto-place happen.
             if (anchorNode == null || modelNode == null) {
                 modelInstance = instance
-                if (!pendingManualPlacement) {
-                    tryAutoPlaceModel()
-                }
+                tryAutoPlaceModel()
                 return@loadModelInstanceAsync
             }
 
@@ -1811,7 +1829,7 @@ class ArEditorActivity : ComponentActivity() {
 
             val newNode = YawLimitedModelNode(modelInstance = instance).apply {
                 isEditable = true
-                isPositionEditable = true
+                isPositionEditable = false
                 isRotationEditable = true
                 isScaleEditable = true
                 editableScaleRange = 0.3f..4.0f
@@ -1847,6 +1865,7 @@ class ArEditorActivity : ComponentActivity() {
 
             anchor.addChildNode(newNode)
             modelNode = newNode
+            applyModelTransformLockState()
             updateScaleAndSizeLabels()
             maybePersistUserEdits()
         }
@@ -1960,11 +1979,7 @@ class ArEditorActivity : ComponentActivity() {
             arSceneView.height / 2.0f
         }
 
-        val hit: HitResult? = arSceneView.hitTestAR(
-            xPx = targetX,
-            yPx = targetY,
-            planeTypes = setOf(Plane.Type.HORIZONTAL_UPWARD_FACING)
-        )
+        val hit: HitResult? = hitTestFloor(targetX, targetY)
 
         if (hit == null) {
             if (useSavedPlacement) restorePlacementFailedFrames += 1
@@ -1990,7 +2005,7 @@ class ArEditorActivity : ComponentActivity() {
         val anchorNode = AnchorNode(
             engine = arSceneView.engine,
             anchor = hitResult.createAnchor()
-        )
+        ).also { configurePlacedAnchorNode(it) }
 
         // Wrap the loaded model into a SceneView [ModelNode] so it can live in
         // the node graph and participate in the gesture system.
@@ -1998,6 +2013,7 @@ class ArEditorActivity : ComponentActivity() {
             // Opt this node into SceneView's built‑in editing pipeline so users
             // can drag, scale and rotate it directly on top of the anchor.
             isEditable = true
+            isPositionEditable = false
             isRotationEditable = true
             isScaleEditable = true
             editableScaleRange = 0.3f..4.0f
@@ -2044,8 +2060,10 @@ class ArEditorActivity : ComponentActivity() {
         // Keep track of what we've placed so we don't try to auto-place again.
         this.anchorNode = anchorNode
         this.modelNode = modelNode
-        pendingManualPlacement = false
-        updatePlacementUiVisibility()
+        modelNode.isVisible = true
+        isModelTransformLocked = false
+        applyModelTransformLockState()
+        updatePlacementLockButtonUi()
 
         // Refresh the overlay so users immediately see an accurate scale/size
         // read‑out once the model appears in the scene.
@@ -2069,21 +2087,28 @@ class ArEditorActivity : ComponentActivity() {
         currentModelNode: YawLimitedModelNode,
         currentAnchorNode: AnchorNode
     ) {
-        // Create a new anchor at the tapped pose.
+        // Clear any prior drag offset so the model sits exactly on the new anchor.
+        currentModelNode.position = Position(0f, 0f, 0f)
+
         val newAnchorNode = AnchorNode(
             engine = arSceneView.engine,
             anchor = hitResult.createAnchor()
-        )
+        ).also { configurePlacedAnchorNode(it) }
 
-        // Move the existing model under the new anchor.
         currentAnchorNode.removeChildNode(currentModelNode)
-        newAnchorNode.addChildNode(currentModelNode)
-
-        // Swap anchor nodes in the scene graph.
         arSceneView.removeChildNode(currentAnchorNode)
+        try {
+            currentAnchorNode.anchor.detach()
+        } catch (_: Throwable) {
+        }
+        try {
+            currentAnchorNode.destroy()
+        } catch (_: Throwable) {
+        }
+
+        newAnchorNode.addChildNode(currentModelNode)
         arSceneView.addChildNode(newAnchorNode)
 
-        // Update our references so future re-anchors use the latest node.
         anchorNode = newAnchorNode
         modelNode = currentModelNode
 
@@ -2107,6 +2132,7 @@ class ArEditorActivity : ComponentActivity() {
      * [YawLimitedModelNode], then the overlay labels are refreshed.
      */
     private fun applyWidthDelta(factor: Float) {
+        if (isModelTransformLocked) return
         val node = modelNode ?: return
 
         val current = node.scale
@@ -2127,6 +2153,7 @@ class ArEditorActivity : ComponentActivity() {
      * depth untouched.
      */
     private fun applyHeightDelta(factor: Float) {
+        if (isModelTransformLocked) return
         val node = modelNode ?: return
 
         val current = node.scale
@@ -2147,6 +2174,7 @@ class ArEditorActivity : ComponentActivity() {
      * height untouched.
      */
     private fun applyDepthDelta(factor: Float) {
+        if (isModelTransformLocked) return
         val node = modelNode ?: return
 
         val current = node.scale
@@ -2193,6 +2221,7 @@ class ArEditorActivity : ComponentActivity() {
     }
 
     private fun resetScaleToBase() {
+        if (isModelTransformLocked) return
         val node = modelNode ?: return
         val base = safeBaseScale(modelBaseScale)
         val current = node.scale

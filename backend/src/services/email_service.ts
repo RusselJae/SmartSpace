@@ -332,6 +332,9 @@ export class EmailService {
     try {
       const recipients = await EmailService.getAdminRecipients();
       if (recipients.length === 0) {
+        console.warn(
+          '⚠️ Admin alert skipped: no recipients. Add active admins in the database and/or set ADMIN_ALERT_EMAILS.',
+        );
         return;
       }
       const detailRows = (params.details ?? [])
@@ -362,19 +365,38 @@ export class EmailService {
   }
 
   /**
-   * Pull active admin recipients from the admins table.
+   * Operational alert recipients: every active admin in `admins`, plus optional
+   * `ADMIN_ALERT_EMAILS` (comma-separated). Delivery is to the inbox — admins do
+   * not need to be logged into the console to receive these messages.
    */
   static async getAdminRecipients(): Promise<ReadonlyArray<{ readonly email: string; readonly name: string }>> {
     const pool = getPool();
     const [rows] = await pool.query<AdminEmailRow[]>(
       `SELECT email, full_name FROM admins WHERE COALESCE(is_active, TRUE) = TRUE`,
     );
-    return rows
-      .map((row) => ({
-        email: String(row.email ?? '').trim(),
+    const seen = new Set<string>();
+    const merged: Array<{ email: string; name: string }> = [];
+
+    for (const row of rows) {
+      const email = String(row.email ?? '').trim();
+      if (email.length === 0) continue;
+      const key = email.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({
+        email,
         name: String(row.full_name ?? '').trim(),
-      }))
-      .filter((row) => row.email.length > 0);
+      });
+    }
+
+    for (const extra of config.adminAlerts.extraEmails) {
+      const key = extra.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ email: extra, name: '' });
+    }
+
+    return merged;
   }
 
   /**

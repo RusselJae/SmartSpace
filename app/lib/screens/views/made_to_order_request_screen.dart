@@ -31,11 +31,14 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
   final AuthService _auth = AuthService();
   final ImagePicker _imagePicker = ImagePicker();
   final TextEditingController _itemController = TextEditingController();
-  final TextEditingController _sizeController = TextEditingController();
+  final TextEditingController _widthController = TextEditingController();
+  final TextEditingController _heightController = TextEditingController();
+  final TextEditingController _depthController = TextEditingController();
   final TextEditingController _materialsController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
   bool _agreePolicy = false;
   bool _submitting = false;
+  List<String> _availableMaterials = const [];
 
   XFile? _validIdXFile;
   List<PlatformFile> _referenceFiles = const [];
@@ -59,12 +62,58 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
     if (widget.prefilledProductName != null && widget.prefilledProductName!.trim().isNotEmpty) {
       _itemController.text = widget.prefilledProductName!.trim();
     }
+    _loadAvailableMaterials();
+  }
+
+  /// Pull distinct wood/material options from the live catalog for the hint line.
+  Future<void> _loadAvailableMaterials() async {
+    try {
+      final products = await _db.getAllProducts();
+      if (!mounted) return;
+      final materials = products
+          .map((p) => p.material.trim())
+          .where((m) => m.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      const commonMaterials = ['Mahogany', 'Acacia', 'Molave', 'Yakal'];
+      for (final material in commonMaterials) {
+        if (!materials.contains(material)) {
+          materials.add(material);
+        }
+      }
+      materials.sort();
+      setState(() => _availableMaterials = List<String>.unmodifiable(materials));
+    } catch (_) {
+      // Non-fatal — form still works without the hint.
+    }
+  }
+
+  String? _buildPreferredSize() {
+    final width = _widthController.text.trim();
+    final height = _heightController.text.trim();
+    final depth = _depthController.text.trim();
+    if (width.isEmpty && height.isEmpty && depth.isEmpty) return null;
+    final parts = <String>[];
+    if (width.isNotEmpty) parts.add('W: $width');
+    if (height.isNotEmpty) parts.add('H: $height');
+    if (depth.isNotEmpty) parts.add('D: $depth');
+    return parts.join(' × ');
+  }
+
+  String get _materialsHint {
+    if (_availableMaterials.isEmpty) {
+      return 'e.g. mahogany with matte walnut finish';
+    }
+    return 'Available: ${_availableMaterials.join(', ')}';
   }
 
   @override
   void dispose() {
     _itemController.dispose();
-    _sizeController.dispose();
+    _widthController.dispose();
+    _heightController.dispose();
+    _depthController.dispose();
     _materialsController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -137,7 +186,7 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
         userId: user.id,
         userName: user.fullName,
         itemName: item,
-        preferredSize: _sizeController.text.trim(),
+        preferredSize: _buildPreferredSize(),
         materials: _materialsController.text.trim(),
         notes: _notesController.text.trim(),
       );
@@ -216,6 +265,7 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
     required String label,
     required TextEditingController controller,
     String? placeholder,
+    String? hint,
     int maxLines = 1,
     TextInputType? keyboardType,
     bool required = false,
@@ -257,6 +307,18 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
             border: Border.all(color: _kWalnut.withValues(alpha: 0.2), width: 1),
           ),
         ),
+        if (hint != null && hint.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            hint,
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              height: 1.35,
+              color: _kMuted,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -330,16 +392,52 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
               required: true,
             ),
             const SizedBox(height: 12),
-            _field(
-              label: 'Preferred Size',
-              controller: _sizeController,
-              placeholder: 'e.g. 180cm x 90cm x 75cm',
+            Text(
+              'Preferred Size',
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: _kWalnut,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: _field(
+                    label: 'Width',
+                    controller: _widthController,
+                    placeholder: 'e.g. 180 cm',
+                    keyboardType: TextInputType.text,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _field(
+                    label: 'Height',
+                    controller: _heightController,
+                    placeholder: 'e.g. 75 cm',
+                    keyboardType: TextInputType.text,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _field(
+                    label: 'Depth',
+                    controller: _depthController,
+                    placeholder: 'e.g. 90 cm',
+                    keyboardType: TextInputType.text,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             _field(
               label: 'Materials / Finish',
               controller: _materialsController,
               placeholder: 'e.g. mahogany with matte walnut finish',
+              hint: _materialsHint,
             ),
             const SizedBox(height: 12),
             _field(

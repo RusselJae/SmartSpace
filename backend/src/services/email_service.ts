@@ -814,6 +814,63 @@ ${isCOD ? `<p style="margin:0;font-size:18px;line-height:1.45;color:#333;">Remai
   }
 
   /**
+   * Customer-facing email when admin sends a made-to-order quote.
+   */
+  static async sendMadeToOrderQuoteEmail(params: {
+    readonly userId: string;
+    readonly requestRef: string;
+    readonly itemName: string;
+    readonly quotedTotal: number;
+    readonly quotedDownpayment: number;
+    readonly quotedRemaining: number;
+    readonly adminMessage?: string | null;
+  }): Promise<void> {
+    try {
+      const pool = getPool();
+      const [rows] = await pool.query<UserRow[]>(
+        'SELECT email, full_name FROM users WHERE id = ? LIMIT 1',
+        [params.userId],
+      );
+      if (rows.length === 0) {
+        console.warn(`⚠️ User ${params.userId} not found, cannot send MTO quote email`);
+        return;
+      }
+
+      const user = rows[0];
+      const shortRef = params.requestRef.length > 8
+        ? params.requestRef.substring(0, 8).toUpperCase()
+        : params.requestRef.toUpperCase();
+      const adminNote =
+        params.adminMessage != null && params.adminMessage.trim().length > 0
+          ? `<p style="margin:14px 0 0;font-size:18px;line-height:1.45;color:#333;"><strong>Note from our team:</strong> ${escapeHtml(params.adminMessage.trim())}</p>`
+          : '';
+
+      const subject = `Your custom quote is ready — #${shortRef}`;
+      const htmlBody = buildWoodHomeTemplate({
+        heading: 'Custom Quote Ready',
+        greeting: `Hi ${user.full_name},`,
+        intro: 'We reviewed your made-to-order request and prepared a quote for you.',
+        bodyHtml: `<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Item: <strong>${escapeHtml(params.itemName)}</strong></p>
+<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Reference: <strong>#${escapeHtml(shortRef)}</strong></p>
+<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Total: <strong>₱${escapeHtml(params.quotedTotal.toFixed(2))}</strong></p>
+<p style="margin:0 0 10px;font-size:20px;line-height:1.4;color:#333;">Pay now (deposit): <strong>₱${escapeHtml(params.quotedDownpayment.toFixed(2))}</strong></p>
+<p style="margin:0;font-size:20px;line-height:1.4;color:#333;">Balance later: <strong>₱${escapeHtml(params.quotedRemaining.toFixed(2))}</strong></p>
+${adminNote}
+<p style="margin:16px 0 0;font-size:18px;line-height:1.45;color:#333;">Open the app under <strong>Made to Order</strong> to accept the quote and pay your deposit.</p>`,
+      });
+      await sendEmail({
+        to: user.email,
+        subject,
+        html: htmlBody,
+        text: `Your custom quote for ${params.itemName} is ready. Total ₱${params.quotedTotal.toFixed(2)}, deposit ₱${params.quotedDownpayment.toFixed(2)}.`,
+      });
+      console.log(`📧 Sent MTO quote email to ${user.email} for ${params.requestRef}`);
+    } catch (error) {
+      console.error('❌ Failed to send MTO quote email:', error);
+    }
+  }
+
+  /**
    * Sends an email verification email to the user after signup.
    * Contains a verification link that the user must click to verify their email.
    */

@@ -1120,11 +1120,13 @@ export const ensureMadeToOrderPlaceholderProduct = async (pool: Pool): Promise<v
     [MTO_PLACEHOLDER_PRODUCT_ID],
   );
   if (rows.length > 0) return;
+  // Mirror createProduct() column set — legacy DBs require NOT NULL `size` with no default.
   await pool.query(
     `INSERT INTO products (
-      id, name, description, price, category, style, material, color, model_path,
-      inventory_qty, in_stock, is_archived
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, name, description, price, category, style, material, color,
+      size, model_path, real_width_m, real_height_m, real_depth_m, model_base_scale,
+      image_urls, components_json, rating, review_count, inventory_qty, is_popular, is_new_arrival, in_stock, is_archived
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       MTO_PLACEHOLDER_PRODUCT_ID,
       'Made-to-Order (Custom)',
@@ -1134,8 +1136,19 @@ export const ensureMadeToOrderPlaceholderProduct = async (pool: Pool): Promise<v
       'Custom',
       'Various',
       'Various',
+      '',
       'assets/chair.glb',
+      null,
+      null,
+      null,
+      1,
+      JSON.stringify([]),
+      JSON.stringify([]),
+      0,
+      0,
       999999,
+      0,
+      0,
       true,
       false,
     ],

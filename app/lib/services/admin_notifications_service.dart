@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/product.dart';
 import '../models/order_record.dart';
 import '../models/support_conversation.dart';
+import '../models/made_to_order_request.dart';
 import 'admin_auth_service.dart';
 import 'mysql_database_service.dart';
 
@@ -30,6 +31,7 @@ class AdminNotificationSnapshot {
     required this.unreadSupportConversations,
     required this.unreadCancelledOrders,
     required this.unreadLowStockProducts,
+    required this.unreadMadeToOrderRequests,
     required this.cancelledOrders,
     required this.lowStockProducts,
     required this.items,
@@ -39,23 +41,27 @@ class AdminNotificationSnapshot {
   final int unreadSupportConversations;
   final int unreadCancelledOrders;
   final int unreadLowStockProducts;
+  final int unreadMadeToOrderRequests;
   final int cancelledOrders;
   final int lowStockProducts;
   final List<AdminNotificationItem> items;
   final DateTime lastUpdatedAt;
 
   /// Bell icon: inventory / system only (support uses the message icon in the header).
-  int get bellBadgeCount => unreadLowStockProducts + unreadCancelledOrders;
+  int get bellBadgeCount =>
+      unreadLowStockProducts + unreadCancelledOrders + unreadMadeToOrderRequests;
 
   int get totalBadgeCount =>
       unreadSupportConversations +
       unreadLowStockProducts +
-      unreadCancelledOrders;
+      unreadCancelledOrders +
+      unreadMadeToOrderRequests;
 
   static AdminNotificationSnapshot empty() => AdminNotificationSnapshot(
     unreadSupportConversations: 0,
     unreadCancelledOrders: 0,
     unreadLowStockProducts: 0,
+    unreadMadeToOrderRequests: 0,
     cancelledOrders: 0,
     lowStockProducts: 0,
     items: const [],
@@ -109,11 +115,13 @@ class AdminNotificationsService {
         db.getSupportConversationsForAdmin(status: 'open'),
         db.getAllProducts(),
         db.getAllOrders(),
+        db.getMadeToOrderRequests(),
       ]);
 
       final conversations = results[0] as List<SupportConversation>;
       final products = results[1] as List<Product>;
       final orders = results[2] as List<OrderRecord>;
+      final madeToOrderRequests = results[3] as List<MadeToOrderRequest>;
 
       final unreadConvs = <SupportConversation>[];
       for (final conv in conversations) {
@@ -164,6 +172,16 @@ class AdminNotificationsService {
           .toList(growable: false);
       final unreadCancelledOrders = unreadCancelled.length;
 
+      final pendingMto = madeToOrderRequests
+          .where((r) => r.status == 'pending_review')
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final seenMtoIds = _getSeenMadeToOrderRequestIds(prefs, adminId: adminId);
+      final unreadMto = pendingMto
+          .where((r) => !seenMtoIds.contains(r.id))
+          .toList(growable: false);
+      final unreadMadeToOrderRequests = unreadMto.length;
+
       final items = <AdminNotificationItem>[
         ...unreadConvs.map(
           (c) => AdminNotificationItem(
@@ -195,12 +213,24 @@ class AdminNotificationsService {
             createdAt: DateTime.now(),
           ),
         ),
+        ...unreadMto
+            .take(20)
+            .map(
+              (r) => AdminNotificationItem(
+                id: 'made_to_order:${r.id}',
+                type: 'system',
+                title: 'New made-to-order request',
+                subtitle: '${r.userName.isEmpty ? 'Customer' : r.userName} • ${r.itemName}',
+                createdAt: r.createdAt,
+              ),
+            ),
       ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       snapshot.value = AdminNotificationSnapshot(
         unreadSupportConversations: unreadConvs.length,
         unreadCancelledOrders: unreadCancelledOrders,
         unreadLowStockProducts: unreadLowStockCount,
+        unreadMadeToOrderRequests: unreadMadeToOrderRequests,
         cancelledOrders: cancelledOrders.length,
         lowStockProducts: lowStock.length,
         items: items,
@@ -286,6 +316,29 @@ class AdminNotificationsService {
     await refresh();
   }
 
+  Future<void> markMadeToOrderRequestsSeen() async {
+    final auth = AdminAuthService();
+    await auth.initialize();
+    final adminId = auth.currentAdminId ?? auth.currentEmail;
+    if (adminId == null || adminId.trim().isEmpty) return;
+
+    final db = MySQLDatabaseService();
+    await db.initialize();
+    final requests = await db.getMadeToOrderRequests();
+    final pendingIds = requests
+        .where((r) => r.status == 'pending_review')
+        .map((r) => r.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _seenMadeToOrderRequestsKey(adminId: adminId),
+      pendingIds,
+    );
+    await refresh();
+  }
+
   Future<void> markCancelledOrdersSeen() async {
     final auth = AdminAuthService();
     await auth.initialize();
@@ -318,6 +371,7 @@ class AdminNotificationsService {
     await markAllSupportRead();
     await markLowStockSeen();
     await markCancelledOrdersSeen();
+    await markMadeToOrderRequestsSeen();
   }
 
   static DateTime? _getLastReadAt(
@@ -341,6 +395,8 @@ class AdminNotificationsService {
       'smartspace.admin.inventory.seenLowStock.$adminId';
   static String _seenCancelledOrdersKey({required String adminId}) =>
       'smartspace.admin.orders.seenCancelled.$adminId';
+  static String _seenMadeToOrderRequestsKey({required String adminId}) =>
+      'smartspace.admin.mto.seenPending.$adminId';
 
   static Set<String> _getSeenLowStockIds(
     SharedPreferences prefs, {
@@ -358,6 +414,16 @@ class AdminNotificationsService {
   }) {
     final raw =
         prefs.getStringList(_seenCancelledOrdersKey(adminId: adminId)) ??
+        const <String>[];
+    return raw.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+  }
+
+  static Set<String> _getSeenMadeToOrderRequestIds(
+    SharedPreferences prefs, {
+    required String adminId,
+  }) {
+    final raw =
+        prefs.getStringList(_seenMadeToOrderRequestsKey(adminId: adminId)) ??
         const <String>[];
     return raw.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
   }

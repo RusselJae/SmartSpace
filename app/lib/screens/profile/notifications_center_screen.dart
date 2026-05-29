@@ -29,6 +29,8 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
         return CupertinoIcons.sparkles;
       case 'admin_message':
         return CupertinoIcons.chat_bubble_2_fill;
+      case 'made_to_order_quoted':
+        return CupertinoIcons.hammer_fill;
       case 'terms_update':
         return CupertinoIcons.doc_text_fill;
       default:

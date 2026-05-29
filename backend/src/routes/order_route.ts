@@ -28,6 +28,11 @@ import { logAdminActivity } from '../services/admin_activity_log_service';
 import { buildUpdatedOrderInvoiceHtml } from '../services/order_invoice_service';
 import { requireAdminAuth, requireAdminPermission, requireAdminForGlobalMadeToOrderList } from '../middleware/admin_auth_middleware';
 import { ADMIN_PERMISSIONS } from '../auth/admin_role';
+import {
+  notifyAdminsMadeToOrderQuoted,
+  notifyAdminsNewMadeToOrderRequest,
+  notifyUserMadeToOrderQuoted,
+} from '../services/made_to_order_notification_service';
 
 const validIdStorage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -388,6 +393,14 @@ orderRouter.post(
       [id, requestRef, userId, userName, itemName, preferredSize || null, materials || null, notes || null, 0],
     );
 
+    notifyAdminsNewMadeToOrderRequest({
+      requestId: id,
+      requestRef,
+      userId,
+      userName,
+      itemName,
+    });
+
     return res.status(201).json({
       success: true,
       data: { id, requestRef },
@@ -465,13 +478,15 @@ orderRouter.patch(
     await ensureMadeToOrderRequestsTable();
     const pool = getPool();
     const [existing] = await pool.query<RowDataPacket[]>(
-      `SELECT id, status FROM made_to_order_requests WHERE id = ? LIMIT 1`,
+      `SELECT id, status, user_id, user_name, item_name, request_ref
+       FROM made_to_order_requests WHERE id = ? LIMIT 1`,
       [requestId],
     );
     if (existing.length === 0) {
       return res.status(404).json({ success: false, message: 'Request not found' });
     }
-    const st = String(existing[0].status ?? '');
+    const existingRow = existing[0];
+    const st = String(existingRow.status ?? '');
     if (st === 'declined' || st === 'order_created') {
       return res.status(400).json({ success: false, message: 'Request cannot be quoted in its current state' });
     }
@@ -494,6 +509,29 @@ orderRouter.patch(
         quotedRemaining: String(quotedRemaining),
       },
     });
+
+    const userId = String(existingRow.user_id ?? '');
+    const userName = String(existingRow.user_name ?? '');
+    const itemName = String(existingRow.item_name ?? '');
+    const requestRef = String(existingRow.request_ref ?? requestId);
+    notifyUserMadeToOrderQuoted({
+      userId,
+      requestId,
+      requestRef,
+      itemName,
+      quotedTotal,
+      quotedDownpayment,
+      quotedRemaining,
+      adminMessage,
+    });
+    notifyAdminsMadeToOrderQuoted({
+      requestId,
+      requestRef,
+      userName,
+      itemName,
+      quotedTotal,
+    });
+
     return res.json({ success: true, data: { id: requestId, status: 'quoted' } });
   }),
 );

@@ -4,7 +4,7 @@
  */
 import { Router } from 'express';
 import { getPool } from '../config/database';
-import { markOrderPaidViaPaymongo, updateOrderStatus } from '../services/order_service';
+import { markOrderPaidViaPaymongo } from '../services/order_service';
 import { buildPaymongoAppReturnUrl, paymongoReturnRedirectPage } from './paymongo_return_html';
 
 export const paymongoReturnRouter = Router();
@@ -84,15 +84,10 @@ paymongoReturnRouter.get('/cancel', (req, res) => {
         return;
       }
 
-      await updateOrderStatus(orderId, 'cancelled');
-
-      await pool.query(`UPDATE orders SET payment_status = 'failed', updated_at = NOW() WHERE id = ?`, [
-        orderId,
-      ]);
-
+      // Do not cancel — user may retry payment from Orders within the 24-hour hold window.
       sendCancelToApp(
-        'Payment cancelled',
-        'Checkout was closed. Your order was cancelled; you can place it again from the app.',
+        'Payment not completed',
+        'Checkout was closed. Your order is still active — open Orders in the app to pay within 24 hours.',
       );
     } catch (e) {
       console.error('PayMongo cancel route:', e);

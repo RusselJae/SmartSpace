@@ -77,12 +77,20 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
   }
 
   List<String> get _categories {
-    final cats = _products.map((p) => p.category).toSet().toList()..sort();
+    final cats = _products
+        .where((p) => p.id != 'p_made_to_order_placeholder')
+        .map((p) => p.category)
+        .where((c) => c.isNotEmpty && c != 'Made-to-Order')
+        .toSet()
+        .toList()
+      ..sort();
     return cats;
   }
 
   List<Product> get _filteredProducts {
-    var filtered = _products;
+    var filtered = _products
+        .where((p) => p.id != 'p_made_to_order_placeholder')
+        .toList();
     
     // Filter by archive status - by default show only non-archived products
     if (_segment != 'archived') {
@@ -889,10 +897,14 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   // Extract unique values from existing products
   List<String> get _availableCategories {
-    final categories = widget.allProducts.map((p) => p.category).where((c) => c.isNotEmpty).toSet().toList()..sort();
-    // Add common categories if not present
-    // NOTE: Per requirements we now only support Living Room, Dining, Bedroom, and Office
-    final commonCategories = ['Living Room', 'Dining', 'Bedroom', 'Office'];
+    final categories = widget.allProducts
+        .where((p) => p.id != 'p_made_to_order_placeholder')
+        .map((p) => p.category)
+        .where((c) => c.isNotEmpty && c != 'Made-to-Order')
+        .toSet()
+        .toList()
+      ..sort();
+    final commonCategories = ['Living Room', 'Dining', 'Bedroom', 'Office', 'Kitchen', 'Outdoor'];
     for (final cat in commonCategories) {
       if (!categories.contains(cat)) {
         categories.add(cat);
@@ -914,11 +926,19 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     return styles..sort();
   }
 
+  static bool _isExcludedMaterial(String material) {
+    final lower = material.trim().toLowerCase();
+    return lower == 'wood' || lower == 'wooden' || lower == 'various';
+  }
+
   List<String> get _availableMaterials {
-    final materials = widget.allProducts.map((p) => p.material).where((m) => m.isNotEmpty).toSet().toList()..sort();
-    // Add common materials if not present
-    // NOTE: Restrict materials to the four supported wood species
-    final commonMaterials = ['Mahogany', 'Acacia', 'Molave', 'Yakal'];
+    final materials = widget.allProducts
+        .map((p) => p.material.trim())
+        .where((m) => m.isNotEmpty && !_isExcludedMaterial(m))
+        .toSet()
+        .toList()
+      ..sort();
+    const commonMaterials = ['Mahogany', 'Acacia', 'Molave', 'Yakal'];
     for (final material in commonMaterials) {
       if (!materials.contains(material)) {
         materials.add(material);

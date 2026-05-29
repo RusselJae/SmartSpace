@@ -72,7 +72,7 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
       if (!mounted) return;
       final materials = products
           .map((p) => p.material.trim())
-          .where((m) => m.isNotEmpty)
+          .where((m) => m.isNotEmpty && !_isExcludedMaterial(m))
           .toSet()
           .toList()
         ..sort();
@@ -87,6 +87,11 @@ class _MadeToOrderRequestScreenState extends State<MadeToOrderRequestScreen> {
     } catch (_) {
       // Non-fatal — form still works without the hint.
     }
+  }
+
+  static bool _isExcludedMaterial(String material) {
+    final lower = material.trim().toLowerCase();
+    return lower == 'wood' || lower == 'wooden' || lower == 'various';
   }
 
   String? _buildPreferredSize() {

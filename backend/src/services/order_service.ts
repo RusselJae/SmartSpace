@@ -476,6 +476,14 @@ const decrementInventoryForOrder = async (conn: Connection, orderId: string): Pr
     if (!Number.isFinite(qty) || qty <= 0) {
       continue;
     }
+    // Custom MTO lines reference the request id — not a catalog SKU.
+    const [catalog] = await conn.query<RowDataPacket[]>(
+      'SELECT id FROM products WHERE id = ? LIMIT 1',
+      [productId],
+    );
+    if (catalog.length === 0) {
+      continue;
+    }
     const [res] = await conn.query<ResultSetHeader>(
       'UPDATE products SET inventory_qty = inventory_qty - ? WHERE id = ? AND inventory_qty >= ?',
       [qty, productId, qty],
@@ -502,6 +510,13 @@ const restoreInventoryForOrder = async (executor: Pool | Connection, orderId: st
     const productId = item.product_id as string;
     const qty = Number(item.quantity);
     if (!Number.isFinite(qty) || qty <= 0) {
+      continue;
+    }
+    const [catalog] = await executor.query<RowDataPacket[]>(
+      'SELECT id FROM products WHERE id = ? LIMIT 1',
+      [productId],
+    );
+    if (catalog.length === 0) {
       continue;
     }
     await executor.query(
@@ -1098,10 +1113,10 @@ export interface CreateOrderInput {
    * accepted the latest terms.
    */
   readonly termsVersionAcceptedAtOrder?: number;
-  /**
-   * When set, inserts these order lines instead of resolving prices from [productIds].
-   * Used for made-to-order (custom line totals).
-   */
+/**
+ * When set, inserts these order lines instead of resolving prices from [productIds].
+ * Used for made-to-order (custom line totals).
+ */
   readonly lineItemsOverride?: ReadonlyArray<{
     readonly productId: string;
     readonly productName: string;
@@ -1109,50 +1124,53 @@ export interface CreateOrderInput {
     readonly unitPrice: number;
     readonly lineTotal: number;
   }>;
+  /** Custom / MTO lines are not tied to catalog SKUs — skip inventory reservation. */
+  readonly skipInventoryReservation?: boolean;
 }
 
-/** Placeholder SKU so MTO orders reserve one line item without a catalog product. */
+/** Legacy placeholder id — archived on startup; no new rows should reference it. */
 export const MTO_PLACEHOLDER_PRODUCT_ID = 'p_made_to_order_placeholder';
 
-export const ensureMadeToOrderPlaceholderProduct = async (pool: Pool): Promise<void> => {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    'SELECT id FROM products WHERE id = ? LIMIT 1',
-    [MTO_PLACEHOLDER_PRODUCT_ID],
-  );
-  if (rows.length > 0) return;
-  // Mirror createProduct() column set — legacy DBs require NOT NULL `size` with no default.
-  await pool.query(
-    `INSERT INTO products (
-      id, name, description, price, category, style, material, color,
-      size, model_path, real_width_m, real_height_m, real_depth_m, model_base_scale,
-      image_urls, components_json, rating, review_count, inventory_qty, is_popular, is_new_arrival, in_stock, is_archived
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      MTO_PLACEHOLDER_PRODUCT_ID,
-      'Made-to-Order (Custom)',
-      'Placeholder SKU for custom furniture orders.',
-      0,
-      'Made-to-Order',
-      'Custom',
-      'Various',
-      'Various',
-      '',
-      'assets/chair.glb',
-      null,
-      null,
-      null,
-      1,
-      JSON.stringify([]),
-      JSON.stringify([]),
-      0,
-      0,
-      999999,
-      0,
-      0,
-      true,
-      false,
-    ],
-  );
+let orderItemsCustomLinesEnsured = false;
+
+/**
+ * MTO order lines use the request id as product_id (no catalog SKU).
+ * Drop the products FK when present so custom lines can be stored.
+ */
+const ensureOrderItemsAllowCustomLines = async (pool: Pool): Promise<void> => {
+  if (orderItemsCustomLinesEnsured) return;
+  try {
+    const [fks] = await pool.query<RowDataPacket[]>(
+      `SELECT CONSTRAINT_NAME AS constraintName
+       FROM information_schema.KEY_COLUMN_USAGE
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'order_items'
+         AND REFERENCED_TABLE_NAME = 'products'
+         AND COLUMN_NAME = 'product_id'`,
+    );
+    for (const row of fks) {
+      const name = String(row.constraintName ?? '');
+      if (name.length === 0) continue;
+      await pool.query(`ALTER TABLE order_items DROP FOREIGN KEY \`${name}\``);
+    }
+  } catch (e) {
+    console.warn('ensureOrderItemsAllowCustomLines:', e);
+  }
+  orderItemsCustomLinesEnsured = true;
+};
+
+/** Hide the old placeholder SKU from admin/catalog (kept for historical order_items). */
+export const archiveMadeToOrderPlaceholderProduct = async (pool: Pool): Promise<void> => {
+  try {
+    await pool.query(
+      `UPDATE products
+       SET is_archived = 1, in_stock = 0, inventory_qty = 0, updated_at = NOW()
+       WHERE id = ?`,
+      [MTO_PLACEHOLDER_PRODUCT_ID],
+    );
+  } catch (e) {
+    console.warn('archiveMadeToOrderPlaceholderProduct:', e);
+  }
 };
 
 export interface CreateMadeToOrderOrderInput {
@@ -1174,7 +1192,7 @@ export const createMadeToOrderOrderFromRequest = async (
   input: CreateMadeToOrderOrderInput,
 ): Promise<OrderRecord> => {
   const pool = getPool();
-  await ensureMadeToOrderPlaceholderProduct(pool);
+  await ensureOrderItemsAllowCustomLines(pool);
   const shippingFee = (input.shippingAddress['shippingFee'] as number) ?? 20.0;
   const merchandiseSubtotal = input.quotedTotal - shippingFee;
   if (merchandiseSubtotal < -0.01) {
@@ -1197,9 +1215,10 @@ export const createMadeToOrderOrderFromRequest = async (
     productIds: [],
     totalAmount: input.quotedTotal,
     shippingAddress: merged,
+    skipInventoryReservation: true,
     lineItemsOverride: [
       {
-        productId: MTO_PLACEHOLDER_PRODUCT_ID,
+        productId: input.requestId,
         productName: lineName,
         quantity: 1,
         unitPrice: merchandiseSubtotal,
@@ -1436,7 +1455,9 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
   }
 
     // Reserve stock for catalog/home counts (released on cancel / expire).
-    await decrementInventoryForOrder(conn, id);
+    if (!input.skipInventoryReservation) {
+      await decrementInventoryForOrder(conn, id);
+    }
     await conn.commit();
   } catch (txnErr) {
     await conn.rollback();
@@ -1794,9 +1815,10 @@ const ensureCheckoutReminderColumn = async (pool: Pool): Promise<boolean> => {
 /**
  * PayMongo lifecycle: order + inventory reservation happen at checkout (create order).
  * - After [ORDER_PAYMENT_REMINDER_MINUTES], send one reminder email (if column exists).
- * - After [ORDER_PAYMENT_HOLD_RELEASE_MINUTES], cancel unpaid orders and restore inventory.
+ * - After [ORDER_PAYMENT_HOLD_RELEASE_MINUTES] (default 24h), cancel unpaid orders and restore inventory.
  *
- * Cancel return URL still cancels immediately when the user closes PayMongo.
+ * Closing PayMongo checkout does NOT cancel — users can retry from Orders within the hold window.
+ * Lay-away / installment orders with a received down payment are excluded.
  */
 export const autoCancelUnpaidOrders = async (): Promise<number> => {
   const pool = getPool();

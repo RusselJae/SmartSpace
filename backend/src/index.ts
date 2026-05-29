@@ -61,6 +61,13 @@ const initialize = async (): Promise<void> => {
 
     const pool = getPool();
     await pool.query('SELECT 1');
+
+    try {
+      const { archiveMadeToOrderPlaceholderProduct } = await import('./services/order_service');
+      await archiveMadeToOrderPlaceholderProduct(pool);
+    } catch (error) {
+      console.warn('⚠️ Could not archive MTO placeholder product:', error);
+    }
     
     // Check email configuration before starting server
     checkEmailConfiguration();

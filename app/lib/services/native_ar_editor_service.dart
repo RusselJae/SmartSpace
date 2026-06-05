@@ -9,6 +9,7 @@ import '../models/product.dart';
 import '../screens/views/product_detail.dart';
 import '../utils/model_path_helper.dart';
 import 'mysql_database_service.dart';
+import 'model_file_cache.dart';
 
 /// ###########################################################################
 /// ## NativeArEditorService                                                  ##
@@ -100,6 +101,19 @@ class NativeArEditorService {
     };
   }
 
+  /// Bundled assets become `file://` paths native SceneView can load offline.
+  static Future<String> _resolveModelSrcForNative(String modelPath) async {
+    final normalized = ModelPathHelper.normalize(modelPath).trim();
+    if (normalized.isEmpty) return normalized;
+    return ModelFileCacheService.resolveForViewer(normalized);
+  }
+
+  static Future<Map<String, dynamic>> _variantToJsonResolved(Product p) async {
+    final payload = _variantToJson(p);
+    payload['modelSrc'] = await _resolveModelSrcForNative(p.modelPath);
+    return payload;
+  }
+
   /// Launches the native AR editor for the given [product].
   ///
   /// This method mirrors the parameters that `ArEditorActivity` expects:
@@ -109,9 +123,8 @@ class NativeArEditorService {
   ///   real-world dimensions used for true-to-scale correction.
   /// - `modelBaseScale`: base scale factor applied before any user edits.
   static Future<void> openForProduct(Product product) async {
-    // Normalise the model path so native Android always receives either a
-    // bundled asset path (assets/...) or a fully-qualified URL.
-    final normalizedSrc = ModelPathHelper.normalize(product.modelPath);
+    final resolvedPrimarySrc =
+        await _resolveModelSrcForNative(product.modelPath);
 
     // Option A: build a same-category variant list. If this fails (DB not
     // ready, network error, etc.), we fall back to just the current product
@@ -165,14 +178,14 @@ class NativeArEditorService {
       // Include all available variants so the native carousel can show the full set.
       for (final p in variants) {
         try {
-          safeVariantPayload.add(_variantToJson(p));
+          safeVariantPayload.add(await _variantToJsonResolved(p));
         } catch (e) {
           // Skip bad records instead of collapsing the whole carousel.
           debugPrint('Skipping malformed AR variant ${p.id}: $e');
         }
       }
       if (safeVariantPayload.isEmpty) {
-        safeVariantPayload.add(_variantToJson(product));
+        safeVariantPayload.add(await _variantToJsonResolved(product));
       }
       variantsJson = jsonEncode(
         safeVariantPayload,
@@ -180,12 +193,12 @@ class NativeArEditorService {
     } catch (e) {
       debugPrint('AR variants build failed: $e');
       // Last-resort fallback: still open AR even if variants cannot be built.
-      variantsJson = jsonEncode([_variantToJson(product)]);
+      variantsJson = jsonEncode([await _variantToJsonResolved(product)]);
     }
 
     try {
       await _channel.invokeMethod<void>('openEditor', <String, dynamic>{
-        'modelSrc': normalizedSrc,
+        'modelSrc': resolvedPrimarySrc,
         'altText': product.name,
         'realWidthMeters': product.realWidthMeters,
         'realHeightMeters': product.realHeightMeters,

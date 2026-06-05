@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -29,12 +30,51 @@ Future<Directory> _cacheDir() async {
 bool _isRemote(String src) =>
     src.startsWith('http://') || src.startsWith('https://');
 
+bool _isBundledAsset(String src) => src.startsWith('assets/');
+
+String _cacheFileNameForAsset(String assetPath) {
+  final digest = sha256.convert(utf8.encode(assetPath));
+  final lower = assetPath.toLowerCase();
+  final ext = lower.contains('.gltf') ? '.gltf' : '.glb';
+  return 'bundled_${digest.toString()}$ext';
+}
+
+/// Copies a Flutter bundled GLB/GLTF to app storage so WebView / native loaders
+/// can open large offline models reliably.
+Future<String> _materializeBundledAsset(String assetPath) async {
+  final dir = await _cacheDir();
+  final target = File(p.join(dir.path, _cacheFileNameForAsset(assetPath)));
+  if (await target.exists()) {
+    final len = await target.length();
+    if (len > 0) {
+      return Uri.file(target.absolute.path).toString();
+    }
+    await target.delete();
+  }
+
+  final data = await rootBundle.load(assetPath);
+  await target.writeAsBytes(
+    data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+    flush: true,
+  );
+  return Uri.file(target.absolute.path).toString();
+}
+
 /// Downloads [url] when missing, returns a `file://` URI for ModelViewer.
 Future<String> resolveModelSourceForViewer(String normalizedSrc) async {
   final trimmed = normalizedSrc.trim();
   if (trimmed.isEmpty) return trimmed;
+  if (_isBundledAsset(trimmed)) {
+    try {
+      return await _materializeBundledAsset(trimmed);
+    } catch (_) {
+      return trimmed;
+    }
+  }
+  if (trimmed.startsWith('file://')) {
+    return trimmed;
+  }
   if (!_isRemote(trimmed)) {
-    // Bundled assets or relative paths — ModelViewer handles these.
     return trimmed;
   }
 
@@ -68,8 +108,9 @@ Future<void> prefetchModelSources(Iterable<String> normalizedSrcs) async {
   for (final s in normalizedSrcs) {
     final t = s.trim();
     if (t.isEmpty) continue;
-    if (!t.startsWith('http://') && !t.startsWith('https://')) continue;
-    unique.add(t);
+    if (_isRemote(t) || _isBundledAsset(t)) {
+      unique.add(t);
+    }
   }
   if (unique.isEmpty) return;
   await Future.wait(unique.map(resolveModelSourceForViewer));

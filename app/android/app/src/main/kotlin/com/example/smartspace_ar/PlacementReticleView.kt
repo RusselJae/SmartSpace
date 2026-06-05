@@ -8,8 +8,9 @@ import android.util.AttributeSet
 import android.view.View
 
 /**
- * Scene Viewer–style center reticle: outer ring + inner dot.
- * [isFloorReady] brightens the ring when a floor hit exists under the reticle.
+ * Scene Viewer–style reticle: outer ring + inner dot.
+ * Position on screen via [translationX]/[translationY] on this view (parent is full-screen).
+ * [isFloorReady] brightens the ring when anchored on a detected floor.
  */
 class PlacementReticleView @JvmOverloads constructor(
     context: Context,

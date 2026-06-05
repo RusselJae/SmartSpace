@@ -13,6 +13,7 @@ import android.graphics.Canvas
 import android.graphics.RenderEffect
 import android.graphics.Rect
 import android.graphics.Shader
+import android.opengl.Matrix
 import android.os.Bundle
 import android.os.Build
 import android.os.Handler
@@ -208,6 +209,7 @@ class ArEditorActivity : ComponentActivity() {
     /** Contextual AR guidance; hidden once the model is anchored. */
     private var arTipsBanner: TextView? = null
     private var placementReticle: PlacementReticleView? = null
+    private var reticleSizePx: Int = 0
     private var lastGuidanceUiAtMs: Long = 0L
     private var darkTipFrameCount: Int = 0
     private var shownTipKey: String? = null
@@ -1136,13 +1138,70 @@ class ArEditorActivity : ComponentActivity() {
         fun dpToPx(dp: Int): Int =
             (dp * resources.displayMetrics.density).roundToInt()
 
+        reticleSizePx = dpToPx(72)
         val reticle = PlacementReticleView(this)
         placementReticle = reticle
-        val sizePx = dpToPx(72)
         root.addView(
             reticle,
-            FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER)
+            FrameLayout.LayoutParams(
+                reticleSizePx,
+                reticleSizePx,
+                Gravity.TOP or Gravity.START,
+            ),
         )
+        reticle.visibility = View.INVISIBLE
+    }
+
+    private fun positionReticleAt(screenX: Float, screenY: Float) {
+        val reticle = placementReticle ?: return
+        val half = reticleSizePx / 2f
+        reticle.translationX = screenX - half
+        reticle.translationY = screenY - half
+    }
+
+    /** ARCore world XYZ → screen pixels within [arSceneView]. */
+    private fun projectWorldToScreen(frame: Frame, world: FloatArray): Pair<Float, Float>? {
+        if (arSceneView.width <= 0 || arSceneView.height <= 0) return null
+
+        val viewMatrix = FloatArray(16)
+        val projMatrix = FloatArray(16)
+        frame.camera.getViewMatrix(viewMatrix, 0)
+        frame.camera.getProjectionMatrix(projMatrix, 0, 0.1f, 100f)
+
+        val worldHomogeneous = floatArrayOf(world[0], world[1], world[2], 1f)
+        val viewHomogeneous = FloatArray(4)
+        val clipHomogeneous = FloatArray(4)
+        Matrix.multiplyMV(viewHomogeneous, 0, viewMatrix, 0, worldHomogeneous, 0)
+        Matrix.multiplyMV(clipHomogeneous, 0, projMatrix, 0, viewHomogeneous, 0)
+
+        val w = clipHomogeneous[3]
+        if (w <= 0f) return null
+
+        val ndcX = clipHomogeneous[0] / w
+        val ndcY = clipHomogeneous[1] / w
+        val sx = ((ndcX + 1f) * 0.5f) * arSceneView.width + arSceneView.left
+        val sy = ((1f - ndcY) * 0.5f) * arSceneView.height + arSceneView.top
+        return Pair(sx, sy)
+    }
+
+    private fun modelFootWorldPosition(): FloatArray? {
+        val anchor = anchorNode ?: return null
+        val pos = anchor.worldPosition
+        return floatArrayOf(pos.x, pos.y, pos.z)
+    }
+
+    private fun centerFloorHitWorldPosition(): FloatArray? {
+        if (arSceneView.width <= 0 || arSceneView.height <= 0) return null
+        val hit = hitTestFloor(
+            arSceneView.width / 2f,
+            arSceneView.height / 2f,
+        ) ?: return null
+        val t = hit.hitPose.translation
+        return floatArrayOf(t[0], t[1], t[2])
+    }
+
+    private fun reticleTargetWorldPosition(placed: Boolean): FloatArray? {
+        return if (placed) modelFootWorldPosition() else centerFloorHitWorldPosition()
     }
 
     /**
@@ -1261,17 +1320,23 @@ class ArEditorActivity : ComponentActivity() {
         if (now - lastGuidanceUiAtMs < GUIDANCE_UI_INTERVAL_MS) return
         lastGuidanceUiAtMs = now
 
-        val placed = anchorNode != null
+        val placed = anchorNode != null && modelNode != null
         val centerHit = if (!placed) screenCenterFloorHit() else false
         val tip = if (!placed) resolveContextualArTip(frame, centerHit) else null
+        val footWorld = reticleTargetWorldPosition(placed)
+        val footScreen = footWorld?.let { projectWorldToScreen(frame, it) }
 
         runOnUiThread {
-            if (placed) {
-                placementReticle?.visibility = View.GONE
-                return@runOnUiThread
+            val reticle = placementReticle
+            if (reticle != null && footScreen != null) {
+                reticle.visibility = View.VISIBLE
+                positionReticleAt(footScreen.first, footScreen.second)
+                reticle.isFloorReady = true
+            } else {
+                reticle?.visibility = View.INVISIBLE
             }
-            placementReticle?.visibility = View.VISIBLE
-            placementReticle?.isFloorReady = centerHit
+
+            if (placed) return@runOnUiThread
 
             val banner = arTipsBanner ?: return@runOnUiThread
             if (tip != null) {
@@ -1343,8 +1408,6 @@ class ArEditorActivity : ComponentActivity() {
     }
 
     private fun dismissArTipsBanner() {
-        placementReticle?.visibility = View.GONE
-        placementReticle = null
         arTipsBanner?.visibility = View.GONE
         arTipsBanner = null
         shownTipKey = null
@@ -1952,64 +2015,65 @@ class ArEditorActivity : ComponentActivity() {
         updateOverlayProductNameLabel()
 
         // Loading can take time; we only apply if it's still the latest request.
-        arSceneView.modelLoader.loadModelInstanceAsync(currentVariant.modelSrc) { instance: ModelInstance? ->
-            if (instance == null) return@loadModelInstanceAsync
-            if (requestIdSnapshot != variantSwapRequestId) return@loadModelInstanceAsync
+        loadModelInstanceFromSource(currentVariant.modelSrc) { instance ->
+            if (instance == null) return@loadModelInstanceFromSource
+            if (requestIdSnapshot != variantSwapRequestId) return@loadModelInstanceFromSource
 
-            // Case A: no model placed yet -> preload and let auto-place happen.
-            if (anchorNode == null || modelNode == null) {
-                modelInstance = instance
-                tryAutoPlaceModel()
-                return@loadModelInstanceAsync
+            try {
+                // Case A: no model placed yet -> preload and let auto-place happen.
+                if (anchorNode == null || modelNode == null) {
+                    modelInstance = instance
+                    tryAutoPlaceModel()
+                    return@loadModelInstanceFromSource
+                }
+
+                // Case B: model already placed -> replace the child node under the
+                // current anchor so we preserve the AR pose + user gestures.
+                val anchor = anchorNode ?: return@loadModelInstanceFromSource
+                val oldNode = modelNode
+                if (oldNode != null) anchor.removeChildNode(oldNode)
+
+                val newNode = YawLimitedModelNode(modelInstance = instance).apply {
+                    isEditable = true
+                    isPositionEditable = false
+                    isRotationEditable = true
+                    isScaleEditable = true
+                    editableScaleRange = 0.3f..4.0f
+                    try {
+                        isShadowCaster = true
+                        isShadowReceiver = false
+                    } catch (_: Throwable) {
+                    }
+
+                    val current = preservedScale
+                    if (current != null) {
+                        val clamped = Scale(
+                            x = current.x.coerceIn(0.3f, 4.0f),
+                            y = current.y.coerceIn(0.3f, 4.0f),
+                            z = current.z.coerceIn(0.3f, 4.0f),
+                        )
+                        scale = clamped
+                    } else {
+                        val base = safeBaseScale(modelBaseScale)
+                        scale = Scale(base, base, base)
+                    }
+
+                    if (preservedYaw != null) {
+                        rotation = Rotation(x = 0f, y = preservedYaw, z = 0f)
+                    }
+                    if (preservedPosition != null) {
+                        position = preservedPosition
+                    }
+                }
+
+                anchor.addChildNode(newNode)
+                modelNode = newNode
+                applyModelTransformLockState()
+                updateScaleAndSizeLabels()
+                maybePersistUserEdits()
+            } catch (t: Throwable) {
+                Log.e("ArEditorActivity", "swapVariantModel apply failed", t)
             }
-
-            // Case B: model already placed -> replace the child node under the
-            // current anchor so we preserve the AR pose + user gestures.
-            val anchor = anchorNode ?: return@loadModelInstanceAsync
-            val oldNode = modelNode
-            if (oldNode != null) anchor.removeChildNode(oldNode)
-
-            val newNode = YawLimitedModelNode(modelInstance = instance).apply {
-                isEditable = true
-                isPositionEditable = false
-                isRotationEditable = true
-                isScaleEditable = true
-                editableScaleRange = 0.3f..4.0f
-                // Anti-floating pass (2/3): allow model to cast shadows.
-                try {
-                    isShadowCaster = true
-                    isShadowReceiver = false
-                } catch (_: Throwable) {
-                }
-
-                // Preserve the user's current per-axis scaling across variants.
-                // Clamp to the same bounds as the editor to keep UX safe.
-                val current = preservedScale
-                if (current != null) {
-                    val clamped = Scale(
-                        x = current.x.coerceIn(0.3f, 4.0f),
-                        y = current.y.coerceIn(0.3f, 4.0f),
-                        z = current.z.coerceIn(0.3f, 4.0f)
-                    )
-                    scale = clamped
-                } else {
-                    // Fallback (should be rare): snap to new product base scale.
-                    val base = safeBaseScale(modelBaseScale)
-                    scale = Scale(base, base, base)
-                }
-
-                // Preserve the previous variant's yaw so swapping variants does
-                // not reset the user's chosen facing direction.
-                if (preservedYaw != null) {
-                    rotation = Rotation(x = 0f, y = preservedYaw, z = 0f)
-                }
-            }
-
-            anchor.addChildNode(newNode)
-            modelNode = newNode
-            applyModelTransformLockState()
-            updateScaleAndSizeLabels()
-            maybePersistUserEdits()
         }
     }
 
@@ -2061,6 +2125,32 @@ class ArEditorActivity : ComponentActivity() {
     //   gesture‑editable [ModelNode] so users can scale and rotate.
 
     /**
+     * Loads a GLB from http(s), file://, or Flutter bundled assets (assets/...).
+     */
+    private fun loadModelInstanceFromSource(
+        rawSource: String,
+        onLoaded: (ModelInstance?) -> Unit,
+    ) {
+        val resolved = ArModelSourceResolver.resolve(this, rawSource)
+        if (resolved == null) {
+            Log.e("ArEditorActivity", "Could not resolve model source: $rawSource")
+            runOnUiThread { onLoaded(null) }
+            return
+        }
+
+        arSceneView.modelLoader.loadModelInstanceAsync(resolved) { instance: ModelInstance? ->
+            runOnUiThread {
+                try {
+                    onLoaded(instance)
+                } catch (t: Throwable) {
+                    Log.e("ArEditorActivity", "Model load callback failed", t)
+                    onLoaded(null)
+                }
+            }
+        }
+    }
+
+    /**
      * Starts an asynchronous load of the GLB pointed to by [modelSrc].
      *
      * The load runs on SceneView's internal coroutine scope. Once complete we
@@ -2068,18 +2158,7 @@ class ArEditorActivity : ComponentActivity() {
      */
     private fun preloadModelInstance() {
         val source = modelSrc ?: return
-
-        // SceneView's FileLoader supports multiple sources, but in this
-        // integration we *only* treat fully-qualified http/https URLs as
-        // loadable. Flutter-style asset paths (assets/...) are not visible to
-        // Android's AssetManager by default, and attempting to open them would
-        // crash the process with an AssetNotFoundException.
-        val looksLikeHttp = source.startsWith("http://") || source.startsWith("https://")
-        if (!looksLikeHttp) return
-
-        arSceneView.modelLoader.loadModelInstanceAsync(source) { instance: ModelInstance? ->
-            // If loading fails we simply keep [modelInstance] null; taps will
-            // then be ignored rather than crashing the Activity.
+        loadModelInstanceFromSource(source) { instance ->
             modelInstance = instance
         }
     }

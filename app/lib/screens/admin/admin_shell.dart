@@ -7,6 +7,7 @@ import 'pages/admins_admin_page.dart';
 import 'pages/admin_profile_page.dart';
 import 'pages/orders_admin_page.dart';
 import 'pages/products_admin_page.dart';
+import 'pages/inventory_materials_admin_page.dart';
 import 'pages/reviews_admin_page.dart';
 import 'pages/faqs_admin_page.dart';
 import 'pages/legal_content_admin_page.dart';
@@ -75,7 +76,7 @@ class _AdminShellState extends State<AdminShell> {
   static const List<String> _dashboardSubTabLabels = <String>[
     'Overview',
     'Sales Reports',
-    'User Behavior',
+    'User Growth',
   ];
 
   late int _index;
@@ -255,6 +256,11 @@ class _AdminShellState extends State<AdminShell> {
       builder: (_, __) => const ProductsAdminPage(),
     ),
     _AdminDestination(
+      label: 'Inventory',
+      icon: Icons.inventory_2_outlined,
+      builder: (_, __) => const InventoryMaterialsAdminPage(),
+    ),
+    _AdminDestination(
       label: 'Orders',
       icon: Icons.shopping_bag_outlined,
       builder: (_, __) => const OrdersAdminPage(),
@@ -270,8 +276,8 @@ class _AdminShellState extends State<AdminShell> {
       builder: (_, __) => const UsersAdminPage(),
     ),
     _AdminDestination(
-      label: 'Admins',
-      icon: Icons.admin_panel_settings_outlined,
+      label: 'Staff',
+      icon: Icons.badge_outlined,
       builder: (_, __) => const AdminsAdminPage(),
     ),
     _AdminDestination(

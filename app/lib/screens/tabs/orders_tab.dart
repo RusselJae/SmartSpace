@@ -15,10 +15,9 @@ import '../../widgets/underline_filter_bar.dart';
 import '../../utils/order_payment_balance.dart';
 import '../checkout/order_invoice_screen.dart';
 import '../views/sign_in.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import '../checkout/payment_confirmation_screen.dart';
 import '../checkout/models.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// =============================================================
 /// OrdersTab
@@ -395,29 +394,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   }
 
   /// Opens manual GCash proof flow or PayMongo hosted checkout.
-  Future<void> _navigateToPayment(
-    OrderRecord order, {
-    bool allowCustomAmount = false,
-  }) async {
-    final pm = order.shippingAddress['paymentMethod']?.toString();
-    if (pm == 'paymongo') {
-      if (!mounted) return;
-      // Root navigator so the payment page covers the whole app (tabs hidden).
-      await Navigator.of(context, rootNavigator: true).push(
-        MaterialPageRoute(
-          builder: (_) => _OrderPaymentScreen(
-            order: order,
-            productsById: _productLookup,
-            allowCustomAmount: allowCustomAmount,
-            auth: _auth,
-            db: _db,
-          ),
-        ),
-      );
-      await _loadOrders();
-      return;
-    }
-
+  Future<void> _navigateToPayment(OrderRecord order) async {
     if (!mounted) return;
     await Navigator.of(context).push(
       CupertinoPageRoute(
@@ -433,8 +410,10 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     await _loadOrders();
   }
 
-  /// Confirms cancellation — **no refunds** (including after a down payment).
+  /// Confirms cancellation — **no refunds** (including after a down payment),
+  /// and requires a customer comment for audit/support context.
   Future<void> _confirmCancelOrder(OrderRecord order) async {
+    final commentController = TextEditingController();
     final go = await showCupertinoDialog<bool>(
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
@@ -442,10 +421,20 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
           'Cancel this order?',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
-        content: Text(
-          'Payments are non-refundable. If you already paid a down payment, it is not returned. '
-          'Continue with cancellation?',
-          style: GoogleFonts.poppins(fontSize: 14, height: 1.35),
+        content: Column(
+          children: [
+            Text(
+              'Payments are non-refundable. If you already paid a down payment, it is not returned. '
+              'Continue with cancellation?',
+              style: GoogleFonts.poppins(fontSize: 14, height: 1.35),
+            ),
+            const SizedBox(height: 10),
+            CupertinoTextField(
+              controller: commentController,
+              maxLines: 3,
+              placeholder: 'Add cancellation comment',
+            ),
+          ],
         ),
         actions: [
           CupertinoDialogAction(
@@ -461,15 +450,29 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       ),
     );
     if (go == true && mounted) {
-      await _cancelExpiredOrder(order);
+      final comment = commentController.text.trim();
+      if (comment.isEmpty) {
+        Toast.warning(context, 'Please add a cancellation comment');
+        return;
+      }
+      await _cancelExpiredOrder(order, cancellationComment: comment);
     }
+    commentController.dispose();
   }
 
   /// Cancel an order
-  Future<void> _cancelExpiredOrder(OrderRecord order) async {
+  Future<void> _cancelExpiredOrder(
+    OrderRecord order, {
+    String? cancellationComment,
+  }) async {
     try {
       // Set order status to cancelled
-      await _db.updateOrderStatus(order.id, 'cancelled', customerUserId: order.userId);
+      await _db.updateOrderStatus(
+        order.id,
+        'cancelled',
+        customerUserId: order.userId,
+        cancellationComment: cancellationComment,
+      );
       
       // Reload orders to reflect the change
       await _loadOrders();
@@ -513,17 +516,9 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   /// Get available actions for an order based on its status
   List<PopupMenuItem<String>> _getOrderActions(OrderRecord order) {
     final status = order.status.toLowerCase();
-    final paymentStatus = order.shippingAddress['paymentStatus'] as String?;
-    final paymentMethod = order.shippingAddress['paymentMethod']?.toString();
     final remainingBalance = parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? 0;
 
-    final hasPaymongoOutstandingBalance = paymentMethod == 'paymongo' &&
-        status != 'cancelled' &&
-        remainingBalance > 0.01;
-
-    final isPaymongoAwaitingFirstCharge = paymentMethod == 'paymongo' &&
-        (status == 'pending' || status == 'pending_payment_verification') &&
-        (paymentStatus == null || paymentStatus == 'pending');
+    final hasOutstandingBalance = status != 'cancelled' && remainingBalance > 0.01;
 
     final List<PopupMenuItem<String>> items = [];
 
@@ -544,19 +539,17 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       ),
     );
 
-    // Keep Pay action visible for PayMongo orders while there is any remaining balance.
-    // - First tranche: fixed charge handled by backend.
-    // - Subsequent payments: user can pick amount.
-    if (hasPaymongoOutstandingBalance) {
+    // Keep Pay action visible while there is an outstanding balance.
+    if (hasOutstandingBalance) {
       items.add(
         PopupMenuItem<String>(
-          value: isPaymongoAwaitingFirstCharge ? 'pay' : 'pay_again',
+          value: 'pay',
           child: Row(
             children: [
               const Icon(CupertinoIcons.creditcard, size: 18, color: Color(0xFFFF9800)),
               const SizedBox(width: 12),
               Text(
-                isPaymongoAwaitingFirstCharge ? 'Pay' : 'Pay again',
+                'Pay',
                 style: GoogleFonts.poppins(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -609,10 +602,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
         _confirmCancelOrder(order);
         break;
       case 'pay':
-        _navigateToPayment(order, allowCustomAmount: false);
-        break;
-      case 'pay_again':
-        _navigateToPayment(order, allowCustomAmount: true);
+        _navigateToPayment(order);
         break;
     }
   }

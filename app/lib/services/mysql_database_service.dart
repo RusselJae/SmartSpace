@@ -17,8 +17,10 @@ import '../models/made_to_order_request.dart';
 import '../models/product.dart';
 import '../models/review.dart';
 import '../models/faq.dart';
+import '../models/inventory_material.dart';
 import '../models/support_conversation.dart';
 import '../models/support_message.dart';
+import '../models/support_form_request.dart';
 import '../models/user.dart';
 import 'admin_auth_service.dart';
 import '../models/customer_notification.dart';
@@ -860,6 +862,7 @@ class MySQLDatabaseService {
     String orderId,
     String status, {
     String? customerUserId,
+    String? cancellationComment,
   }) async {
     if (!_useApi) {
       final index = _mockOrders.indexWhere((order) => order.id == orderId);
@@ -882,6 +885,8 @@ class MySQLDatabaseService {
     final body = <String, dynamic>{
       'status': status,
       if (customerUserId != null && customerUserId.trim().isNotEmpty) 'userId': customerUserId.trim(),
+      if (cancellationComment != null && cancellationComment.trim().isNotEmpty)
+        'cancellationComment': cancellationComment.trim(),
     };
     await _sendRequest(
       method: 'PATCH',
@@ -2049,6 +2054,89 @@ class MySQLDatabaseService {
   }
 
   // ---------------------------------------------------------------------------
+  // Support intake forms (linked from chat + Help Center)
+  // ---------------------------------------------------------------------------
+
+  Future<SupportFormRequest> createSupportFormRequest({
+    required String userId,
+    String? email,
+    required String formType,
+    String? conversationId,
+  }) async {
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/support/forms/requests',
+      body: {
+        'userId': userId,
+        if (email != null) 'email': email,
+        'formType': formType,
+        if (conversationId != null) 'conversationId': conversationId,
+      },
+    );
+    return SupportFormRequest.fromJson(_asMap(data, 'support form request'));
+  }
+
+  Future<SupportFormRequest> getSupportFormRequest(
+    String requestId, {
+    String? userId,
+    String? email,
+  }) async {
+    final query = <String, String>{
+      if (userId != null) 'userId': userId,
+      if (email != null) 'email': email,
+    };
+    final uri = _buildUri('/support/forms/requests/$requestId').replace(queryParameters: query);
+    final response =
+        await _client.get(uri, headers: await _httpHeaders(jsonBody: false)).timeout(ApiConfig.timeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to load form: ${response.body}');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (decoded['success'] == false) {
+      throw Exception(decoded['message']?.toString() ?? 'Failed to load form');
+    }
+    return SupportFormRequest.fromJson(_asMap(decoded['data'], 'support form request'));
+  }
+
+  Future<SupportFormRequest> submitSupportFormRequest({
+    required String requestId,
+    required String userId,
+    String? email,
+    required Map<String, String> payload,
+  }) async {
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/support/forms/requests/$requestId/submit',
+      body: {
+        'userId': userId,
+        if (email != null) 'email': email,
+        'payload': payload,
+      },
+    );
+    return SupportFormRequest.fromJson(_asMap(data, 'support form request'));
+  }
+
+  /// Staff sends a form link into the conversation (creates request + chat message).
+  Future<SupportMessage> sendSupportFormLinkAsAdmin({
+    required String conversationId,
+    required String formType,
+  }) async {
+    await _sendRequest(
+      method: 'POST',
+      path: '/support/forms/admin/send-link',
+      body: {
+        'conversationId': conversationId,
+        'formType': formType,
+      },
+    );
+    final msgs = await getSupportMessagesForAdmin(conversationId: conversationId, limit: 20);
+    if (msgs.isEmpty) {
+      throw Exception('Form link sent but message not found');
+    }
+    return msgs.last;
+  }
+
+  // ---------------------------------------------------------------------------
   // FAQs (support chat)
   // ---------------------------------------------------------------------------
 
@@ -2112,6 +2200,76 @@ class MySQLDatabaseService {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Failed to delete FAQ: ${response.body}');
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Materials inventory (admin)
+  // ---------------------------------------------------------------------------
+
+  Future<List<InventoryMaterial>> getInventoryMaterials() async {
+    if (!_useApi) return const [];
+    final data = await _sendRequest(method: 'GET', path: '/inventory-materials');
+    final list = data['data'];
+    if (list is! List) return const [];
+    return list
+        .whereType<Map>()
+        .map((e) => InventoryMaterial.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<InventoryMaterial> createInventoryMaterial({
+    required String name,
+    String? sku,
+    String unit = 'pcs',
+    double quantityOnHand = 0,
+    double reorderLevel = 0,
+    String? supplier,
+    String? notes,
+  }) async {
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/inventory-materials',
+      body: {
+        'name': name,
+        'sku': sku,
+        'unit': unit,
+        'quantityOnHand': quantityOnHand,
+        'reorderLevel': reorderLevel,
+        'supplier': supplier,
+        'notes': notes,
+      },
+    );
+    return InventoryMaterial.fromJson(_asMap(data, 'inventory material'));
+  }
+
+  Future<InventoryMaterial> updateInventoryMaterial({
+    required String id,
+    required String name,
+    String? sku,
+    String unit = 'pcs',
+    double quantityOnHand = 0,
+    double reorderLevel = 0,
+    String? supplier,
+    String? notes,
+  }) async {
+    final data = await _sendRequest(
+      method: 'PUT',
+      path: '/inventory-materials/$id',
+      body: {
+        'name': name,
+        'sku': sku,
+        'unit': unit,
+        'quantityOnHand': quantityOnHand,
+        'reorderLevel': reorderLevel,
+        'supplier': supplier,
+        'notes': notes,
+      },
+    );
+    return InventoryMaterial.fromJson(_asMap(data, 'inventory material'));
+  }
+
+  Future<void> deleteInventoryMaterial({required String id}) async {
+    await _sendRequest(method: 'DELETE', path: '/inventory-materials/$id');
   }
 
   // ---------------------------------------------------------------------------

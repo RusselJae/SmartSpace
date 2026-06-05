@@ -128,7 +128,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
                   Row(
                     children: [
                       Text(
-                        'Filter Admins',
+                        'Filter staff',
                         style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w700),
                       ),
                       const Spacer(),
@@ -286,7 +286,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
         role: data.role,
       );
       if (!mounted) return;
-      Toast.success(context, 'Admin created successfully');
+      Toast.success(context, 'Admin created successfully. Check your Email for Verification.');
       await _loadAdmins();
     } catch (e) {
       if (!mounted) return;
@@ -309,7 +309,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const AdminToolbar(
-          title: 'Administrators',
+          title: 'Staff',
           actions: [],
         ),
         if (_error != null)
@@ -402,7 +402,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
               FilledButton.icon(
                 onPressed: _createAdminInFlight ? null : _createAdmin,
                 icon: const Icon(Icons.admin_panel_settings_outlined),
-                label: const Text('Add admin'),
+                label: const Text('Add staff'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF8D6E63),
                 ),
@@ -760,6 +760,7 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
   late String _draftRole;
   late Set<String> _extra;
   late Set<String> _revoked;
+  late final TextEditingController _permissionCategoryFilter;
   String? _inlineError;
   bool _busy = false;
 
@@ -770,11 +771,13 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
     _draftRole = widget.admin.role;
     _extra = Set<String>.from(widget.admin.extraPermissions);
     _revoked = Set<String>.from(widget.admin.revokedPermissions);
+    _permissionCategoryFilter = TextEditingController();
   }
 
   @override
   void dispose() {
     _fullName.dispose();
+    _permissionCategoryFilter.dispose();
     super.dispose();
   }
 
@@ -869,6 +872,12 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
   Widget build(BuildContext context) {
     final preview = _previewAdmin(_fullName.text.trim().isEmpty ? widget.admin.fullName : _fullName.text.trim());
     final effective = AdminPermissions.effectivePermissionsFor(preview);
+    final categoryFilter = _permissionCategoryFilter.text.trim().toLowerCase();
+    final visiblePermissions = AdminPermissions.allDefinedPermissions.where((p) {
+      if (categoryFilter.isEmpty) return true;
+      final category = p.split(':').first.toLowerCase();
+      return category.contains(categoryFilter);
+    }).toList(growable: false);
     return Dialog(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
@@ -999,43 +1008,67 @@ class _EditAdminDialogState extends State<_EditAdminDialog> {
                       style: GoogleFonts.poppins(fontSize: 11.5, color: Colors.black45, height: 1.35),
                     ),
                     const SizedBox(height: 10),
+                    TextField(
+                      controller: _permissionCategoryFilter,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        labelText: 'Permission category filter',
+                        hintText: 'e.g. products, orders, support',
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     if (widget.canChangeRole)
-                      ...AdminPermissions.allDefinedPermissions.map((p) {
+                      ...visiblePermissions.map((p) {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                flex: 2,
-                                child: Text(
-                                  p,
-                                  style: GoogleFonts.poppins(fontSize: 12.5, fontWeight: FontWeight.w600),
-                                ),
+                              Text(
+                                p,
+                                style: GoogleFonts.poppins(fontSize: 12.5, fontWeight: FontWeight.w600),
                               ),
-                              Expanded(
-                                flex: 2,
-                                child: DropdownButtonFormField<_PermOverride>(
-                                  // ignore: deprecated_member_use
-                                  value: _modeFor(p),
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    filled: true,
-                                    fillColor: Colors.white,
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: CheckboxListTile(
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                      value: _modeFor(p) == _PermOverride.grant,
+                                      onChanged: _busy
+                                          ? null
+                                          : (checked) {
+                                              if (checked == true) {
+                                                _applyMode(p, _PermOverride.grant);
+                                              } else {
+                                                _applyMode(p, _PermOverride.inherit);
+                                              }
+                                            },
+                                      title: const Text('Grant'),
+                                    ),
                                   ),
-                                  items: const [
-                                    DropdownMenuItem(value: _PermOverride.inherit, child: Text('Default')),
-                                    DropdownMenuItem(value: _PermOverride.grant, child: Text('Grant')),
-                                    DropdownMenuItem(value: _PermOverride.revoke, child: Text('Revoke')),
-                                  ],
-                                  onChanged: _busy
-                                      ? null
-                                      : (v) {
-                                          if (v != null) _applyMode(p, v);
-                                        },
-                                ),
+                                  Expanded(
+                                    child: CheckboxListTile(
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                      value: _modeFor(p) == _PermOverride.revoke,
+                                      onChanged: _busy
+                                          ? null
+                                          : (checked) {
+                                              if (checked == true) {
+                                                _applyMode(p, _PermOverride.revoke);
+                                              } else {
+                                                _applyMode(p, _PermOverride.inherit);
+                                              }
+                                            },
+                                      title: const Text('Revoke'),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -1368,7 +1401,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                     ),
                     Expanded(
                       child: Text(
-                        'Add admin',
+                        'Add staff',
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w600,
                             ),

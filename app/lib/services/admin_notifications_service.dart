@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/product.dart';
+import '../models/inventory_material.dart';
 import '../models/order_record.dart';
 import '../models/support_conversation.dart';
 import '../models/made_to_order_request.dart';
@@ -113,13 +113,13 @@ class AdminNotificationsService {
 
       final results = await Future.wait([
         db.getSupportConversationsForAdmin(status: 'open'),
-        db.getAllProducts(),
+        db.getInventoryMaterials(),
         db.getAllOrders(),
         db.getMadeToOrderRequests(),
       ]);
 
       final conversations = results[0] as List<SupportConversation>;
-      final products = results[1] as List<Product>;
+      final materials = results[1] as List<InventoryMaterial>;
       final orders = results[2] as List<OrderRecord>;
       final madeToOrderRequests = results[3] as List<MadeToOrderRequest>;
 
@@ -145,19 +145,13 @@ class AdminNotificationsService {
         }
       }
 
-      final lowStock =
-          products
-              .where(
-                (p) =>
-                    p.inventoryQty > 0 &&
-                    p.inventoryQty <= lowStockThreshold &&
-                    !p.isArchived,
-              )
-              .toList()
-            ..sort((a, b) => a.inventoryQty.compareTo(b.inventoryQty));
+      final lowStock = materials
+          .where((m) => m.isLowStock || m.isOutOfStock)
+          .toList()
+        ..sort((a, b) => a.quantityOnHand.compareTo(b.quantityOnHand));
       final seenLowStockIds = _getSeenLowStockIds(prefs, adminId: adminId);
       final unreadLowStock = lowStock
-          .where((p) => !seenLowStockIds.contains(p.id))
+          .where((m) => !seenLowStockIds.contains(m.id))
           .toList(growable: false);
       final unreadLowStockCount = unreadLowStock.length;
       final cancelledOrders =
@@ -205,11 +199,11 @@ class AdminNotificationsService {
               ),
             ),
         ...unreadLowStock.map(
-          (p) => AdminNotificationItem(
-            id: 'inventory:${p.id}',
+          (m) => AdminNotificationItem(
+            id: 'inventory:${m.id}',
             type: 'inventory',
-            title: 'Low stock',
-            subtitle: '${p.name} • ${p.inventoryQty} left',
+            title: m.isOutOfStock ? 'Material out of stock' : 'Low material stock',
+            subtitle: '${m.name} • ${m.quantityOnHand} ${m.unit} on hand',
             createdAt: DateTime.now(),
           ),
         ),
@@ -300,15 +294,10 @@ class AdminNotificationsService {
     // even when the UI only renders a subset of notifications.
     final db = MySQLDatabaseService();
     await db.initialize();
-    final products = await db.getAllProducts();
-    final inventoryIds = products
-        .where(
-          (p) =>
-              p.inventoryQty > 0 &&
-              p.inventoryQty <= lowStockThreshold &&
-              !p.isArchived,
-        )
-        .map((p) => p.id.trim())
+    final materials = await db.getInventoryMaterials();
+    final inventoryIds = materials
+        .where((m) => m.isLowStock || m.isOutOfStock)
+        .map((m) => m.id.trim())
         .where((id) => id.isNotEmpty)
         .toSet()
         .toList(growable: false);

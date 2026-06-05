@@ -5,6 +5,7 @@ class AdminPermissions {
   AdminPermissions._();
 
   static const String productsWrite = 'products:write';
+  static const String inventoryWrite = 'inventory:write';
   static const String ordersRead = 'orders:read';
   static const String ordersWrite = 'orders:write';
   static const String usersRead = 'users:read';
@@ -23,6 +24,7 @@ class AdminPermissions {
     activityRead,
     adminsManage,
     faqsWrite,
+    inventoryWrite,
     legalWrite,
     madeToOrderWrite,
     notificationsSend,
@@ -36,7 +38,7 @@ class AdminPermissions {
   ];
 
   /// Number of primary shell tabs (Dashboard + rail items), aligned with [AdminRoutes.pathsByIndex].
-  static const int shellTabCount = 11;
+  static const int shellTabCount = 12;
 
   /// Permission strings granted for this [role] (mirrors backend [ROLE_MATRIX]; super = all defined).
   static List<String> permissionsForRole(String? roleRaw) {
@@ -79,6 +81,7 @@ class AdminPermissions {
 
   static final Set<String> _ops = {
     productsWrite,
+    inventoryWrite,
     ordersRead,
     ordersWrite,
     usersRead,
@@ -121,7 +124,7 @@ class AdminPermissions {
     return set.contains(permission);
   }
 
-  /// Full shell index: 0 Dashboard … 10 Settings (see [AdminRoutes.pathsByIndex] order).
+  /// Full shell index: 0 Dashboard … 11 Settings (see [AdminRoutes.pathsByIndex] order).
   static bool canAccessShellTabIndex(int fullTabIndex, String? role) {
     switch (fullTabIndex) {
       case 0:
@@ -129,22 +132,24 @@ class AdminPermissions {
       case 1:
         return adminHasPermission(role, productsWrite);
       case 2:
-        return adminHasPermission(role, ordersRead);
+        return adminHasPermission(role, inventoryWrite);
       case 3:
-        return adminHasPermission(role, reviewsModerate);
+        return adminHasPermission(role, ordersRead);
       case 4:
-        return adminHasPermission(role, usersRead);
+        return adminHasPermission(role, reviewsModerate);
       case 5:
-        return adminHasPermission(role, adminsManage);
+        return adminHasPermission(role, usersRead);
       case 6:
-        return adminHasPermission(role, activityRead);
+        return adminHasPermission(role, adminsManage);
       case 7:
-        return adminHasPermission(role, faqsWrite);
+        return adminHasPermission(role, activityRead);
       case 8:
-        return adminHasPermission(role, supportWrite);
+        return adminHasPermission(role, faqsWrite);
       case 9:
-        return adminHasPermission(role, legalWrite);
+        return adminHasPermission(role, supportWrite);
       case 10:
+        return adminHasPermission(role, legalWrite);
+      case 11:
         return adminHasPermission(role, settingsWrite);
       default:
         return false;

@@ -24,6 +24,7 @@ import 'screens/profile/privacy_policy_screen.dart';
 import 'screens/profile/security_privacy_screen.dart';
 import 'screens/profile/change_password_screen.dart';
 import 'screens/profile/notifications_center_screen.dart';
+import 'screens/support/support_forms_hub_screen.dart';
 import 'utils/env_loader.dart';
 import 'utils/deep_link_handler.dart';
 import 'utils/paymongo_return_deep_link.dart';
@@ -351,6 +352,7 @@ class _WoodHomeFurnitureAppState extends State<WoodHomeFurnitureApp> {
         SecurityPrivacyScreen.route: (_) => const SecurityPrivacyScreen(),
         ChangePasswordScreen.route: (_) => const ChangePasswordScreen(),
         NotificationsCenterScreen.route: (_) => const NotificationsCenterScreen(),
+        SupportFormsHubScreen.route: (_) => const SupportFormsHubScreen(),
       },
     );
   }

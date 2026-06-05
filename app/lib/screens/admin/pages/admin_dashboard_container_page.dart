@@ -5,7 +5,7 @@ import 'admin_user_behavior_page.dart';
 import 'sales_reports_admin_page.dart';
 import '../widgets/admin_analytics_components.dart';
 
-/// Parent **Dashboard** area with sub-tabs: Overview, Sales Reports, User Behavior.
+/// Parent **Dashboard** area with sub-tabs: Overview, Sales Reports, User Growth.
 /// Matches Apple HIG: clear hierarchy, segmented navigation, calm spacing.
 class AdminDashboardContainerPage extends StatefulWidget {
   const AdminDashboardContainerPage({
@@ -16,7 +16,7 @@ class AdminDashboardContainerPage extends StatefulWidget {
     this.onDashboardSubTabChanged,
   });
 
-  /// 0 Overview, 1 Sales Reports, 2 User Behavior
+  /// 0 Overview, 1 Sales Reports, 2 User Growth
   final int initialSubTab;
   final VoidCallback onOpenOrders;
   final VoidCallback onOpenReviews;
@@ -89,7 +89,7 @@ class _AdminDashboardContainerPageState extends State<AdminDashboardContainerPag
             tabs: const [
               Tab(text: 'Overview'),
               Tab(text: 'Sales Reports'),
-              Tab(text: 'User Behavior'),
+              Tab(text: 'User Growth'),
             ],
           ),
         ),

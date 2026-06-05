@@ -44,9 +44,13 @@ import androidx.core.view.WindowInsetsCompat
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import com.google.ar.core.Config
-import com.google.ar.core.Session
+import com.google.ar.core.Frame
 import com.google.ar.core.HitResult
+import com.google.ar.core.LightEstimate
 import com.google.ar.core.Plane
+import com.google.ar.core.Session
+import com.google.ar.core.TrackingFailureReason
+import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.math.Position
@@ -84,6 +88,13 @@ class ArEditorActivity : ComponentActivity() {
         private const val DRAG_THRESHOLD_PX = 12f
         /** Avoid creating a new ARCore anchor on every MOVE event. */
         private const val REANCHOR_MIN_INTERVAL_MS = 80L
+        /** Throttle contextual tip + reticle UI updates from [onSessionUpdated]. */
+        private const val GUIDANCE_UI_INTERVAL_MS = 100L
+        /** Require a tip key to persist this long before switching copy (reduces flicker). */
+        private const val TIP_STABLE_MS = 350L
+        /** [LightEstimate.pixelIntensity] below this is treated as "too dark". */
+        private const val DARK_PIXEL_INTENSITY_THRESHOLD = 0.35f
+        private const val DARK_FRAMES_BEFORE_TIP = 6
     }
 
     // Values passed in from Flutter via the starting Intent. We continue to
@@ -194,11 +205,16 @@ class ArEditorActivity : ComponentActivity() {
     private var dragStartY: Float = 0f
     private var lastReanchorAtMs: Long = 0L
 
-    /** Short AR how‑to; hidden as soon as the model is anchored in the scene. */
+    /** Contextual AR guidance; hidden once the model is anchored. */
     private var arTipsBanner: TextView? = null
-    private var arTipsRotateHandler: Handler? = null
-    private var arTipsRotateRunnable: Runnable? = null
-    private var arTipsMessageIndex: Int = 0
+    private var placementReticle: PlacementReticleView? = null
+    private var lastGuidanceUiAtMs: Long = 0L
+    private var darkTipFrameCount: Int = 0
+    private var shownTipKey: String? = null
+    private var shownTipPriority: Int = Int.MAX_VALUE
+    private var candidateTipKey: String? = null
+    private var candidateTipMessage: String? = null
+    private var candidateTipSinceMs: Long = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -280,8 +296,9 @@ class ArEditorActivity : ComponentActivity() {
             // placed it yet, try to auto-place it on the first tracked
             // horizontal plane under the screen centre. This makes the product
             // appear automatically at 100% size when the scene opens.
-            onSessionUpdated = { _: Session, _ ->
+            onSessionUpdated = { _: Session, frame: Frame ->
                 try {
+                    updateArGuidanceAndReticle(frame)
                     // Auto-place at screen centre (or restored point) as soon as a floor is found.
                     tryAutoPlaceModel()
                     // Keep overlay labels/persistence in sync with gesture edits
@@ -309,6 +326,7 @@ class ArEditorActivity : ComponentActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
+        attachPlacementReticle(rootLayout)
         // Build and attach a minimal overlay toolbar that:
         // - Surfaces a readable scale + size status.
         // - Provides explicit +/- buttons as an alternative to pinch gesture.
@@ -1114,9 +1132,22 @@ class ArEditorActivity : ComponentActivity() {
         ViewCompat.requestApplyInsets(root)
     }
 
+    private fun attachPlacementReticle(root: FrameLayout) {
+        fun dpToPx(dp: Int): Int =
+            (dp * resources.displayMetrics.density).roundToInt()
+
+        val reticle = PlacementReticleView(this)
+        placementReticle = reticle
+        val sizePx = dpToPx(72)
+        root.addView(
+            reticle,
+            FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER)
+        )
+    }
+
     /**
-     * Short, centered guidance under the status bar. Removed automatically when
-     * [placeAnchoredModel] runs so it never fights the scale / variant chrome.
+     * Center-top banner driven by [updateArGuidanceAndReticle] (tracking, light,
+     * floor hit-test). Removed when [placeAnchoredModel] runs.
      */
     private fun attachArTipsBanner(root: FrameLayout) {
         fun dpToPx(dp: Int): Int =
@@ -1125,22 +1156,15 @@ class ArEditorActivity : ComponentActivity() {
         val screenW = resources.displayMetrics.widthPixels
         val maxTextW = (screenW * 0.72f).toInt()
 
-        // Short phrases only; we rotate every few seconds so the banner stays readable.
-        val tips = listOf(
-            "Scan the floor — model places automatically.",
-            "Drag on the floor to move. Pinch and rotate to adjust.",
-            "Tap the lock when you're happy with it."
-        )
-
         val tv = TextView(this).apply {
-            text = tips[0]
+            text = "Starting AR…"
             setTextColor(0xFFF5F5F5.toInt())
             textSize = 16f
             setLineSpacing(dpToPx(2).toFloat(), 1f)
             setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
             gravity = Gravity.CENTER_HORIZONTAL
             this.maxWidth = maxTextW
-            setBackgroundColor(0x00000000)
+            background = ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_tips_subtle)
         }
         arTipsBanner = tv
 
@@ -1149,26 +1173,140 @@ class ArEditorActivity : ComponentActivity() {
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            // Final vertical position also tuned in [applyWindowInsetsToOverlays].
             topMargin = dpToPx(8)
             marginStart = dpToPx(16)
             marginEnd = dpToPx(16)
         }
         root.addView(tv, lp)
+    }
 
-        val handler = Handler(Looper.getMainLooper())
-        arTipsRotateHandler = handler
-        arTipsMessageIndex = 0
-        val rotate = object : Runnable {
-            override fun run() {
-                val banner = arTipsBanner ?: return
-                arTipsMessageIndex = (arTipsMessageIndex + 1) % tips.size
-                banner.text = tips[arTipsMessageIndex]
-                arTipsRotateHandler?.postDelayed(this, 5000L)
+    private data class ContextualArTip(
+        val priority: Int,
+        val key: String,
+        val message: String,
+    )
+
+    private fun resolveContextualArTip(frame: Frame, centerFloorHit: Boolean): ContextualArTip {
+        val camera = frame.camera
+        if (camera.trackingState != TrackingState.TRACKING) {
+            val message = when (camera.trackingFailureReason) {
+                TrackingFailureReason.INSUFFICIENT_LIGHT ->
+                    "Too dark — add more light"
+                TrackingFailureReason.EXCESSIVE_MOTION ->
+                    "Move your phone more slowly"
+                TrackingFailureReason.INSUFFICIENT_FEATURES ->
+                    "Point at a textured surface"
+                TrackingFailureReason.BAD_STATE ->
+                    "Finding surfaces…"
+                else -> "Finding surfaces…"
+            }
+            return ContextualArTip(
+                priority = 0,
+                key = "tracking_${camera.trackingFailureReason}",
+                message = message,
+            )
+        }
+
+        val light = frame.lightEstimate
+        if (light != null && light.state == LightEstimate.State.VALID) {
+            if (light.pixelIntensity < DARK_PIXEL_INTENSITY_THRESHOLD) {
+                darkTipFrameCount += 1
+            } else {
+                darkTipFrameCount = 0
+            }
+            if (darkTipFrameCount >= DARK_FRAMES_BEFORE_TIP) {
+                return ContextualArTip(
+                    priority = 1,
+                    key = "too_dark",
+                    message = "Too dark — add more light",
+                )
+            }
+        } else {
+            darkTipFrameCount = 0
+        }
+
+        if (modelInstance == null) {
+            return ContextualArTip(
+                priority = 2,
+                key = "loading_model",
+                message = "Loading model…",
+            )
+        }
+
+        if (!centerFloorHit) {
+            return ContextualArTip(
+                priority = 3,
+                key = "no_floor",
+                message = "Aim at the floor and move slowly",
+            )
+        }
+
+        return ContextualArTip(
+            priority = 4,
+            key = "floor_ready",
+            message = "Floor detected — hold steady",
+        )
+    }
+
+    private fun screenCenterFloorHit(): Boolean {
+        if (arSceneView.width <= 0 || arSceneView.height <= 0) return false
+        return hitTestFloor(
+            arSceneView.width / 2f,
+            arSceneView.height / 2f,
+        ) != null
+    }
+
+    private fun updateArGuidanceAndReticle(frame: Frame) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastGuidanceUiAtMs < GUIDANCE_UI_INTERVAL_MS) return
+        lastGuidanceUiAtMs = now
+
+        val placed = anchorNode != null
+        val centerHit = if (!placed) screenCenterFloorHit() else false
+        val tip = if (!placed) resolveContextualArTip(frame, centerHit) else null
+
+        runOnUiThread {
+            if (placed) {
+                placementReticle?.visibility = View.GONE
+                return@runOnUiThread
+            }
+            placementReticle?.visibility = View.VISIBLE
+            placementReticle?.isFloorReady = centerHit
+
+            val banner = arTipsBanner ?: return@runOnUiThread
+            if (tip != null) {
+                applyStableContextualTip(banner, tip, now)
             }
         }
-        arTipsRotateRunnable = rotate
-        arTipsRotateHandler?.postDelayed(rotate, 5000L)
+    }
+
+    private fun applyStableContextualTip(banner: TextView, tip: ContextualArTip, now: Long) {
+        if (tip.priority < shownTipPriority) {
+            shownTipPriority = tip.priority
+            shownTipKey = tip.key
+            candidateTipKey = null
+            banner.text = tip.message
+            return
+        }
+
+        if (tip.key == shownTipKey) {
+            if (banner.text != tip.message) banner.text = tip.message
+            return
+        }
+
+        if (tip.key != candidateTipKey) {
+            candidateTipKey = tip.key
+            candidateTipMessage = tip.message
+            candidateTipSinceMs = now
+            return
+        }
+
+        if (now - candidateTipSinceMs >= TIP_STABLE_MS) {
+            shownTipKey = tip.key
+            shownTipPriority = tip.priority
+            candidateTipKey = null
+            banner.text = tip.message
+        }
     }
 
     private fun attachTipsHintButton(root: FrameLayout) {
@@ -1205,11 +1343,14 @@ class ArEditorActivity : ComponentActivity() {
     }
 
     private fun dismissArTipsBanner() {
-        arTipsRotateRunnable?.let { arTipsRotateHandler?.removeCallbacks(it) }
-        arTipsRotateHandler = null
-        arTipsRotateRunnable = null
+        placementReticle?.visibility = View.GONE
+        placementReticle = null
         arTipsBanner?.visibility = View.GONE
         arTipsBanner = null
+        shownTipKey = null
+        shownTipPriority = Int.MAX_VALUE
+        candidateTipKey = null
+        darkTipFrameCount = 0
     }
 
     private fun currentOverlayProductName(): String {
@@ -1614,6 +1755,7 @@ class ArEditorActivity : ComponentActivity() {
         hide(hiddenActionsBar)
         hide(placementLockButton)
         hide(arTipsBanner)
+        hide(placementReticle)
 
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val handler = Handler(Looper.getMainLooper())

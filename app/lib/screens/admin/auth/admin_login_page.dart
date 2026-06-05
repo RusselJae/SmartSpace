@@ -154,7 +154,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Use your admin credentials.',
+                  'Use your credentials.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Colors.grey[700],
                         fontWeight: FontWeight.w500,
@@ -230,16 +230,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                 ),
                 const Spacer(),
                 Text(
-                  'Admin access only.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w600,
-                      ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'If you don’t have credentials, ask your administrator.',
+                  'If you do not have credentials, ask your administrator.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Colors.grey[600],
                         height: 1.3,

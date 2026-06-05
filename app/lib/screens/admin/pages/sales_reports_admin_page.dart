@@ -57,6 +57,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     DateTime.now().day,
   );
   AdminTrendGranularity _trendGranularity = AdminTrendGranularity.monthly;
+  DateTimeRange? _customRange;
   List<OrderRecord> _orders = const [];
   List<Product> _products = const [];
   List<Review> _reviews = const [];
@@ -135,7 +136,32 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     });
   }
 
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final initial = _customRange ??
+        DateTimeRange(
+          start: DateTime(now.year, now.month, 1),
+          end: DateTime(now.year, now.month, now.day),
+        );
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5, 1, 1),
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDateRange: initial,
+      helpText: 'Select report date range',
+    );
+    if (picked == null) return;
+    setState(() => _customRange = picked);
+  }
+
   DateTime get _periodStart {
+    if (_customRange != null) {
+      return DateTime(
+        _customRange!.start.year,
+        _customRange!.start.month,
+        _customRange!.start.day,
+      );
+    }
     switch (_trendGranularity) {
       case AdminTrendGranularity.weekly:
         return _mondayOfWeekContaining(_selectedDate);
@@ -147,6 +173,13 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   }
 
   DateTime get _periodEnd {
+    if (_customRange != null) {
+      return DateTime(
+        _customRange!.end.year,
+        _customRange!.end.month,
+        _customRange!.end.day + 1,
+      );
+    }
     switch (_trendGranularity) {
       case AdminTrendGranularity.weekly:
         return _mondayOfWeekContaining(_selectedDate).add(const Duration(days: 7));
@@ -158,6 +191,9 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   }
 
   String get _selectedPeriodLabel {
+    if (_customRange != null) {
+      return '${DateFormat.yMMMd().format(_customRange!.start)} – ${DateFormat.yMMMd().format(_customRange!.end)}';
+    }
     switch (_trendGranularity) {
       case AdminTrendGranularity.weekly:
         final mon = _mondayOfWeekContaining(_selectedDate);
@@ -721,10 +757,17 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
             onGranularityChanged: (g) => setState(() => _trendGranularity = g),
             selectedLabel: _selectedPeriodLabel,
             onPickDate: _pickSelectedPeriod,
+            onPickRange: _pickDateRange,
+            onClearRange: _customRange == null ? null : () => setState(() => _customRange = null),
             onExport: _exporting ? null : _exportExcelXlsx,
             onPrint: _exporting ? null : _printPdfReport,
             points: _activeTrendPoints,
             trendXFormatter: (x) => _salesTrendXLabel(_trendGranularity, x),
+          ),
+          const SizedBox(height: 16),
+          _SalesBreakdownSection(
+            orders: _monthOrders,
+            orderRevenueForSalesReports: _orderRevenueForSalesReports,
           ),
           const SizedBox(height: 16),
           AdminInsightPanelRow(
@@ -843,6 +886,8 @@ class _SalesTrendSection extends StatelessWidget {
     required this.onGranularityChanged,
     required this.selectedLabel,
     required this.onPickDate,
+    required this.onPickRange,
+    this.onClearRange,
     required this.onExport,
     required this.onPrint,
     required this.points,
@@ -853,6 +898,8 @@ class _SalesTrendSection extends StatelessWidget {
   final ValueChanged<AdminTrendGranularity> onGranularityChanged;
   final String selectedLabel;
   final VoidCallback onPickDate;
+  final VoidCallback onPickRange;
+  final VoidCallback? onClearRange;
   final VoidCallback? onExport;
   final VoidCallback? onPrint;
   final List<AdminSeriesPoint> points;
@@ -888,6 +935,20 @@ class _SalesTrendSection extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 IconButton.outlined(
+                  onPressed: onPickRange,
+                  tooltip: 'Pick date range',
+                  icon: const Icon(Icons.date_range_outlined),
+                ),
+                if (onClearRange != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton.outlined(
+                    onPressed: onClearRange,
+                    tooltip: 'Clear date range',
+                    icon: const Icon(Icons.clear_outlined),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                IconButton.outlined(
                   onPressed: onExport,
                   tooltip: 'Export XLSX',
                   icon: const Icon(Icons.table_view_outlined),
@@ -920,6 +981,55 @@ class _SalesTrendSection extends StatelessWidget {
               valueFormatter: AdminFormatters.currency,
               xAxisLabelFormatter: trendXFormatter,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SalesBreakdownSection extends StatelessWidget {
+  const _SalesBreakdownSection({
+    required this.orders,
+    required this.orderRevenueForSalesReports,
+  });
+
+  final List<OrderRecord> orders;
+  final double Function(OrderRecord) orderRevenueForSalesReports;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Sales Breakdown Details',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+            const SizedBox(height: 10),
+            if (orders.isEmpty)
+              const Text('No orders in selected period.')
+            else
+              ...orders.take(20).map((order) {
+                final customer = order.userName.trim().isEmpty ? order.userId : order.userName;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${order.id.substring(0, 8).toUpperCase()} · $customer',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(AdminFormatters.currency(orderRevenueForSalesReports(order))),
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),

@@ -38,6 +38,9 @@ class ProductDetailScreen extends StatefulWidget {
 }
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
+  /// Catalog items are not limited by SKU stock; cap quantity per line for checkout.
+  static const int _maxOrderQuantity = 99;
+
   final CartService _cart = CartService();
   final AuthService _auth = AuthService();
   final MySQLDatabaseService _db = MySQLDatabaseService();
@@ -262,9 +265,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   void _inc() {
-    final maxQty = widget.product.inStock
-        ? widget.product.inventoryQty.clamp(1, 999999)
-        : 1;
+    final maxQty = widget.product.inStock ? _maxOrderQuantity : 1;
     if (_quantity >= maxQty) {
       HapticFeedback.selectionClick();
       return;
@@ -312,7 +313,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
     
-    final maxQty = widget.product.inventoryQty.clamp(1, 999999);
+    final maxQty = _maxOrderQuantity;
     final q = _quantity.clamp(1, maxQty);
     if (q != _quantity) {
       setState(() {
@@ -348,7 +349,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
     
-    final maxQty = widget.product.inventoryQty.clamp(1, 999999);
+    final maxQty = _maxOrderQuantity;
     final q = _quantity.clamp(1, maxQty);
     if (q != _quantity) {
       setState(() {
@@ -760,7 +761,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Left: bold "Available Stock" + count. Right: quantity stepper (same row).
   Widget _buildStockQuantityBlock(Product product) {
-    final maxQty = product.inStock ? product.inventoryQty.clamp(1, 999999) : 1;
+    final maxQty = product.inStock ? _maxOrderQuantity : 1;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -769,7 +770,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Available Stock',
+                'Availability',
                 style: GoogleFonts.poppins(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
@@ -779,7 +780,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                '${product.inventoryQty}',
+                product.inStock ? 'Available to order' : 'Unavailable',
                 style: GoogleFonts.poppins(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -861,7 +862,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 },
               ),
             ),
-            if (product.inStock && product.inventoryQty > 1)
+            if (product.inStock && maxQty > 1)
               ...[
                 const SizedBox(width: 6),
                 _QtyButton(
@@ -878,9 +879,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Full-width bar pinned to the bottom; square buttons, solid walnut Buy Now.
   Widget _buildPurchaseBar(BuildContext context, Product product) {
-    // When stock is 1 or lower, only keep Buy Now visible.
-    // This avoids showing "Add to Cart" for single/zero stock cases.
-    final hideAddToCart = product.inventoryQty <= 1;
+    final hideAddToCart = !product.inStock;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     return Container(
       decoration: BoxDecoration(

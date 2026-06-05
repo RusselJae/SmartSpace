@@ -253,9 +253,7 @@ class _CartScreenState extends State<CartScreen> {
     final problemItems = <CartItem>[];
     for (final item in selectedItems) {
       final p = item.product;
-      final available = p.inventoryQty;
-      final inStock = p.inStock && available > 0;
-      if (!inStock || item.quantity > available) {
+      if (!p.inStock) {
         problemItems.add(item);
       }
     }

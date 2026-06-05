@@ -22,6 +22,7 @@ export const parseAdminRole = (raw: string | null | undefined): AdminRole | null
 /** Fine-grained capability strings checked by middleware. */
 export const ADMIN_PERMISSIONS = {
   productsWrite: 'products:write',
+  inventoryWrite: 'inventory:write',
   ordersRead: 'orders:read',
   ordersWrite: 'orders:write',
   usersRead: 'users:read',
@@ -38,6 +39,7 @@ export const ADMIN_PERMISSIONS = {
 
 const OPS: readonly string[] = [
   ADMIN_PERMISSIONS.productsWrite,
+  ADMIN_PERMISSIONS.inventoryWrite,
   ADMIN_PERMISSIONS.ordersRead,
   ADMIN_PERMISSIONS.ordersWrite,
   ADMIN_PERMISSIONS.usersRead,

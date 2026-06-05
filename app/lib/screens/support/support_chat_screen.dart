@@ -13,6 +13,7 @@ import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/support_notifications_service.dart';
 import '../../utils/file_mime_utils.dart';
+import '../../widgets/support_message_body.dart';
 
 class SupportChatScreen extends StatefulWidget {
   const SupportChatScreen({super.key});
@@ -472,11 +473,9 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                   if (msg.body.trim().isNotEmpty) ...[
                                     if (msg.attachmentUrl != null)
                                       const SizedBox(height: 8),
-                                    Text(
-                                      msg.body,
-                                      style: theme.textTheme.bodyMedium?.copyWith(
-                                        color: bubbleTextColor,
-                                      ),
+                                    SupportMessageBody(
+                                      body: msg.body,
+                                      textColor: bubbleTextColor,
                                     ),
                                   ],
                                 ],

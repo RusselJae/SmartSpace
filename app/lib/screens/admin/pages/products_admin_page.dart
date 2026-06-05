@@ -2,8 +2,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:model_viewer_plus/model_viewer_plus.dart';
-
 import '../../../models/product.dart';
 import '../admin_theme.dart';
 import '../../../services/mysql_database_service.dart';
@@ -13,8 +11,6 @@ import '../../../services/backend_storage_service.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/model_path_helper.dart';
 import '../../../utils/dimension_format.dart';
-import '../../../widgets/cached_model_src_loader.dart';
-
 class ProductsAdminPage extends StatefulWidget {
   const ProductsAdminPage({super.key});
 
@@ -295,8 +291,8 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
         realDepthM: data.realDepthM,
         modelBaseScale: data.modelBaseScale,
         imageUrls: data.imageUrls,
-        inventoryQty: data.inventoryQty,
-        inStock: data.inStock,
+        inventoryQty: 999,
+        inStock: true,
       );
       if (!mounted) return;
       final message = _db.isConnected
@@ -337,8 +333,8 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
           realDepthMeters: data.realDepthM,
           modelBaseScale: data.modelBaseScale,
           imageUrls: data.imageUrls,
-          inventoryQty: data.inventoryQty,
-          inStock: data.inStock,
+          inventoryQty: product.inventoryQty,
+          inStock: true,
           // Preserve isArchived status when editing
           isArchived: product.isArchived,
         ),
@@ -438,7 +434,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AdminToolbar(
-          title: 'Catalog',
+          title: 'Product Catalog',
           actions: const [],
         ),
         if (_error != null)
@@ -462,7 +458,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: 'Search products by name, category, or style...',
+                    hintText: 'Search products by name, category, style, or material...',
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: _searchQuery.isNotEmpty
                         ? IconButton(
@@ -626,8 +622,7 @@ class _ProductsHeaderRow extends StatelessWidget {
           Expanded(flex: 3, child: Text('Product', style: style)),
           Expanded(flex: 2, child: Text('Category', style: style)),
           Expanded(flex: 2, child: Text('Price', style: style)),
-          Expanded(flex: 2, child: Text('Inventory', style: style)),
-          Expanded(flex: 2, child: Text('Status', style: style)),
+          Expanded(flex: 2, child: Text('Listing', style: style)),
           const SizedBox(width: 80),
         ],
       ),
@@ -660,8 +655,7 @@ class _ProductRow extends StatelessWidget {
             flex: 3,
             child: Row(
               children: [
-                // Display 3D model preview if available, otherwise show product image or icon placeholder
-                // Prioritize showing the 3D model preview for a better visual representation
+                // List thumbnail: product photo only (3D models stay in the edit form / customer app).
                 Container(
                   height: 36,
                   width: 36,
@@ -673,35 +667,23 @@ class _ProductRow extends StatelessWidget {
                     ),
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: product.modelPath.isNotEmpty
-                      ? CachedModelSrcLoader(
-                          sourceUrl: ModelPathHelper.normalize(product.modelPath),
-                          placeholder: const SizedBox.shrink(),
-                          builder: (context, resolvedSrc) => ModelViewer(
-                            key: ValueKey('${product.id}_admin_preview'),
-                            backgroundColor: Colors.transparent,
-                            src: resolvedSrc,
-                            alt: 'Preview of ${product.name}',
-                            ar: false,
-                            environmentImage: 'neutral',
-                            exposure: 1.35,
-                            shadowIntensity: 0.18,
-                            autoRotate: false,
-                            cameraControls: false,
-                            disableZoom: true,
-                            interactionPrompt: InteractionPrompt.none,
-                          ),
+                  child: product.imageUrls.isNotEmpty
+                      ? Image.network(
+                          ModelPathHelper.normalizeImageUrl(product.imageUrls.first),
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(
+                              Icons.chair_alt_rounded,
+                              color: AdminPalette.textPrimary,
+                              size: 20,
+                            );
+                          },
                         )
-                      : product.imageUrls.isNotEmpty
-                          ? Image.network(
-                              ModelPathHelper.normalizeImageUrl(product.imageUrls.first),
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                // Fallback to icon if image fails to load
-                                return const Icon(Icons.chair_alt_rounded, color: AdminPalette.textPrimary, size: 20);
-                              },
-                            )
-                          : const Icon(Icons.chair_alt_rounded, color: AdminPalette.textPrimary, size: 20),
+                      : const Icon(
+                          Icons.chair_alt_rounded,
+                          color: AdminPalette.textPrimary,
+                          size: 20,
+                        ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -739,56 +721,22 @@ class _ProductRow extends StatelessWidget {
           ),
           Expanded(
             flex: 2,
-            child: Text('${product.inventoryQty}'),
-          ),
-          Expanded(
-            flex: 2,
-            child: Builder(
-              builder: (context) {
-                // Dynamic stock status based on inventory quantity.
-                // We now expose 3 states:
-                // - In Stock: inventory > lowStockThreshold
-                // - Low Stock: 1..lowStockThreshold
-                // - Out of Stock: 0
-                const int lowStockThreshold = 3;
-                final int qty = product.inventoryQty;
-                final bool isOutOfStock = qty <= 0;
-                final bool isLowStock = qty > 0 && qty <= lowStockThreshold;
-                final bool isInStock = qty > lowStockThreshold;
-
-                final Color tint;
-                final Color textColor;
-                final String label;
-
-                if (isOutOfStock) {
-                  tint = _tint(Colors.red, .15);
-                  textColor = Colors.red.shade700;
-                  label = 'Out of Stock';
-                } else if (isLowStock) {
-                  tint = _tint(Colors.orange, .15);
-                  textColor = Colors.orange.shade800;
-                  label = 'Low Stock';
-                } else {
-                  tint = _tint(Colors.green, .15);
-                  textColor = Colors.green.shade700;
-                  label = 'In Stock';
-                }
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: tint,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    label,
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.poppins(
-                      fontWeight: FontWeight.w500,
-                      color: textColor,
-                    ),
-                  ),
-                );
-              },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: isArchivedView
+                    ? _tint(Colors.grey, .15)
+                    : _tint(Colors.green, .15),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                isArchivedView ? 'Archived' : 'Active',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.w500,
+                  color: isArchivedView ? Colors.grey.shade700 : Colors.green.shade700,
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -832,8 +780,6 @@ class _ProductFormData {
     required this.modelPath,
     required this.components,
     required this.imageUrls,
-    required this.inventoryQty,
-    required this.inStock,
   });
 
   final String name;
@@ -850,8 +796,6 @@ class _ProductFormData {
   final String modelPath;
   final List<ProductSetComponent> components;
   final List<String> imageUrls;
-  final int inventoryQty;
-  final bool inStock;
 }
 
 class _ProductFormDialog extends StatefulWidget {
@@ -874,7 +818,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _modelBaseScale;
   late final TextEditingController _modelPath;
   late final List<String> _imageUrls;
-  late final TextEditingController _inventoryQty;
   late final List<_SetComponentDraft> _componentDrafts;
   
   // Dropdown selected values
@@ -883,7 +826,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   String? _selectedMaterial;
   String? _selectedColor;
   
-  bool _inStock = true;
   bool _uploadingImage = false;
   bool _uploadingModel = false;
   String? _uploadError;
@@ -986,8 +928,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         .map(_SetComponentDraft.fromComponent)
         .toList(growable: true);
     _imageUrls = List<String>.from(product?.imageUrls ?? []);
-    _inventoryQty = TextEditingController(text: product?.inventoryQty.toString() ?? '0');
-    _inStock = product?.inStock ?? true;
     
     // Add listener to format price as user types
     _price.addListener(_onPriceChanged);
@@ -1522,7 +1462,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     for (final draft in _componentDrafts) {
       draft.dispose();
     }
-    _inventoryQty.dispose();
     super.dispose();
   }
 
@@ -1531,7 +1470,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _fieldErrors.clear();
 
     final parsedPrice = _parsePrice(_price.text);
-    final parsedInventoryQty = int.tryParse(_inventoryQty.text.trim());
     final double? widthM = DimensionFormat.inchesFieldToMeters(_realWidthM.text);
     final double? heightM = DimensionFormat.inchesFieldToMeters(_realHeightM.text);
     final double? depthM = DimensionFormat.inchesFieldToMeters(_realDepthM.text);
@@ -1598,7 +1536,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         ),
       );
     }
-    if (parsedInventoryQty == null || parsedInventoryQty < 0) _fieldErrors['inventory'] = 'Use 0 or greater';
     if (_imageUrls.isEmpty) _fieldErrors['images'] = 'Add at least one image';
 
     if (_fieldErrors.isNotEmpty) {
@@ -1606,7 +1543,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       return;
     }
 
-    // At this point validation passed, so parsedPrice and parsedInventoryQty are non-null.
+    // At this point validation passed, so parsedPrice is non-null.
     final data = _ProductFormData(
       name: _name.text.trim(),
       description: _description.text.trim(),
@@ -1622,8 +1559,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       modelPath: _modelPath.text.trim(),
       components: parsedComponents,
       imageUrls: _imageUrls,
-      inventoryQty: parsedInventoryQty!,
-      inStock: _inStock,
     );
     Navigator.of(context).pop(data);
   }
@@ -1946,17 +1881,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                       ),
                     ),
                 ],
-              ),
-              _buildField(
-                _inventoryQty,
-                'Inventory Quantity',
-                keyboardType: TextInputType.number,
-                errorText: _fieldErrors['inventory'],
-              ),
-              SwitchListTile(
-                value: _inStock,
-                title: const Text('In stock'),
-                onChanged: (value) => setState(() => _inStock = value),
               ),
               // Note: Popular and New Arrival are now automatic
               // - New Arrival: Products created within the last week

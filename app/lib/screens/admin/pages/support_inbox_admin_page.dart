@@ -11,6 +11,9 @@ import '../../../utils/file_mime_utils.dart';
 import '../../../services/admin_notifications_service.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
+import '../support/support_quick_replies.dart';
+import '../../../support/support_form_catalog.dart';
+import '../../../widgets/support_message_body.dart';
 
 class SupportInboxAdminPage extends StatefulWidget {
   const SupportInboxAdminPage({super.key});
@@ -183,6 +186,31 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load messages: $e')),
+      );
+    }
+  }
+
+  Future<void> _sendFormLink(String formType) async {
+    final conv = _selected;
+    if (conv == null ||
+        _adminAuth.adminAccessToken == null ||
+        _adminAuth.adminAccessToken!.isEmpty) {
+      return;
+    }
+    try {
+      final msg = await _db.sendSupportFormLinkAsAdmin(
+        conversationId: conv.id,
+        formType: formType,
+      );
+      if (!mounted) return;
+      setState(() => _messages = [..._messages, msg]);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Form link sent to customer')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send form link: $e')),
       );
     }
   }
@@ -382,13 +410,23 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          online ? 'online' : 'offline',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: online ? Colors.green[700] : Colors.grey[600],
-                          ),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.circle,
+                              size: 10,
+                              color: online ? Colors.green[600] : Colors.grey[500],
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              online ? 'online' : 'offline',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: online ? Colors.green[700] : Colors.grey[600],
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -463,13 +501,24 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-              Text(
-                _userLikelyOnline(conv) ? 'online' : 'offline',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: _userLikelyOnline(conv) ? Colors.green[700] : Colors.grey[600],
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.circle,
+                    size: 10,
+                    color: _userLikelyOnline(conv) ? Colors.green[600] : Colors.grey[500],
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _userLikelyOnline(conv) ? 'online' : 'offline',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _userLikelyOnline(conv) ? Colors.green[700] : Colors.grey[600],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -543,11 +592,9 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                                   ),
                               if (msg.body.trim().isNotEmpty) ...[
                                 if (msg.attachmentUrl != null) const SizedBox(height: 8),
-                                Text(
-                                  msg.body,
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                        color: isAdmin ? Colors.white : Colors.black,
-                                      ),
+                                SupportMessageBody(
+                                  body: msg.body,
+                                  textColor: isAdmin ? Colors.white : Colors.black,
                                 ),
                               ],
                             ],
@@ -581,16 +628,23 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                       },
                     ),
         ),
-        _AdminReplyComposer(onSend: _sendAdminMessage),
+        _AdminReplyComposer(
+          onSend: _sendAdminMessage,
+          onSendFormLink: _sendFormLink,
+        ),
       ],
     );
   }
 }
 
 class _AdminReplyComposer extends StatefulWidget {
-  const _AdminReplyComposer({required this.onSend});
+  const _AdminReplyComposer({
+    required this.onSend,
+    required this.onSendFormLink,
+  });
 
   final Future<void> Function(String body, PlatformFile? attachment) onSend;
+  final Future<void> Function(String formType) onSendFormLink;
 
   @override
   State<_AdminReplyComposer> createState() => _AdminReplyComposerState();
@@ -600,6 +654,7 @@ class _AdminReplyComposerState extends State<_AdminReplyComposer> {
   static const int _maxAttachmentBytes = 30 * 1024 * 1024;
   final TextEditingController _controller = TextEditingController();
   bool _sending = false;
+  bool _sendingForm = false;
   PlatformFile? _attachment;
 
   Future<void> _pickAttachment() async {
@@ -677,6 +732,79 @@ class _AdminReplyComposerState extends State<_AdminReplyComposer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+                child: Text(
+                  'Quick forms',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: kSupportQuickReplies.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, index) {
+                  final reply = kSupportQuickReplies[index];
+                  return ActionChip(
+                    label: Text(reply.label),
+                    onPressed: _sending
+                        ? null
+                        : () {
+                            _controller.text = reply.body;
+                            _controller.selection = TextSelection.collapsed(
+                              offset: _controller.text.length,
+                            );
+                          },
+                  );
+                },
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(4, 10, 4, 6),
+                child: Text(
+                  'Send form link',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: kSupportFormCatalog.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, index) {
+                  final def = kSupportFormCatalog[index];
+                  return ActionChip(
+                    label: Text(def.title),
+                    onPressed: (_sending || _sendingForm)
+                        ? null
+                        : () async {
+                            setState(() => _sendingForm = true);
+                            try {
+                              await widget.onSendFormLink(def.type);
+                            } finally {
+                              if (mounted) setState(() => _sendingForm = false);
+                            }
+                          },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
             if (_attachment != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),

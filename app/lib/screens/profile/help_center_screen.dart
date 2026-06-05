@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../support/support_chat_screen.dart';
+import '../support/support_forms_hub_screen.dart';
 import 'ar_guide_screen.dart';
 import 'delivery_guide_screen.dart';
 import 'how_to_order_screen.dart';
@@ -71,6 +72,30 @@ class HelpCenterScreen extends StatelessWidget {
                 );
               },
               subtitle: 'Get quick help from the team.',
+            ),
+            _HelpTile(
+              icon: CupertinoIcons.doc_text,
+              title: 'Support Forms',
+              onTap: () {
+                Navigator.of(context, rootNavigator: true).push(
+                  CupertinoPageRoute(
+                    builder: (_) => const SupportFormsHubScreen(),
+                  ),
+                );
+              },
+              subtitle: 'Structured requests for quotes, delivery, damage, and more.',
+            ),
+            _HelpTile(
+              icon: CupertinoIcons.collections,
+              title: 'Catalog Assistance',
+              onTap: () {
+                Navigator.of(context).push(
+                  CupertinoPageRoute(
+                    builder: (_) => const HowToOrderScreen(),
+                  ),
+                );
+              },
+              subtitle: 'Help with product catalog browsing and availability.',
             ),
             _HelpTile(
               icon: CupertinoIcons.book,

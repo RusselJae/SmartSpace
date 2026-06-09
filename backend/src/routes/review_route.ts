@@ -12,6 +12,11 @@ import {
 import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
 import { ADMIN_PERMISSIONS } from '../auth/admin_role';
 
+const mediaItemSchema = z.object({
+  url: z.string().min(1),
+  type: z.enum(['image', 'video']),
+});
+
 const createReviewSchema = z.object({
   productId: z.string().min(1),
   productName: z.string().min(1),
@@ -19,6 +24,7 @@ const createReviewSchema = z.object({
   userName: z.string().min(1),
   rating: z.coerce.number().min(1).max(5),
   content: z.string().min(1),
+  media: z.array(mediaItemSchema).max(6).optional(),
 });
 
 const statusSchema = z.object({

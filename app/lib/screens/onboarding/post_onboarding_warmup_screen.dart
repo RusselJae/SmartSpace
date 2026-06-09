@@ -47,6 +47,6 @@ class _PostOnboardingWarmupScreenState extends State<PostOnboardingWarmupScreen>
 
   @override
   Widget build(BuildContext context) => const SplashScreen(
-        footerHint: 'Caching 3D previews so the home screen opens smoothly…',
+        footerHint: 'Getting things ready…',
       );
 }

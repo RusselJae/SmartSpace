@@ -109,21 +109,21 @@ flutter:
     # Copy your provided PNG into this path:
     # app/assets/images/onboarding_background.png
     - assets/images/onboarding_background.png
-    - assets/models/3_piece_sofa_set2.glb
-    - assets/models/4_piece_sofa_set2.glb
-    - assets/models/6_piece_sofa_set2.glb
-    - assets/models/aero_console.glb
-    - assets/models/bed_sidetable2.glb
-    - assets/models/cabinet_storage_unit.glb
-    - assets/models/entryway_cabinet.glb
-    - assets/models/freeform_lounge_set.glb
-    - assets/models/grand_bunk_bed2.glb
-    - assets/models/inlay_dining_set2.glb
-    - assets/models/solid_wood_credenza_cabinet1.glb
-    - assets/models/staircase_bunk_bed2.glb
-    - assets/models/tv_stand.glb
-    - assets/models/wave_dining_set2.glb
-    - assets/models/woode_6_drawer.glb
+    - assets/models/3_piece_sofa_set2_compressed.glb
+    - assets/models/4_piece_sofa_set2_compressed.glb
+    # - assets/models/6_piece_sofa_set2.glb
+    - assets/models/aero_console_compressed.glb
+    - assets/models/bed_sidetable2_compressed.glb
+    # - assets/models/cabinet_storage_unit.glb
+    - assets/models/entryway_cabinet_compressed.glb
+    - assets/models/freeform_lounge_set_compressed.glb
+    - assets/models/grand_bunk_bed2_compressed.glb
+    # - assets/models/inlay_dining_set2.glb
+    - assets/models/solid_wood_credenza_cabinet1_compressed.glb
+    - assets/models/staircase_bunk_bed2_compressed.glb
+    - assets/models/tv_stand_compressed.glb
+    # - assets/models/wave_dining_set2.glb
+    - assets/models/wooden_6_drawer_compressed.glb
     - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see

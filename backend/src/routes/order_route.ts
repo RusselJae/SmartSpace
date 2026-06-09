@@ -98,6 +98,7 @@ const statusSchema = z
   .object({
     status: z.string().min(1),
     userId: z.string().optional(),
+    cancellationComment: z.string().optional(),
   })
   .passthrough();
 
@@ -1098,7 +1099,13 @@ orderRouter.patch(
       order.userId === userIdBody &&
       payload.status.toLowerCase() === 'cancelled'
     ) {
-      await updateOrderStatus(req.params.id, payload.status);
+      const comment =
+        typeof payload.cancellationComment === 'string'
+          ? payload.cancellationComment.trim()
+          : undefined;
+      await updateOrderStatus(req.params.id, payload.status, {
+        cancellationComment: comment,
+      });
       return res.status(204).send();
     }
     next();

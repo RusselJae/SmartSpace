@@ -1,6 +1,6 @@
 import { RowDataPacket } from 'mysql2';
 import { getPool } from '../config/database';
-import { Review } from '../models/review';
+import { Review, ReviewMediaItem } from '../models/review';
 import { generateId } from '../utils/id_generator';
 
 type ReviewRow = RowDataPacket & {
@@ -12,8 +12,56 @@ type ReviewRow = RowDataPacket & {
   readonly rating: number;
   readonly content: string | null;
   readonly status: string | null;
+  readonly media_json?: string | ReviewMediaItem[] | null;
   readonly created_at: Date;
   readonly updated_at: Date | null;
+};
+
+let _reviewMediaEnsured = false;
+
+const ensureReviewMediaColumn = async (): Promise<void> => {
+  if (_reviewMediaEnsured) return;
+  const pool = getPool();
+  await pool.query(`
+    ALTER TABLE reviews
+    ADD COLUMN IF NOT EXISTS media_json JSON NULL
+    COMMENT 'Optional review photos/videos [{url,type}]'
+  `).catch(async () => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS c FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = 'reviews' AND column_name = 'media_json'`,
+    );
+    if (Number(rows[0]?.c ?? 0) === 0) {
+      await pool.query(`ALTER TABLE reviews ADD COLUMN media_json JSON NULL`);
+    }
+  });
+  _reviewMediaEnsured = true;
+};
+
+const parseReviewMedia = (raw: ReviewRow['media_json']): ReviewMediaItem[] => {
+  if (raw == null) return [];
+  let list: unknown[] = [];
+  if (typeof raw === 'string') {
+    try {
+      list = JSON.parse(raw) as unknown[];
+    } catch {
+      return [];
+    }
+  } else if (Array.isArray(raw)) {
+    list = raw;
+  } else {
+    return [];
+  }
+  return list
+    .map((item) => {
+      if (typeof item !== 'object' || item == null) return null;
+      const o = item as Record<string, unknown>;
+      const url = String(o.url ?? '').trim();
+      if (!url) return null;
+      const type = o.type === 'video' ? 'video' : 'image';
+      return { url, type } as ReviewMediaItem;
+    })
+    .filter((x): x is ReviewMediaItem => x != null);
 };
 
 export type ReviewInput = {
@@ -23,6 +71,7 @@ export type ReviewInput = {
   readonly userName: string;
   readonly rating: number;
   readonly content: string;
+  readonly media?: readonly ReviewMediaItem[];
 };
 
 /**
@@ -44,8 +93,8 @@ const mapReview = (row: ReviewRow): Review => {
     userName: row.user_name ?? '',
     rating: Number(row.rating),
     content: row.content ?? '',
-    // Treat missing status as published so older rows still show up
     status: row.status ?? 'published',
+    media: parseReviewMedia(row.media_json),
     createdAt: row.created_at ?? new Date(),
     updatedAt: row.updated_at ?? undefined,
   };
@@ -159,6 +208,7 @@ export const hasUserPurchasedProduct = async (userId: string, productId: string)
  *   step in the admin UI anymore.
  */
 export const createReview = async (input: ReviewInput): Promise<Review> => {
+  await ensureReviewMediaColumn();
   const pool = getPool();
   
   // Validate that the user has purchased this product
@@ -176,6 +226,7 @@ export const createReview = async (input: ReviewInput): Promise<Review> => {
     throw new Error('You have already reviewed this product');
   }
 
+  const media = (input.media ?? []).slice(0, 6);
   const review: Review = {
     id: generateId('r'),
     productId: input.productId,
@@ -184,15 +235,15 @@ export const createReview = async (input: ReviewInput): Promise<Review> => {
     userName: input.userName,
     rating: input.rating,
     content: input.content,
-    // Auto‑accept: reviews are immediately visible as "published"
     status: 'published',
+    media,
     createdAt: new Date(),
   };
 
   await pool.query(
     `
-    INSERT INTO reviews (id, product_id, product_name, user_id, user_name, rating, content, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO reviews (id, product_id, product_name, user_id, user_name, rating, content, status, media_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       review.id,
@@ -203,6 +254,7 @@ export const createReview = async (input: ReviewInput): Promise<Review> => {
       review.rating,
       review.content,
       review.status,
+      media.length > 0 ? JSON.stringify(media) : null,
     ],
   );
 

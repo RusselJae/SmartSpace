@@ -14,7 +14,7 @@ import '../../services/mysql_database_service.dart';
 import '../../widgets/toast.dart';
 import '../shell/tab_shell.dart';
 import 'models.dart';
-import 'success_screen.dart';
+import 'order_invoice_screen.dart';
 
 /// Payment confirmation screen with QR code and payment proof upload.
 ///
@@ -57,6 +57,9 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
   bool _uploading = false;
   bool _paymentConfirmed = false;
   bool _orderCancelled = false;
+  bool _proofSubmitted = false;
+  bool _autoCancelling = false;
+  Timer? _statusPollTimer;
   AppSettings? _settings;
 
   @override
@@ -79,6 +82,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
           _deadline = startTime.add(Duration(minutes: timerMinutes));
         });
         _startTimers();
+        _startStatusPolling();
         _checkPaymentStatus();
       }
     } catch (e) {
@@ -86,12 +90,12 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
       if (mounted) {
         setState(() {
           _settings = const AppSettings();
-          _remainingSeconds = 15 * 60;
-          // If resetTimer is true (restarting payment attempt), use current time instead of orderCreatedAt
+          _remainingSeconds = 24 * 60 * 60;
           final startTime = widget.resetTimer ? DateTime.now() : widget.orderCreatedAt;
-          _deadline = startTime.add(const Duration(minutes: 15));
+          _deadline = startTime.add(const Duration(hours: 24));
         });
         _startTimers();
+        _startStatusPolling();
         _checkPaymentStatus();
       }
     }
@@ -105,6 +109,51 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
 
   void _stopTimers() {
     _countdownTimer?.cancel();
+    _statusPollTimer?.cancel();
+  }
+
+  void _startStatusPolling() {
+    _statusPollTimer?.cancel();
+    _statusPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _checkPaymentStatus();
+    });
+  }
+
+  Future<void> _openInvoice() async {
+    final userId = _auth.currentUser?.id.trim();
+    if (userId == null || userId.isEmpty) return;
+    await Navigator.of(context, rootNavigator: true).push(
+      CupertinoPageRoute(
+        builder: (_) => OrderInvoiceScreen(
+          orderId: widget.orderId,
+          userId: userId,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handlePaymentTimeout() async {
+    if (_autoCancelling || _paymentConfirmed || _orderCancelled) return;
+    _autoCancelling = true;
+    try {
+      final uid = _auth.currentUser?.id;
+      if (uid != null && uid.isNotEmpty) {
+        await _db.updateOrderStatus(
+          widget.orderId,
+          'cancelled',
+          customerUserId: uid,
+          cancellationComment: 'Payment not completed within 24 hours',
+        );
+      }
+      if (mounted) {
+        setState(() => _orderCancelled = true);
+        _stopTimers();
+      }
+    } catch (e) {
+      developer.log('Auto-cancel failed: $e', name: 'PaymentConfirmation');
+    } finally {
+      _autoCancelling = false;
+    }
   }
 
   int _calculateRemainingSeconds() {
@@ -127,6 +176,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
       if (secondsLeft <= 0) {
         timer.cancel();
         setState(() => _remainingSeconds = 0);
+        _handlePaymentTimeout();
       } else {
         setState(() {
           _remainingSeconds = secondsLeft;
@@ -150,12 +200,11 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
       
       // Check if payment is already confirmed or order is cancelled
       final paymentStatus = order.shippingAddress['paymentStatus'] as String?;
-      if (paymentStatus == 'confirmed' || paymentStatus == 'downpayment_paid') {
-        if (mounted) {
-          setState(() {
-            _paymentConfirmed = true;
-          });
+      if (paymentStatus == 'confirmed' || paymentStatus == 'downpayment_paid' || paymentStatus == 'completed') {
+        if (mounted && !_paymentConfirmed) {
+          setState(() => _paymentConfirmed = true);
           _stopTimers();
+          await _openInvoice();
         }
       } else if (order.status == 'cancelled') {
         if (mounted) {
@@ -169,8 +218,6 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
       developer.log('Error checking payment status: $e', name: 'PaymentConfirmation');
     }
   }
-
-  // Expiration auto-cancel removed.
 
   /// Pick payment proof image from gallery or camera
   /// Supports both Android and iOS image selection
@@ -292,19 +339,10 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
       if (mounted) {
         setState(() {
           _uploading = false;
+          _proofSubmitted = true;
         });
-        _stopTimers();
-        Toast.success(context, 'Payment proof submitted! Waiting for admin confirmation.');
-        
-        // Navigate to success screen
-        Navigator.of(context).pushAndRemoveUntil(
-          CupertinoPageRoute(
-            builder: (_) => SuccessScreen(
-              invoiceOrderId: widget.orderId,
-            ),
-          ),
-          (route) => route.isFirst,
-        );
+        Toast.success(context, 'Payment proof submitted! We will verify and show your invoice here.');
+        _startStatusPolling();
       }
     } catch (e) {
       if (mounted) {
@@ -318,8 +356,12 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
 
   /// Format remaining time as MM:SS
   String _formatTime(int seconds) {
-    final minutes = seconds ~/ 60;
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
     final secs = seconds % 60;
+    if (hours > 0) {
+      return '${hours}h ${minutes.toString().padLeft(2, '0')}m';
+    }
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 
@@ -440,14 +482,20 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 24),
                   CupertinoButton.filled(
+                    onPressed: _openInvoice,
+                    child: Text(
+                      'View invoice',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  CupertinoButton(
                     onPressed: () {
-                      // Check if we can pop before trying to navigate
                       if (Navigator.of(context).canPop()) {
                         Navigator.of(context).popUntil((route) => route.isFirst);
                       } else {
-                        // If we can't pop, navigate to home using root navigator
                         Navigator.of(context, rootNavigator: true).pushNamedAndRemoveUntil(
                           TabShell.route,
                           (route) => false,
@@ -482,6 +530,20 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (_proofSubmitted)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF81C784)),
+                ),
+                child: Text(
+                  'Payment proof received. Our team will verify within 24 hours. Your invoice opens automatically once confirmed.',
+                  style: GoogleFonts.poppins(fontSize: 13, height: 1.35, color: const Color(0xFF2E7D32)),
+                ),
+              ),
             // Timer warning
             Container(
               padding: const EdgeInsets.all(16),
@@ -525,8 +587,8 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                         const SizedBox(height: 4),
                         Text(
                           _remainingSeconds < 300
-                              ? '⚠️ ${_formatTime(_remainingSeconds)} - Order will be cancelled soon!'
-                              : 'Complete payment within ${_formatTime(_remainingSeconds)}',
+                              ? '⚠️ ${_formatTime(_remainingSeconds)} left — order cancels soon!'
+                              : 'Complete payment within ${_formatTime(_remainingSeconds)} (24h limit)',
                           style: GoogleFonts.poppins(
                             fontSize: 12,
                             fontWeight: FontWeight.normal,

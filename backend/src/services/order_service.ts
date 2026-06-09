@@ -1489,7 +1489,16 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
   return await mapOrder(rows[0]);
 };
 
-export const updateOrderStatus = async (orderId: string, status: string): Promise<void> => {
+export type UpdateOrderStatusOptions = {
+  /** Customer-provided reason when cancelling (stored on `cancellation_reason`). */
+  readonly cancellationComment?: string;
+};
+
+export const updateOrderStatus = async (
+  orderId: string,
+  status: string,
+  options?: UpdateOrderStatusOptions,
+): Promise<void> => {
   const pool = getPool();
   
   // Get order details before updating
@@ -1567,6 +1576,16 @@ export const updateOrderStatus = async (orderId: string, status: string): Promis
     } else {
       await pool.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [status, orderId]);
     }
+  } else if (
+    status === 'cancelled' &&
+    options?.cancellationComment != null &&
+    options.cancellationComment.trim().length > 0
+  ) {
+    const reason = options.cancellationComment.trim().slice(0, 500);
+    await pool.query(
+      `UPDATE orders SET status = ?, cancellation_reason = ?, updated_at = NOW() WHERE id = ?`,
+      [status, reason, orderId],
+    );
   } else {
     await pool.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [status, orderId]);
   }
@@ -1836,9 +1855,9 @@ export const autoCancelUnpaidOrders = async (): Promise<number> => {
     try {
       const [reminderRows] = await pool.query<RowDataPacket[]>(
         `SELECT id, user_id, total_amount FROM orders
-         WHERE payment_method = 'paymongo'
-           AND status = 'pending'
+         WHERE status = 'pending'
            AND LOWER(COALESCE(payment_status, 'pending')) = 'pending'
+           AND payment_method IN ('gcash', 'cod', 'paymongo')
            AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) >= ?
            AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) < ?
            AND checkout_reminder_sent_at IS NULL`,
@@ -1866,9 +1885,9 @@ export const autoCancelUnpaidOrders = async (): Promise<number> => {
 
   const [cancelRows] = await pool.query<RowDataPacket[]>(
     `SELECT id FROM orders
-     WHERE payment_method = 'paymongo'
-       AND status = 'pending'
+     WHERE status = 'pending'
        AND LOWER(COALESCE(payment_status, 'pending')) = 'pending'
+       AND payment_method IN ('gcash', 'cod', 'paymongo')
        AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) >= ?`,
     [cancelMin],
   );

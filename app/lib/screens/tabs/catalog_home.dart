@@ -1,13 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:model_viewer_plus/model_viewer_plus.dart';
-
 import '../views/product_detail.dart';
 import '../views/product_list.dart';
 import '../views/made_to_order_request_screen.dart';
 import '../views/sign_in.dart';
-import '../../widgets/cached_model_src_loader.dart';
 import '../../widgets/filters_sheet.dart';
 import '../../services/mysql_database_service.dart';
 import '../../services/cart_service.dart';
@@ -965,6 +962,52 @@ class _CategoryTile extends StatelessWidget {
   }
 }
 
+/// Lightweight catalog thumbnail — product photo only (no per-card WebView).
+class _CatalogCardThumbnail extends StatelessWidget {
+  const _CatalogCardThumbnail({required this.product});
+
+  final Product product;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = product.imageUrls.isNotEmpty
+        ? ModelPathHelper.normalizeImageUrl(product.imageUrls.first)
+        : null;
+
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return Image.network(
+        imageUrl,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _placeholder(),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              _placeholder(),
+              const Center(child: CupertinoActivityIndicator(radius: 10)),
+            ],
+          );
+        },
+      );
+    }
+    return _placeholder();
+  }
+
+  Widget _placeholder() {
+    return Container(
+      color: const Color(0xFFF9F4EF),
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.chair_alt_rounded,
+        size: 40,
+        color: Color(0xFFBCAAA4),
+      ),
+    );
+  }
+}
+
 class _HorizontalProductCard extends StatefulWidget {
   const _HorizontalProductCard({required this.product, required this.onTap});
   final Product product;
@@ -1087,32 +1130,12 @@ class _HorizontalProductCardState extends State<_HorizontalProductCard>
             // Product image with overlay buttons - make image area clickable
             Stack(
               children: [
-                // WebView would steal taps from the card; ignore pointer so the outer
-                // [CupertinoButton] receives the press and opens product detail.
-                IgnorePointer(
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                    child: SizedBox(
-                      height: 140,
-                      width: double.infinity,
-                      child: CachedModelSrcLoader(
-                        sourceUrl: ModelPathHelper.normalize(widget.product.modelPath),
-                        builder: (context, resolvedSrc) => ModelViewer(
-                          key: ValueKey('${widget.product.id}_preview'),
-                          backgroundColor: const Color(0xFFF9F4EF),
-                          src: resolvedSrc,
-                          alt: 'Preview of ${widget.product.name}',
-                          ar: false,
-                          environmentImage: 'neutral',
-                          exposure: 1.35,
-                          shadowIntensity: 0.18,
-                          autoRotate: false,
-                          cameraControls: false,
-                          disableZoom: true,
-                          interactionPrompt: InteractionPrompt.none,
-                        ),
-                      ),
-                    ),
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                  child: SizedBox(
+                    height: 140,
+                    width: double.infinity,
+                    child: _CatalogCardThumbnail(product: widget.product),
                   ),
                 ),
                 // Wishlist button at top left

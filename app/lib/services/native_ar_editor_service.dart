@@ -9,8 +9,6 @@ import '../models/product.dart';
 import '../screens/views/product_detail.dart';
 import '../utils/model_path_helper.dart';
 import 'mysql_database_service.dart';
-import 'model_file_cache.dart';
-
 /// ###########################################################################
 /// ## NativeArEditorService                                                  ##
 /// ###########################################################################
@@ -27,6 +25,9 @@ class NativeArEditorService {
   NativeArEditorService._();
 
   static const MethodChannel _channel = MethodChannel('com.smartspace/ar_editor');
+
+  /// Keeps the Android Intent binder payload small (large JSON can crash on open).
+  static const int _maxArGalleryModels = 48;
 
   static bool _nativeInboundRegistered = false;
 
@@ -76,12 +77,6 @@ class NativeArEditorService {
     });
   }
 
-  // Canonical matcher so "Dining Chairs", " dining-chairs ", etc. can still
-  // resolve to the same category bucket for variants.
-  static String _normalizeCategory(String raw) {
-    return raw.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9]'), '');
-  }
-
   static double? _finiteOrNull(double? value) {
     if (value == null) return null;
     return value.isFinite ? value : null;
@@ -91,27 +86,15 @@ class NativeArEditorService {
     return <String, dynamic>{
       'productId': p.id,
       'name': p.name,
+      'category': p.category.trim().isEmpty ? 'Other' : p.category.trim(),
       'modelSrc': ModelPathHelper.normalize(p.modelPath),
-      // First catalog image for circular thumbnails in native AR carousel.
+      // First catalog image for the native AR model gallery thumbnail.
       'thumbnailUrl': p.imageUrls.isNotEmpty ? p.imageUrls.first : '',
       'realWidthMeters': _finiteOrNull(p.realWidthMeters),
       'realHeightMeters': _finiteOrNull(p.realHeightMeters),
       'realDepthMeters': _finiteOrNull(p.realDepthMeters),
       'modelBaseScale': p.modelBaseScale.isFinite ? p.modelBaseScale : 1.0,
     };
-  }
-
-  /// Bundled assets become `file://` paths native SceneView can load offline.
-  static Future<String> _resolveModelSrcForNative(String modelPath) async {
-    final normalized = ModelPathHelper.normalize(modelPath).trim();
-    if (normalized.isEmpty) return normalized;
-    return ModelFileCacheService.resolveForViewer(normalized);
-  }
-
-  static Future<Map<String, dynamic>> _variantToJsonResolved(Product p) async {
-    final payload = _variantToJson(p);
-    payload['modelSrc'] = await _resolveModelSrcForNative(p.modelPath);
-    return payload;
   }
 
   /// Launches the native AR editor for the given [product].
@@ -123,22 +106,44 @@ class NativeArEditorService {
   ///   real-world dimensions used for true-to-scale correction.
   /// - `modelBaseScale`: base scale factor applied before any user edits.
   static Future<void> openForProduct(Product product) async {
-    final resolvedPrimarySrc =
-        await _resolveModelSrcForNative(product.modelPath);
+    final normalizedPrimarySrc = ModelPathHelper.normalize(product.modelPath);
 
-    // Option A: build a same-category variant list. If this fails (DB not
-    // ready, network error, etc.), we fall back to just the current product
-    // so the AR editor still opens.
+    // Never block the native Activity on a full-catalog scan (can freeze / OOM).
     String variantsJson;
     try {
+      variantsJson = await _buildVariantsJson(product).timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => jsonEncode([_variantToJson(product)]),
+      );
+    } catch (e) {
+      debugPrint('AR variants build failed: $e');
+      variantsJson = jsonEncode([_variantToJson(product)]);
+    }
+
+    try {
+      await _channel.invokeMethod<void>('openEditor', <String, dynamic>{
+        'modelSrc': normalizedPrimarySrc,
+        'altText': product.name,
+        'realWidthMeters': product.realWidthMeters,
+        'realHeightMeters': product.realHeightMeters,
+        'realDepthMeters': product.realDepthMeters,
+        'modelBaseScale': product.modelBaseScale,
+        'initialProductId': product.id,
+        'variantProductsJson': variantsJson,
+      });
+    } on PlatformException catch (e) {
+      debugPrint('Native AR editor failed to open: ${e.code} - ${e.message}');
+    }
+  }
+
+  static Future<String> _buildVariantsJson(Product product) async {
+    try {
       final db = MySQLDatabaseService();
-      // Ensure API/mock mode is resolved before fetching variants.
       await db.initialize();
       List<Product> allProducts;
       try {
         allProducts = await db.getAllProducts();
       } catch (e) {
-        // Retry once through the service's fallback path (API -> mock).
         debugPrint('AR variants fetch failed, retrying via fallback: $e');
         await db.retryConnection();
         allProducts = await db.getAllProducts();
@@ -150,66 +155,52 @@ class NativeArEditorService {
         return !p.isArchived && src.isNotEmpty;
       }).toList();
 
-      final targetCategory = _normalizeCategory(product.category);
-      var variants = loadable
-          .where((p) {
-            final sameCategory = _normalizeCategory(p.category) == targetCategory;
-            return sameCategory;
-          })
-          .toList();
-      // Safety net: if category data is inconsistent and we only got the
-      // current product, surface other non-archived products instead of
-      // showing an almost-empty carousel.
-      if (variants.length <= 1) {
-        variants = List<Product>.from(loadable);
-      }
+      // Gallery shows the full catalog; category filtering happens in native UI.
+      var variants = List<Product>.from(loadable);
       if (!variants.any((p) => p.id == product.id)) {
         variants.add(product);
       }
       variants.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+      // Tapped product must be index 0 so native fallbacks never load the wrong GLB.
+      final tappedIndex = variants.indexWhere((p) => p.id == product.id);
+      if (tappedIndex > 0) {
+        final tapped = variants.removeAt(tappedIndex);
+        variants.insert(0, tapped);
+      }
+
+      // Cap gallery size but always keep the tapped product at the front.
+      if (variants.length > _maxArGalleryModels) {
+        final tapped = variants.firstWhere((p) => p.id == product.id);
+        final rest = variants
+            .where((p) => p.id != product.id)
+            .take(_maxArGalleryModels - 1)
+            .toList();
+        variants = [tapped, ...rest];
+      }
+
       debugPrint(
-        'AR variants prepared: all=${allProducts.length}, '
-        'loadable=${loadable.length}, selected=${variants.length}, '
-        'category="${product.category}"',
+        'AR gallery prepared: all=${allProducts.length}, '
+        'loadable=${loadable.length}, selected=${variants.length}',
       );
 
       final safeVariantPayload = <Map<String, dynamic>>[];
-      // Include all available variants so the native carousel can show the full set.
+      // Include all available variants so the native gallery can show the full set.
       for (final p in variants) {
         try {
-          safeVariantPayload.add(await _variantToJsonResolved(p));
+          safeVariantPayload.add(_variantToJson(p));
         } catch (e) {
           // Skip bad records instead of collapsing the whole carousel.
           debugPrint('Skipping malformed AR variant ${p.id}: $e');
         }
       }
       if (safeVariantPayload.isEmpty) {
-        safeVariantPayload.add(await _variantToJsonResolved(product));
+        safeVariantPayload.add(_variantToJson(product));
       }
-      variantsJson = jsonEncode(
-        safeVariantPayload,
-      );
+      return jsonEncode(safeVariantPayload);
     } catch (e) {
-      debugPrint('AR variants build failed: $e');
-      // Last-resort fallback: still open AR even if variants cannot be built.
-      variantsJson = jsonEncode([await _variantToJsonResolved(product)]);
-    }
-
-    try {
-      await _channel.invokeMethod<void>('openEditor', <String, dynamic>{
-        'modelSrc': resolvedPrimarySrc,
-        'altText': product.name,
-        'realWidthMeters': product.realWidthMeters,
-        'realHeightMeters': product.realHeightMeters,
-        'realDepthMeters': product.realDepthMeters,
-        'modelBaseScale': product.modelBaseScale,
-        'initialProductId': product.id,
-        'variantProductsJson': variantsJson,
-      });
-    } on PlatformException catch (e) {
-      // Native editor unavailable; log for debugging. Could surface a Toast.
-      debugPrint('Native AR editor failed to open: ${e.code} - ${e.message}');
+      debugPrint('AR variants payload failed: $e');
+      return jsonEncode([_variantToJson(product)]);
     }
   }
 }

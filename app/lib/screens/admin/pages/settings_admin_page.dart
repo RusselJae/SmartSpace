@@ -35,7 +35,7 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
   File? _qrCodeImage;
   String _qrCodeImagePath = 'assets/images/qrcode.jpg';
   double _codDownpaymentPercentage = 20.0;
-  int _paymentConfirmationTime = 15;
+  int _paymentConfirmationTime = 1440;
   
   // Shipping Settings
   int _freeShippingProductCount = 3;
@@ -888,6 +888,99 @@ class _SettingsAdminPageState extends State<SettingsAdminPage> {
                               ],
                             ),
                           ),
+                          if (_specialShippingCitiesMap.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'All special shipping locations & fees',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey[800],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: Colors.grey[300]!),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  'Location',
+                                                  style: GoogleFonts.poppins(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.grey[700],
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 100,
+                                                child: Text(
+                                                  'Fee (₱)',
+                                                  textAlign: TextAlign.right,
+                                                  style: GoogleFonts.poppins(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.grey[700],
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const Divider(height: 1),
+                                        ...(_specialShippingCitiesMap.keys.toList()..sort()).map((city) {
+                                          final fee = _specialShippingCitiesMap[city] ?? 0;
+                                          final selected = city == _selectedSpecialShippingCity;
+                                          return Material(
+                                            color: selected ? const Color(0xFFF4E6D4).withValues(alpha: 0.35) : null,
+                                            child: InkWell(
+                                              onTap: () => _setSelectedSpecialCity(city),
+                                              child: Padding(
+                                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                                child: Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text(
+                                                        city,
+                                                        style: GoogleFonts.poppins(
+                                                          fontSize: 13,
+                                                          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    SizedBox(
+                                                      width: 100,
+                                                      child: Text(
+                                                        fee.toStringAsFixed(0),
+                                                        textAlign: TextAlign.right,
+                                                        style: GoogleFonts.poppins(fontSize: 13),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           _buildTextField(
                             label: 'Selected location shipping fee (₱)',
                             controller: _selectedSpecialShippingFeeController,

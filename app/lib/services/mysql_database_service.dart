@@ -1654,6 +1654,29 @@ class MySQLDatabaseService {
     }
   }
 
+  Future<ReviewMediaItem> uploadReviewMedia({
+    required List<int> bytes,
+    required String fileName,
+  }) async {
+    if (!_useApi) {
+      return ReviewMediaItem(
+        url: 'https://placehold.co/400x300?text=Review',
+        type: fileName.toLowerCase().endsWith('.mp4') ? 'video' : 'image',
+      );
+    }
+    final uri = Uri.parse('${ApiConfig.baseUrl}/reviews/media/upload');
+    final request = http.MultipartRequest('POST', uri);
+    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: fileName));
+    final streamed = await request.send().timeout(const Duration(seconds: 90));
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Review media upload failed: ${response.body}');
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final map = _asMap(decoded['data'], 'review media');
+    return ReviewMediaItem.fromJson(Map<String, dynamic>.from(map));
+  }
+
   Future<Review> createReview({
     required String productId,
     required String productName,
@@ -1661,6 +1684,7 @@ class MySQLDatabaseService {
     required String userName,
     required int rating,
     required String content,
+    List<ReviewMediaItem> media = const [],
   }) async {
     if (!_useApi) {
       // Keep mock behavior aligned with backend rules so the UI updates correctly.
@@ -1699,6 +1723,7 @@ class MySQLDatabaseService {
       'userName': userName,
       'rating': rating,
       'content': content,
+      if (media.isNotEmpty) 'media': media.map((m) => m.toJson()).toList(),
     };
     try {
       developer.log('📤 Creating review for product: $productId');

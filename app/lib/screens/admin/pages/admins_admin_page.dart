@@ -286,7 +286,7 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
         role: data.role,
       );
       if (!mounted) return;
-      Toast.success(context, 'Admin created successfully. Check your Email for Verification.');
+      Toast.success(context, 'Please check your email for a verification link.');
       await _loadAdmins();
     } catch (e) {
       if (!mounted) return;
@@ -1519,7 +1519,7 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '${PasswordPolicy.strongPasswordMessage} New admin accounts must verify email before first login.',
+                                '${PasswordPolicy.strongPasswordMessage} Please check your email for a verification link before first login.',
                                 style: GoogleFonts.poppins(
                                   fontSize: 12,
                                   color: Colors.blue[900],

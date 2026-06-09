@@ -118,11 +118,20 @@ class MainActivity : FlutterActivity() {
                 intent.putExtra("modelBaseScale", it)
             }
 
-            // Option A: variant list for in-place model swapping.
-            (args["variantProductsJson"] as? String)?.let { intent.putExtra("variantProductsJson", it) }
+            // Large variant list: keep out of the Intent to avoid TransactionTooLargeException.
+            val variantsJson = args["variantProductsJson"] as? String
+            if (!variantsJson.isNullOrBlank()) {
+                ArEditorLaunchCache.variantProductsJson = variantsJson
+                intent.putExtra("variantProductsFromCache", true)
+            }
             (args["initialProductId"] as? String)?.let { intent.putExtra("initialProductId", it) }
         }
 
-        startActivity(intent)
+        try {
+            startActivity(intent)
+        } catch (t: Throwable) {
+            ArEditorLaunchCache.variantProductsJson = null
+            android.util.Log.e("MainActivity", "Failed to launch ArEditorActivity", t)
+        }
     }
 }

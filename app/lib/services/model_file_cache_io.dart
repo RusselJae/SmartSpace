@@ -10,6 +10,9 @@ import 'package:path_provider/path_provider.dart';
 /// In-flight downloads keyed by canonical URL (dedupes parallel callers).
 final Map<String, Future<File>> _inFlight = {};
 
+/// In-flight bundled-asset copies (avoids N parallel 50MB writes for N cards).
+final Map<String, Future<String>> _assetMaterializeInFlight = {};
+
 /// Stable cache file name from remote URL (handles long paths & query strings).
 String _cacheFileNameForUrl(String url) {
   final digest = sha256.convert(utf8.encode(url));
@@ -42,6 +45,17 @@ String _cacheFileNameForAsset(String assetPath) {
 /// Copies a Flutter bundled GLB/GLTF to app storage so WebView / native loaders
 /// can open large offline models reliably.
 Future<String> _materializeBundledAsset(String assetPath) async {
+  try {
+    return await _assetMaterializeInFlight.putIfAbsent(
+      assetPath,
+      () => _materializeBundledAssetOnce(assetPath),
+    );
+  } finally {
+    _assetMaterializeInFlight.remove(assetPath);
+  }
+}
+
+Future<String> _materializeBundledAssetOnce(String assetPath) async {
   final dir = await _cacheDir();
   final target = File(p.join(dir.path, _cacheFileNameForAsset(assetPath)));
   if (await target.exists()) {
@@ -53,10 +67,14 @@ Future<String> _materializeBundledAsset(String assetPath) async {
   }
 
   final data = await rootBundle.load(assetPath);
-  await target.writeAsBytes(
+  final part = File('${target.path}.part');
+  if (await part.exists()) await part.delete();
+  await part.writeAsBytes(
     data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
     flush: true,
   );
+  if (await target.exists()) await target.delete();
+  await part.rename(target.path);
   return Uri.file(target.absolute.path).toString();
 }
 
@@ -101,19 +119,24 @@ Future<String> resolveModelSourceForViewer(String normalizedSrc) async {
   }
 }
 
-/// Pre-downloads every distinct remote model URL so the home grid does not
-/// each spin up its own serial fetch on first paint.
+/// Pre-downloads remote model URLs **sequentially** (never parallel — avoids OOM).
+/// Bundled assets are skipped; they already ship inside the APK.
 Future<void> prefetchModelSources(Iterable<String> normalizedSrcs) async {
   final unique = <String>{};
   for (final s in normalizedSrcs) {
     final t = s.trim();
     if (t.isEmpty) continue;
-    if (_isRemote(t) || _isBundledAsset(t)) {
-      unique.add(t);
-    }
+    if (_isBundledAsset(t)) continue;
+    if (_isRemote(t)) unique.add(t);
   }
   if (unique.isEmpty) return;
-  await Future.wait(unique.map(resolveModelSourceForViewer));
+  for (final src in unique) {
+    try {
+      await resolveModelSourceForViewer(src);
+    } catch (_) {
+      // Continue with remaining URLs.
+    }
+  }
 }
 
 Future<File> _download(String url, File target) async {

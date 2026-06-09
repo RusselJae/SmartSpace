@@ -501,24 +501,13 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.circle,
-                    size: 10,
-                    color: _userLikelyOnline(conv) ? Colors.green[600] : Colors.grey[500],
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _userLikelyOnline(conv) ? 'online' : 'offline',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: _userLikelyOnline(conv) ? Colors.green[700] : Colors.grey[600],
-                    ),
-                  ),
-                ],
+              Tooltip(
+                message: _userLikelyOnline(conv) ? 'Customer online' : 'Customer offline',
+                child: Icon(
+                  Icons.circle,
+                  size: 12,
+                  color: _userLikelyOnline(conv) ? Colors.green[600] : Colors.grey[500],
+                ),
               ),
             ],
           ),

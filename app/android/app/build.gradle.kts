@@ -70,7 +70,8 @@ flutter {
 }
 
 dependencies {
-    // Product thumbnails in the AR variant carousel (HTTP URLs from Flutter).
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    // Product thumbnails in the AR model gallery (HTTP URLs from Flutter).
     implementation("io.coil-kt:coil:2.5.0")
     // Pull in the official ARCore runtime so our availability checks compile.
     implementation("com.google.ar:core:1.44.0")

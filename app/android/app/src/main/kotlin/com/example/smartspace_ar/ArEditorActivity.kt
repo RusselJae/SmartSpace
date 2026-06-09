@@ -10,9 +10,6 @@ import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.RenderEffect
-import android.graphics.Rect
-import android.graphics.Shader
 import android.opengl.Matrix
 import android.os.Bundle
 import android.os.Build
@@ -23,14 +20,14 @@ import android.view.MotionEvent
 import android.view.PixelCopy
 import android.text.TextUtils
 import android.view.View
-import android.view.View.MeasureSpec
-import android.widget.Button
+import android.widget.ArrayAdapter
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.HorizontalScrollView
-import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import android.util.Log
@@ -54,10 +51,12 @@ import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
+import io.github.sceneview.ar.scene.PlaneRenderer
 import io.github.sceneview.math.Position
 import io.github.sceneview.math.Scale
 import io.github.sceneview.math.Rotation
 import io.github.sceneview.model.ModelInstance
+import io.github.sceneview.model.renderableEntities
 import android.os.SystemClock
 import android.provider.MediaStore
 import kotlin.math.roundToInt
@@ -96,6 +95,10 @@ class ArEditorActivity : ComponentActivity() {
         /** [LightEstimate.pixelIntensity] below this is treated as "too dark". */
         private const val DARK_PIXEL_INTENSITY_THRESHOLD = 0.35f
         private const val DARK_FRAMES_BEFORE_TIP = 6
+        /** Re-apply plane dot hiding — SceneView may re-enable after session resume. */
+        private const val PLANE_HIDE_EVERY_N_FRAMES = 30
+        /** Let ARCore depth stabilize before occlusion (avoids blank meshes on cold start). */
+        private const val DEPTH_OCCLUSION_WARMUP_MS = 3_000L
     }
 
     // Values passed in from Flutter via the starting Intent. We continue to
@@ -118,7 +121,6 @@ class ArEditorActivity : ComponentActivity() {
     private var restoreYaw: Float? = null
     /** Local offset of the model under its anchor (drag); persisted across sessions. */
     private var restorePosition: Position? = null
-    private var restoreVariantProductId: String? = null
     private var restorePlacementFailedFrames: Int = 0
     private var lastHitXNorm: Float? = null
     private var lastHitYNorm: Float? = null
@@ -137,6 +139,7 @@ class ArEditorActivity : ComponentActivity() {
     private data class VariantProduct(
         val productId: String,
         val name: String,
+        val category: String,
         val modelSrc: String,
         /** First catalog image URL for circular thumbnails (optional). */
         val thumbnailUrl: String?,
@@ -148,9 +151,10 @@ class ArEditorActivity : ComponentActivity() {
 
     private var variantProducts: List<VariantProduct> = emptyList()
     private var selectedVariantIndex: Int = 0
-    /** Circular frame wrappers for variant thumbnails (selection ring). */
-    private val variantThumbFrames: MutableList<FrameLayout> = mutableListOf()
     private var variantSwapRequestId: Int = 0
+    /** Prevents overlapping Filament loads that can OOM-crash on large GLBs. */
+    private var variantLoadInProgress: Boolean = false
+    private var pendingVariantIndex: Int? = null
 
     // Native AR view powered by SceneView. We keep usage deliberately minimal
     // so that the Activity compiles cleanly while we iterate on behaviour.
@@ -173,33 +177,38 @@ class ArEditorActivity : ComponentActivity() {
     // read‑out, plus guidance text, via a compact toolbar that floats above
     // the AR content. The toolbar is collapsible so it stays out of the way
     // once people are comfortable with the controls.
-    /** Per-axis scale readout (W / H / D) under a centered "Scale" title. */
-    private var scaleValueW: TextView? = null
-    private var scaleValueH: TextView? = null
-    private var scaleValueD: TextView? = null
-    /** Per-axis approximate size readout under a centered "Size" title. */
-    private var sizeValueW: TextView? = null
-    private var sizeValueH: TextView? = null
-    private var sizeValueD: TextView? = null
-    private var overlayProductNameLabel: TextView? = null
-    private var overlayContent: LinearLayout? = null
-    private var isOverlayExpanded: Boolean = true
+    /** Live W×H×D readout shown beneath the uniform scale slider. */
+    private var dimensionsLabel: TextView? = null
+    private var scaleFactorLabel: TextView? = null
     private var scaleOverlayWidthPx: Int = 0
-    private var scaleOverlayContainer: LinearLayout? = null
-    private var scaleScrollView: ScrollView? = null
-    private var variantCarouselContainer: View? = null
-    /** Used to dim/blur partially visible carousel thumbs at the viewport edges. */
-    private var variantCarouselScrollView: HorizontalScrollView? = null
-    private var igVariantCarouselHeightPx: Int = 0
-    private var hiddenActionsBar: FrameLayout? = null
+    private var bottomControlsPanel: LinearLayout? = null
+    private var placementControlsContainer: LinearLayout? = null
+    private var captureControlsContainer: LinearLayout? = null
+    private var scaleSeekBar: SeekBar? = null
+    private var rotationSeekBar: SeekBar? = null
+    private var isSyncingSlidersFromModel: Boolean = false
+    private var placementProductNameLabel: TextView? = null
+    private var captureProductNameLabel: TextView? = null
+    private var placeModelButton: TextView? = null
+    private var productThumbnailButton: ImageButton? = null
+    private var photoModeButton: TextView? = null
+    private var videoModeButton: TextView? = null
+    private var captureActionButton: ImageButton? = null
+    private var unlockButton: ImageButton? = null
     private var overlaysVisible: Boolean = true
     private var overlaysEyeButton: ImageButton? = null
     private var tipsHintButton: ImageButton? = null
-    /** Locks drag / pinch / rotate and overlay scale controls once the user is happy. */
-    private var placementLockButton: ImageButton? = null
+    /** True after the user taps Place Model — shows capture controls instead. */
+    private var isCaptureMode: Boolean = false
+    /** Photo vs video capture while [isCaptureMode] is active. */
+    private enum class CaptureKind { PHOTO, VIDEO }
+    private var captureKind: CaptureKind = CaptureKind.PHOTO
+    private var isVideoRecording: Boolean = false
+    private val videoFrameBitmaps: MutableList<Bitmap> = mutableListOf()
+    private var videoRecordHandler: Handler? = null
+    private var videoRecordRunnable: Runnable? = null
+    /** Locks drag / pinch / rotate and sliders once the user confirms placement. */
     private var isModelTransformLocked: Boolean = false
-    /** +/- and reset controls disabled while the model transform is locked. */
-    private val overlayTransformControls: MutableList<View> = mutableListOf()
     /** Custom floor drag: re-anchor to hit-test, not local model offset. */
     private var isPlacementDragging: Boolean = false
     private var dragStartX: Float = 0f
@@ -217,6 +226,10 @@ class ArEditorActivity : ComponentActivity() {
     private var candidateTipKey: String? = null
     private var candidateTipMessage: String? = null
     private var candidateTipSinceMs: Long = 0L
+    private var planeHideFrameCounter: Int = 0
+    private var arSessionReadyAtMs: Long = 0L
+    private var depthOcclusionActive: Boolean = false
+    private var sessionDepthMode: Config.DepthMode = Config.DepthMode.DISABLED
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -239,18 +252,19 @@ class ArEditorActivity : ComponentActivity() {
             realDepthMeters = extras.getDoubleOrNull("realDepthMeters")
             modelBaseScale = extras.getDoubleOrNull("modelBaseScale") ?: 1.0
 
-            // Optional Option A payload: list of same-category variants.
-            val variantsJson = extras.getString("variantProductsJson")
+            // Variant list for the in-editor model gallery (may come from launch cache).
+            val variantsJson = when {
+                extras.getBoolean("variantProductsFromCache", false) ->
+                    ArEditorLaunchCache.takeVariantProductsJson()
+                else -> extras.getString("variantProductsJson")
+            }
             initialProductId = extras.getString("initialProductId")
 
             variantProducts = parseVariantsJson(variantsJson)
-            if (initialProductId != null) {
-                val idx = variantProducts.indexOfFirst { it.productId == initialProductId }
-                if (idx >= 0) selectedVariantIndex = idx
-            }
+            applyTappedProductAsActiveModel()
 
-            // Load persisted placement+scale state (if any).
-            loadRestoredStateAndApplyToFields()
+            // Restore placement transforms only — never swap away from the tapped product.
+            loadRestoredPlacementState()
         }
 
         // --------------------------------------------------------------------
@@ -273,13 +287,19 @@ class ArEditorActivity : ComponentActivity() {
         // devices, assuming Play Services for AR is installed.
         arSceneView = ARSceneView(this).apply {
             sessionConfiguration = { session: Session, config: Config ->
-                // Depth: try automatic, fall back to disabled on unsupported devices.
-                config.depthMode =
-                    if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                // Depth API (e.g. Infinix HOT 60i): AUTOMATIC first, RAW fallback.
+                sessionDepthMode = when {
+                    session.isDepthModeSupported(Config.DepthMode.AUTOMATIC) ->
                         Config.DepthMode.AUTOMATIC
-                    } else {
-                        Config.DepthMode.DISABLED
-                    }
+                    session.isDepthModeSupported(Config.DepthMode.RAW_DEPTH_ONLY) ->
+                        Config.DepthMode.RAW_DEPTH_ONLY
+                    else -> Config.DepthMode.DISABLED
+                }
+                config.depthMode = sessionDepthMode
+                Log.d(
+                    "ArEditorActivity",
+                    "AR depth mode: $sessionDepthMode (occlusion after warmup if supported)"
+                )
 
                 // Prefer strict plane-anchored placement for better floor contact
                 // (reduces the "floating" feel from approximate instant placement).
@@ -291,7 +311,26 @@ class ArEditorActivity : ComponentActivity() {
             }
 
             onSessionCreated = { _ ->
-                post { applyCatalogMatchedArRendering() }
+                arSessionReadyAtMs = SystemClock.uptimeMillis()
+                depthOcclusionActive = false
+                post {
+                    applyCatalogMatchedArRendering()
+                    if (modelInstance == null) {
+                        preloadModelInstance()
+                    }
+                }
+            }
+
+            onSessionFailed = { error: Exception ->
+                Log.e("ArEditorActivity", "AR session failed", error)
+                runOnUiThread {
+                    Toast.makeText(
+                        this@ArEditorActivity,
+                        "AR is unavailable on this device",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    finish()
+                }
             }
 
             // Once per ARCore frame, if we have a loaded model and haven't
@@ -300,13 +339,24 @@ class ArEditorActivity : ComponentActivity() {
             // appear automatically at 100% size when the scene opens.
             onSessionUpdated = { _: Session, frame: Frame ->
                 try {
+                    planeHideFrameCounter += 1
+                    if (planeHideFrameCounter >= PLANE_HIDE_EVERY_N_FRAMES) {
+                        planeHideFrameCounter = 0
+                        hidePlaneVisualizationKeepShadows()
+                    }
                     updateArGuidanceAndReticle(frame)
+                    maybeEnableDepthOcclusion(frame)
                     // Auto-place at screen centre (or restored point) as soon as a floor is found.
                     tryAutoPlaceModel()
-                    // Keep overlay labels/persistence in sync with gesture edits
-                    // (drag/pinch/rotate) that don't pass through our +/- handlers.
-                    updateScaleAndSizeLabels()
-                    maybePersistUserEdits()
+                    // Keep overlay labels/persistence in sync with gesture edits.
+                    runOnUiThread {
+                        try {
+                            updateScaleAndSizeLabels()
+                            maybePersistUserEdits()
+                        } catch (t: Throwable) {
+                            Log.e("ArEditorActivity", "overlay sync crash guard", t)
+                        }
+                    }
                 } catch (t: Throwable) {
                     // Prevent hard crashes from non-fatal UI/persistence issues.
                     Log.e("ArEditorActivity", "onSessionUpdated crash guard", t)
@@ -328,15 +378,13 @@ class ArEditorActivity : ComponentActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
+        hidePlaneVisualizationKeepShadows()
         attachPlacementReticle(rootLayout)
         // Build and attach a minimal overlay toolbar that:
         // - Surfaces a readable scale + size status.
         // - Provides explicit +/- buttons as an alternative to pinch gesture.
         // - Gives short AR usage hints that work in both portrait & landscape.
-        attachOverlayToolbar(rootLayout)
-
-        // Option A: bottom-left variant carousel (left side in both orientations).
-        attachVariantCarouselPlaceholder(rootLayout)
+        attachPlacementControlsPanel(rootLayout)
 
         // Center-top AR usage tips (dismissed once the model is placed).
         attachArTipsBanner(rootLayout)
@@ -344,10 +392,6 @@ class ArEditorActivity : ComponentActivity() {
         attachTipsHintButton(rootLayout)
         // One-button toggle: hide/show BOTH overlays together.
         attachOverlaysEyeToggleButton(rootLayout)
-        // Lock icon directly under the eye toggle.
-        attachPlacementLockButton(rootLayout)
-        // Bottom utility actions appear only when overlays are hidden.
-        attachHiddenActionsBar(rootLayout)
 
         setContentView(rootLayout)
         // Push overlays inside status / nav / gesture insets so nothing sits under
@@ -391,6 +435,9 @@ class ArEditorActivity : ComponentActivity() {
 
         try {
             arSceneView.lightEstimator?.apply {
+                // Keep live sun direction + intensity for believable shadows.
+                environmentalHdrMainLightDirection = true
+                environmentalHdrMainLightIntensity = true
                 // Live HDR cubemap from the camera makes wood/marble read as silver outdoors.
                 environmentalHdrReflections = false
                 environmentalHdrSpecularFilter = false
@@ -398,22 +445,91 @@ class ArEditorActivity : ComponentActivity() {
         } catch (_: Throwable) {
         }
 
-        try {
-            arSceneView.cameraStream?.isDepthOcclusionEnabled = true
-        } catch (_: Throwable) {
-        }
-
-        hideArDebugVisualizers()
+        enableArShadowRendering()
+        // Depth occlusion is enabled after warmup in [maybeEnableDepthOcclusion] when supported.
+        hidePlaneVisualizationKeepShadows()
     }
 
-    /** Floor hit-test used for auto-place and drag-to-reanchor. */
+    /**
+     * SceneView ships with [com.google.android.filament.View.setShadowingEnabled] off.
+     * Turn it on and keep invisible planes as shadow receivers so models cast
+     * soft shadows onto the detected floor.
+     */
+    private fun enableArShadowRendering() {
+        try {
+            arSceneView.view.setShadowingEnabled(true)
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "view shadowing enable failed", t)
+        }
+
+        try {
+            arSceneView.mainLightNode?.apply {
+                isShadowCaster = true
+            }
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "main light shadow caster failed", t)
+        }
+
+        applyPlaneShadowReceiverSettings()
+        modelNode?.configureArShadows()
+    }
+
+    /**
+     * Invisible detected planes still receive model shadows onto the real floor.
+     * Must run after [hideArDebugVisualizers] — that helper must not disable the plane renderer.
+     */
+    private fun applyPlaneShadowReceiverSettings() {
+        try {
+            val renderer: PlaneRenderer = arSceneView.planeRenderer
+            renderer.isEnabled = true
+            renderer.isVisible = false
+            renderer.isShadowReceiver = true
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "plane shadow receiver setup failed", t)
+        }
+    }
+
+    /**
+     * Hides ARCore plane dots/point cloud. Keeps plane renderer alive for floor shadows.
+     */
+    private fun hidePlaneVisualizationKeepShadows() {
+        hideArDebugVisualizers()
+        applyPlaneShadowReceiverSettings()
+    }
+
+    /**
+     * Enables Depth API occlusion once tracking is stable (device must support depth in session).
+     * Your Infinix HOT 60i lists Depth API — occlusion was previously forced off in code.
+     */
+    private fun maybeEnableDepthOcclusion(frame: Frame) {
+        if (depthOcclusionActive) return
+        if (sessionDepthMode == Config.DepthMode.DISABLED) return
+        if (frame.camera.trackingState != TrackingState.TRACKING) return
+        if (arSessionReadyAtMs <= 0L) return
+        if (SystemClock.uptimeMillis() - arSessionReadyAtMs < DEPTH_OCCLUSION_WARMUP_MS) return
+
+        try {
+            arSceneView.cameraStream?.isDepthOcclusionEnabled = true
+            depthOcclusionActive = true
+            Log.d("ArEditorActivity", "Depth occlusion ON (mode=$sessionDepthMode)")
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "Depth occlusion enable failed", t)
+        }
+    }
+
+    /**
+     * Floor placement: lowest horizontal plane under the ray (reduces "floating" on elevated planes).
+     */
     private fun hitTestFloor(xPx: Float, yPx: Float): HitResult? {
-        return arSceneView.hitTestAR(
-            xPx = xPx,
-            yPx = yPx,
-            planeTypes = setOf(Plane.Type.HORIZONTAL_UPWARD_FACING),
-            depthPoint = true
-        )
+        val hits = arSceneView.frame?.hitTest(xPx, yPx) ?: return null
+        return hits
+            .filter { hit ->
+                val trackable = hit.trackable
+                trackable is Plane &&
+                    trackable.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                    trackable.trackingState == TrackingState.TRACKING
+            }
+            .minByOrNull { it.hitPose.ty() }
     }
 
     private fun hideArDebugVisualizers() {
@@ -471,58 +587,14 @@ class ArEditorActivity : ComponentActivity() {
                 }
             }
 
-            tryDisableFromGetter("getPlaneRenderer")
+            // Do NOT disable planeRenderer — it projects ground shadows for placed models.
             tryDisableFromGetter("getPointCloudRenderer")
             tryDisableFromGetter("getPointCloud")
             tryDisableFromGetter("getPointCloudNode")
             tryDisableFromGetter("getDebugRenderer")
             tryDisableFromGetter("getArCoreDebugRenderer")
 
-            arSceneView.planeRenderer?.let { disableRenderer(it) }
         } catch (_: Throwable) {
-        }
-    }
-
-    private fun attachPlacementLockButton(root: FrameLayout) {
-        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
-        val btnSize = dpToPx(44)
-        val btn = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_lock_open)
-            setBackgroundColor(0x00000000)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            adjustViewBounds = true
-            minimumWidth = btnSize
-            minimumHeight = btnSize
-            setPadding(dpToPx(10), dpToPx(10), dpToPx(10), dpToPx(10))
-            contentDescription = "Lock model position"
-            visibility = View.GONE
-            setOnClickListener { toggleModelTransformLock() }
-        }
-        placementLockButton = btn
-        root.addView(
-            btn,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.END
-            ).apply {
-                marginEnd = dpToPx(16)
-                // Final offset is tuned in [applyWindowInsetsToOverlays] (below eye icon).
-                topMargin = dpToPx(60)
-            }
-        )
-    }
-
-    private fun toggleModelTransformLock() {
-        if (modelNode == null || anchorNode == null) return
-        isModelTransformLocked = !isModelTransformLocked
-        applyModelTransformLockState()
-        updatePlacementLockButtonUi()
-        if (isModelTransformLocked) {
-            maybePersistUserEdits(force = true)
-            Toast.makeText(this, "Position locked", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "You can move the model again", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -618,377 +690,275 @@ class ArEditorActivity : ComponentActivity() {
         node.isScaleEditable = editable
         node.isSmoothTransformEnabled = false
 
-        overlayTransformControls.forEach { control ->
-            control.isEnabled = editable
-            control.alpha = if (editable) 1f else 0.42f
-        }
-    }
-
-    private fun updatePlacementLockButtonUi() {
-        val btn = placementLockButton ?: return
-        val placed = anchorNode != null && modelNode != null
-        btn.visibility = if (placed) View.VISIBLE else View.GONE
-        if (!placed) return
-        btn.setImageResource(
-            if (isModelTransformLocked) R.drawable.ic_lock else R.drawable.ic_lock_open
-        )
-        btn.contentDescription =
-            if (isModelTransformLocked) "Unlock model position" else "Lock model position"
-    }
-
-    private fun registerOverlayTransformControl(view: View) {
-        overlayTransformControls += view
-        view.isEnabled = !isModelTransformLocked
-        view.alpha = if (isModelTransformLocked) 0.42f else 1f
+        val sliderAlpha = if (editable) 1f else 0.42f
+        scaleSeekBar?.isEnabled = editable
+        scaleSeekBar?.alpha = sliderAlpha
+        rotationSeekBar?.isEnabled = editable
+        rotationSeekBar?.alpha = sliderAlpha
     }
 
     /**
-     * Constructs a small, bottom‑anchored overlay toolbar with:
-     * - Live labels for per‑axis scale + approximate real‑world dimensions.
-     * - Quantity‑style +/- controls for Width, Height, Depth.
-     * - A Reset button to snap back to the calibrated base scale.
-     * - A collapsible body so the chrome can get out of the way when not
-     *   needed.
+     * Bottom placement panel:
+     * - Scale slider + live dimensions
+     * - Rotation slider
+     * - Place Model + product thumbnail row
      *
-     * The layout uses match‑parent width and wraps its height so it adapts
-     * gracefully to both portrait and landscape orientations.
+     * After Place Model, [captureControlsContainer] replaces this block.
      */
-    private fun attachOverlayToolbar(root: FrameLayout) {
-        fun dpToPx(dp: Int): Int {
-            return (dp * resources.displayMetrics.density).roundToInt()
-        }
+    private fun attachPlacementControlsPanel(root: FrameLayout) {
+        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
 
-        // IG-style: start collapsed (label only). Expands to show size/scale controls.
-        isOverlayExpanded = false
-
-        // Outer container that floats above the camera feed (elevation helps it
-        // stay visually above the GL/Surface layer on some devices).
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            // Keep horizontal padding balanced and slightly roomier.
-            setPadding(16, 8, 16, 10)
-            background = ContextCompat.getDrawable(
-                this@ArEditorActivity,
-                R.drawable.bg_ar_panel_rounded_border
-            )
-            elevation = 12f
-        }
-        scaleOverlayContainer = container
-
-        // Collapsed IG-style bottom button row:
-        // - left: Gallery
-        // - center: model name (tap expands size/scale controls)
-        // - right: Preview
-        val igRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 4)
-        }
-
-        fun createIgIconButton(iconResId: Int, contentDesc: String, onClick: () -> Unit): ImageButton {
-            val btnSize = dpToPx(44)
-            return ImageButton(this).apply {
-                setImageDrawable(ContextCompat.getDrawable(this@ArEditorActivity, iconResId))
-                background =
-                    ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_action_circle_transparent)
-                setBackgroundColor(0x00000000)
-                minimumWidth = btnSize
-                minimumHeight = btnSize
-                setPadding(dpToPx(10), dpToPx(10), dpToPx(10), dpToPx(10))
-                contentDescription = contentDesc
-                setOnClickListener { onClick() }
-            }
-        }
-
-        val mainExpandButton = FrameLayout(this).apply {
-            // This is the "size + scale button" in IG style.
-            background = ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_overlay_control)
-            setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
-            // Rounded "pill-ish" look comes from bg drawable.
-            setOnClickListener {
-                isOverlayExpanded = !isOverlayExpanded
-                scaleScrollView?.visibility = if (isOverlayExpanded) View.VISIBLE else View.GONE
-            }
-        }
-
-        overlayProductNameLabel = TextView(this).apply {
-            text = currentOverlayProductName()
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 13f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-
-        mainExpandButton.addView(
-            overlayProductNameLabel,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER_HORIZONTAL
-            )
-        )
-
-        // Only the model pill is inside the overlay.
-        // Gallery + Preview are pinned outside the overlay (bottom-left / bottom-right).
-        igRow.addView(
-            mainExpandButton,
-            LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            )
-        )
-
-        container.addView(igRow)
-
-        // Collapsible body that holds labels + per‑axis controls. We'll wrap
-        // this in a ScrollView with an explicit max height so the entire
-        // overlay never occupies more than ~20% of the screen on modern
-        // Android devices.
-        overlayContent = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 6, 0, 0)
-        }
-
-        // Scale block: title centered above a 3-column W / H / D row.
-        fun createMetricTitle(text: String): TextView {
+        fun createSliderLabel(text: String): TextView {
             return TextView(this).apply {
                 this.text = text
                 setTextColor(0xFFE8E8E8.toInt())
                 textSize = 12f
-                gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(0, 6, 0, 2)
+                setPadding(0, dpToPx(4), 0, dpToPx(2))
             }
         }
 
-        fun createMetricCell(initial: String): TextView {
+        fun createPillButton(label: String, onClick: () -> Unit): TextView {
             return TextView(this).apply {
-                this.text = initial
-                setTextColor(0xFFFFFFFF.toInt())
-                textSize = 13f
-                gravity = Gravity.CENTER
-                maxLines = 1
-            }
-        }
-
-        val scaleTitleRow = createMetricTitle("Scale")
-        val scaleRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            weightSum = 3f
-        }
-        scaleValueW = createMetricCell("W:1.00")
-        scaleValueH = createMetricCell("H:1.00")
-        scaleValueD = createMetricCell("D:1.00")
-        scaleRow.addView(
-            scaleValueW,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        scaleRow.addView(
-            scaleValueH,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        scaleRow.addView(
-            scaleValueD,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-
-        val sizeTitleRow = createMetricTitle("Size")
-        val sizeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            weightSum = 3f
-        }
-        sizeValueW = createMetricCell("—")
-        sizeValueH = createMetricCell("—")
-        sizeValueD = createMetricCell("—")
-        sizeRow.addView(
-            sizeValueW,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        sizeRow.addView(
-            sizeValueH,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        sizeRow.addView(
-            sizeValueD,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-
-        overlayContent?.addView(scaleTitleRow)
-        overlayContent?.addView(scaleRow)
-        overlayContent?.addView(sizeTitleRow)
-        overlayContent?.addView(sizeRow)
-        // Small perception helper so users understand why true-scale can feel smaller on phone AR.
-        val perceivedSizeHint = TextView(this).apply {
-            text = "True scale. Step closer for real-size feel."
-            setTextColor(0xFFCCCCCC.toInt())
-            textSize = 11f
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 6, 0, 4)
-        }
-        overlayContent?.addView(perceivedSizeHint)
-
-        // Helper to build a quantity‑style +/- control row for a single axis.
-        fun createAxisRow(
-            label: String,
-            onDecrease: () -> Unit,
-            onIncrease: () -> Unit
-        ): LinearLayout {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 4, 0, 4)
-            }
-
-            val axisLabel = TextView(this).apply {
                 text = label
-                setTextColor(0xFFEEEEEE.toInt())
-                textSize = 12f
-            }
-
-            val minusButton = Button(this).apply {
-                text = "−"
-                textSize = 18f
-                setAllCaps(false)
-                // Wider tap targets, slightly shorter vertical footprint.
-                minimumWidth = dpToPx(52)
-                minHeight = dpToPx(36)
-                setPadding(22, 4, 22, 4)
+                textSize = 14f
+                gravity = Gravity.CENTER
                 setTextColor(0xFFFFFFFF.toInt())
+                setPadding(dpToPx(20), dpToPx(10), dpToPx(20), dpToPx(10))
                 background =
                     ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_overlay_control)
-                setOnClickListener { onDecrease() }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { onClick() }
             }
+        }
 
-            val plusButton = Button(this).apply {
-                text = "+"
-                textSize = 18f
-                setAllCaps(false)
-                minimumWidth = dpToPx(52)
-                minHeight = dpToPx(36)
-                setPadding(22, 4, 22, 4)
+        fun createProductNameLabel(): TextView {
+            return TextView(this).apply {
+                text = currentProductName()
                 setTextColor(0xFFFFFFFF.toInt())
+                textSize = 15f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(0, 0, 0, dpToPx(8))
+            }
+        }
+
+        fun createIconPillButton(iconResId: Int, contentDesc: String, onClick: () -> Unit): FrameLayout {
+            val pillHeight = dpToPx(48)
+            return FrameLayout(this).apply {
                 background =
                     ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_overlay_control)
-                setOnClickListener { onIncrease() }
-            }
-
-            row.addView(
-                axisLabel,
-                LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
+                val btn = ImageButton(this@ArEditorActivity).apply {
+                    setImageResource(iconResId)
+                    setBackgroundColor(0x00000000)
+                    scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    setPadding(dpToPx(12), dpToPx(12), dpToPx(12), dpToPx(12))
+                    contentDescription = contentDesc
+                    setOnClickListener { onClick() }
+                }
+                addView(
+                    btn,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        pillHeight
+                    )
                 )
-            )
-
-            val btnParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = 6
             }
-
-            row.addView(minusButton, btnParams)
-            row.addView(plusButton, btnParams)
-            registerOverlayTransformControl(minusButton)
-            registerOverlayTransformControl(plusButton)
-
-            return row
         }
 
-        // Width row: adjusts X scale only.
-        val widthRow = createAxisRow(
-            label = "Width",
-            onDecrease = { applyWidthDelta(0.9f) },
-            onIncrease = { applyWidthDelta(1.1f) }
-        )
+        val panelWidthPx = computeOverlayWidthPx()
+        scaleOverlayWidthPx = panelWidthPx
 
-        // Height row: adjusts Y scale only.
-        val heightRow = createAxisRow(
-            label = "Height",
-            onDecrease = { applyHeightDelta(0.9f) },
-            onIncrease = { applyHeightDelta(1.1f) }
-        )
-
-        // Depth row: adjusts Z scale only.
-        val depthRow = createAxisRow(
-            label = "Depth",
-            onDecrease = { applyDepthDelta(0.9f) },
-            onIncrease = { applyDepthDelta(1.1f) }
-        )
-
-        overlayContent?.addView(widthRow)
-        overlayContent?.addView(heightRow)
-        overlayContent?.addView(depthRow)
-
-        // Reset centered under the axis rows so the stack feels balanced in the card.
-        val resetButton = Button(this).apply {
-            text = "Reset all"
-            textSize = 13f
-            setAllCaps(false)
-            setPadding(18, 6, 18, 6)
-            setTextColor(0xFFFFFFFF.toInt())
-            background =
-                ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_overlay_control)
-            setOnClickListener { resetScaleToBase() }
+        val rootPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            elevation = 12f
         }
-        registerOverlayTransformControl(resetButton)
+        bottomControlsPanel = rootPanel
 
-        val resetRow = FrameLayout(this).apply {
-            setPadding(0, 4, 0, 4)
-        }
-        resetRow.addView(
-            resetButton,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER_HORIZONTAL
+        // --- First set: placement controls (scale, rotation, place + thumbnail) ---
+        val placementBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12))
+            background = ContextCompat.getDrawable(
+                this@ArEditorActivity,
+                R.drawable.bg_ar_panel_rounded_border
             )
-        )
-
-        overlayContent?.addView(resetRow)
-
-        // Scroll area: when expanded, it should occupy at least ~25% of the screen
-        // height so the controls feel "full" (IG bottom-sheet vibe).
-        val screenH = resources.displayMetrics.heightPixels
-        val maxBodyPx = (screenH * 0.25f).toInt()
-            .coerceAtLeast(dpToPx(220))
-            .coerceAtMost(dpToPx(520))
-        val scrollView = CappedHeightScrollView(this).apply {
-            maxHeightPx = maxBodyPx
-            // When expanded, keep a consistent "IG sheet" height feel even if
-            // content doesn't fill it completely.
-            minimumHeight = maxBodyPx
-            isFillViewport = false
-            overScrollMode = ScrollView.OVER_SCROLL_IF_CONTENT_SCROLLS
         }
-        scaleScrollView = scrollView
-        scrollView.addView(
-            overlayContent,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
+        placementControlsContainer = placementBlock
 
-        container.addView(
-            scrollView,
+        placementProductNameLabel = createProductNameLabel()
+        placementBlock.addView(placementProductNameLabel)
+
+        placementBlock.addView(createSliderLabel("Scale"))
+        scaleFactorLabel = TextView(this).apply {
+            text = "1.00×"
+            setTextColor(0xFFBBBBBB.toInt())
+            textSize = 11f
+            setPadding(0, 0, 0, dpToPx(2))
+        }
+        placementBlock.addView(scaleFactorLabel)
+
+        val scaleBar = SeekBar(this).apply {
+            max = 1000
+            progress = scaleToSeekProgress(1f)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (!fromUser || isSyncingSlidersFromModel) return
+                    applyUniformScale(seekProgressToScale(progress))
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    maybePersistUserEdits(force = true)
+                }
+            })
+        }
+        scaleSeekBar = scaleBar
+        placementBlock.addView(
+            scaleBar,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
         )
 
-        // Start collapsed: label only.
-        scrollView.visibility = if (isOverlayExpanded) View.VISIBLE else View.GONE
+        dimensionsLabel = TextView(this).apply {
+            text = "—"
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 12f
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dpToPx(4), 0, dpToPx(8))
+        }
+        placementBlock.addView(dimensionsLabel)
 
-        // Width: prefer ~48% of screen but shrink when the variant carousel
-        // needs a fixed 3-column strip so panels never overlap.
-        val overlayWidthPx = computeOverlayWidthPx()
-        scaleOverlayWidthPx = overlayWidthPx
+        placementBlock.addView(createSliderLabel("Rotation"))
+        val rotationBar = SeekBar(this).apply {
+            max = 360
+            progress = 0
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (!fromUser || isSyncingSlidersFromModel) return
+                    applyYawRotation(progress.toFloat())
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    maybePersistUserEdits(force = true)
+                }
+            })
+        }
+        rotationSeekBar = rotationBar
+        placementBlock.addView(
+            rotationBar,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val bottomRow = FrameLayout(this).apply {
+            setPadding(0, dpToPx(8), 0, 0)
+        }
+        val placeBtn = createPillButton("Place Model") { onPlaceModelTapped() }
+        placeModelButton = placeBtn
+        bottomRow.addView(
+            placeBtn,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_HORIZONTAL
+            )
+        )
+
+        val thumbSize = dpToPx(52)
+        val thumbBtn = ImageButton(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background =
+                ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_variant_thumb_unselected)
+            setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
+            contentDescription = "Browse 3D models"
+            setOnClickListener { showModelGalleryDialog() }
+        }
+        productThumbnailButton = thumbBtn
+        bottomRow.addView(
+            thumbBtn,
+            FrameLayout.LayoutParams(thumbSize, thumbSize, Gravity.END or Gravity.CENTER_VERTICAL)
+        )
+        placementBlock.addView(bottomRow)
+        rootPanel.addView(placementBlock)
+
+        // --- Second set: capture controls (hidden until Place Model) ---
+        val captureBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12))
+            background = ContextCompat.getDrawable(
+                this@ArEditorActivity,
+                R.drawable.bg_ar_panel_rounded_border
+            )
+        }
+        captureControlsContainer = captureBlock
+
+        captureProductNameLabel = createProductNameLabel()
+        captureBlock.addView(captureProductNameLabel)
+
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dpToPx(10))
+        }
+        val photoBtn = TextView(this).apply {
+            text = "Photo"
+            textSize = 15f
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(dpToPx(24), dpToPx(8), dpToPx(24), dpToPx(8))
+            setOnClickListener { selectCaptureKind(CaptureKind.PHOTO) }
+        }
+        photoModeButton = photoBtn
+        val videoBtn = TextView(this).apply {
+            text = "Video"
+            textSize = 15f
+            setTextColor(0x88FFFFFF.toInt())
+            setPadding(dpToPx(24), dpToPx(8), dpToPx(24), dpToPx(8))
+            setOnClickListener { selectCaptureKind(CaptureKind.VIDEO) }
+        }
+        videoModeButton = videoBtn
+        modeRow.addView(photoBtn)
+        modeRow.addView(videoBtn)
+        captureBlock.addView(modeRow)
+
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val captureBtnWrap = createIconPillButton(
+            R.drawable.ic_ar_camera,
+            "Capture photo"
+        ) { onCaptureActionTapped() }
+        captureActionButton = captureBtnWrap.getChildAt(0) as ImageButton
+        actionRow.addView(
+            captureBtnWrap,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dpToPx(8)
+            }
+        )
+        val unlockBtnWrap = createIconPillButton(
+            R.drawable.ic_arrow_back,
+            "Unlock model position"
+        ) { onUnlockTapped() }
+        unlockButton = unlockBtnWrap.getChildAt(0) as ImageButton
+        actionRow.addView(
+            unlockBtnWrap,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        captureBlock.addView(actionRow)
+        rootPanel.addView(captureBlock)
+
+        selectCaptureKind(CaptureKind.PHOTO)
+        updateProductNameLabel()
 
         val layoutParams = FrameLayout.LayoutParams(
-            overlayWidthPx,
+            panelWidthPx,
             FrameLayout.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
@@ -996,39 +966,372 @@ class ArEditorActivity : ComponentActivity() {
             marginEnd = dpToPx(16)
             bottomMargin = dpToPx(24)
         }
-
-        root.addView(container, layoutParams)
+        root.addView(rootPanel, layoutParams)
+        rootPanel.post {
+            updateProductThumbnail()
+            updateProductNameLabel()
+        }
     }
 
-    /**
-     * Fixed outer width for the **vertical** variant column (single circle width
-     * + horizontal padding). Must match [attachVariantCarouselPlaceholder].
-     */
-    private fun computeVariantCarouselOuterWidthPx(): Int {
-        fun dp(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
-        // One 48dp thumbnail + 8dp padding each side (border is inside drawable).
-        return dp(48 + 8 * 2)
+    private fun currentProductName(): String {
+        return variantProducts.getOrNull(selectedVariantIndex)?.name
+            ?: altText
+            ?: "Product"
     }
 
-    /**
-     * Computes scale overlay width (IG-style bottom pill). The carousel now
-     * lives at the bottom center, so we don't reserve left-side space anymore.
-     */
+    private fun updateProductNameLabel() {
+        val name = currentProductName()
+        placementProductNameLabel?.text = name
+        captureProductNameLabel?.text = name
+    }
+
     private fun computeOverlayWidthPx(): Int {
         fun dp(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
         val screenW = resources.displayMetrics.widthPixels
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val marginStart = dp(if (isLandscape) 28 else 16)
         val marginEnd = dp(if (isLandscape) 56 else 16)
+        val desired = (screenW * 0.88f).toInt().coerceIn(dp(280), dp(480))
+        val maxForPanel = screenW - marginStart - marginEnd
+        return desired.coerceAtMost(maxForPanel.coerceAtLeast(dp(240)))
+    }
 
-        // Reserve space on both sides for Gallery (left) and Preview (right)
-        // so the center overlay pill doesn't visually collide with them.
-        val sideReserve = dp(if (isLandscape) 96 else 88)
+    private fun scaleToSeekProgress(scale: Float): Int {
+        val clamped = scale.coerceIn(0.3f, 4.0f)
+        return ((clamped - 0.3f) / 3.7f * 1000f).roundToInt().coerceIn(0, 1000)
+    }
 
-        val desired = (screenW * 0.53f).toInt().coerceIn(dp(300), dp(440))
+    private fun seekProgressToScale(progress: Int): Float {
+        return (0.3f + (progress.coerceIn(0, 1000) / 1000f) * 3.7f).coerceIn(0.3f, 4.0f)
+    }
 
-        val maxForScale = screenW - marginStart - marginEnd - (sideReserve * 2)
-        return desired.coerceAtMost(maxForScale.coerceAtLeast(dp(200)))
+    private fun applyUniformScale(scale: Float) {
+        if (isModelTransformLocked) return
+        val node = modelNode ?: return
+        val uniform = scale.coerceIn(0.3f, 4.0f)
+        val current = node.scale
+        val newScale = Scale(uniform, uniform, uniform)
+        if (newScale != current) {
+            node.scale = newScale
+            node.seatOnFloorAnchor()
+            updateScaleAndSizeLabels()
+            maybePersistUserEdits()
+        }
+    }
+
+    private fun applyYawRotation(yawDegrees: Float) {
+        if (isModelTransformLocked) return
+        val node = modelNode ?: return
+        val yaw = ((yawDegrees % 360f) + 360f) % 360f
+        node.rotation = Rotation(x = 0f, y = yaw, z = 0f)
+        maybePersistUserEdits()
+    }
+
+    private fun onPlaceModelTapped() {
+        if (modelNode == null || anchorNode == null) {
+            Toast.makeText(this, "Wait for the model to appear first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        isCaptureMode = true
+        isModelTransformLocked = true
+        applyModelTransformLockState()
+        maybePersistUserEdits(force = true)
+        placementControlsContainer?.visibility = View.GONE
+        captureControlsContainer?.visibility = View.VISIBLE
+        Toast.makeText(this, "Position locked — capture or unlock to move again", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun onUnlockTapped() {
+        if (isVideoRecording) stopVideoRecording()
+        isCaptureMode = false
+        isModelTransformLocked = false
+        applyModelTransformLockState()
+        captureControlsContainer?.visibility = View.GONE
+        placementControlsContainer?.visibility = View.VISIBLE
+        Toast.makeText(this, "You can move the model again", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun selectCaptureKind(kind: CaptureKind) {
+        captureKind = kind
+        val selected = 0xFFFFFFFF.toInt()
+        val muted = 0x88FFFFFF.toInt()
+        photoModeButton?.setTextColor(if (kind == CaptureKind.PHOTO) selected else muted)
+        videoModeButton?.setTextColor(if (kind == CaptureKind.VIDEO) selected else muted)
+        updateCaptureActionButtonUi()
+    }
+
+    private fun updateCaptureActionButtonUi() {
+        val btn = captureActionButton ?: return
+        btn.setImageResource(R.drawable.ic_ar_camera)
+        btn.contentDescription = when {
+            captureKind == CaptureKind.VIDEO && isVideoRecording -> "Stop recording"
+            captureKind == CaptureKind.VIDEO -> "Start recording"
+            else -> "Capture photo"
+        }
+        btn.alpha = if (captureKind == CaptureKind.VIDEO && isVideoRecording) 0.72f else 1f
+    }
+
+    private fun onCaptureActionTapped() {
+        when (captureKind) {
+            CaptureKind.PHOTO -> captureArScreenshot()
+            CaptureKind.VIDEO -> {
+                if (isVideoRecording) stopVideoRecording() else startVideoRecording()
+            }
+        }
+    }
+
+    private fun updateProductThumbnail() {
+        val btn = productThumbnailButton ?: return
+        val variant = variantProducts.getOrNull(selectedVariantIndex)
+        val url = variant?.thumbnailUrl
+        if (!url.isNullOrBlank()) {
+            btn.load(url) {
+                crossfade(true)
+                transformations(CircleCropTransformation())
+                placeholder(R.drawable.bg_variant_placeholder)
+                error(R.drawable.bg_variant_placeholder)
+            }
+        } else {
+            btn.setImageResource(R.drawable.bg_variant_placeholder)
+        }
+        btn.contentDescription = variant?.name ?: altText ?: "Browse 3D models"
+        updateProductNameLabel()
+    }
+
+    private fun showModelGalleryDialog() {
+        if (variantProducts.isEmpty()) {
+            Toast.makeText(this, "No other models available", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
+        val dialogView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(8))
+        }
+
+        val filterRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dpToPx(8))
+        }
+
+        val searchField = EditText(this).apply {
+            hint = "Search models"
+            setSingleLine(true)
+            setTextColor(0xFF111111.toInt())
+            setHintTextColor(0xFF888888.toInt())
+            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+        }
+        filterRow.addView(
+            searchField,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dpToPx(8)
+            }
+        )
+
+        val categories = listOf("All") + variantProducts
+            .map { it.category.trim().ifEmpty { "Other" } }
+            .distinct()
+            .sorted()
+        var selectedCategory = "All"
+        val categorySpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@ArEditorActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                categories
+            )
+            setSelection(0)
+        }
+        filterRow.addView(
+            categorySpinner,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        dialogView.addView(filterRow)
+
+        val scroll = android.widget.ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dpToPx(320)
+            )
+        }
+        val gridHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        scroll.addView(gridHost)
+        dialogView.addView(scroll)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("3D Models")
+            .setView(dialogView)
+            .setNegativeButton("Close", null)
+            .create()
+
+        fun rebuildGrid(query: String, categoryFilter: String) {
+            gridHost.removeAllViews()
+            val q = query.trim().lowercase()
+            val filtered = variantProducts.filter { variant ->
+                val category = variant.category.trim().ifEmpty { "Other" }
+                val categoryOk = categoryFilter == "All" || category == categoryFilter
+                val searchOk = q.isEmpty() || variant.name.lowercase().contains(q)
+                categoryOk && searchOk
+            }
+            if (filtered.isEmpty()) {
+                gridHost.addView(
+                    TextView(this@ArEditorActivity).apply {
+                        text = "No models match your search"
+                        setTextColor(0xFF666666.toInt())
+                        setPadding(0, dpToPx(16), 0, dpToPx(16))
+                    }
+                )
+                return
+            }
+
+            val columns = 3
+            var row: LinearLayout? = null
+            filtered.forEachIndexed { index, variant ->
+                if (index % columns == 0) {
+                    row = LinearLayout(this@ArEditorActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, dpToPx(6), 0, dpToPx(6))
+                    }
+                    gridHost.addView(row)
+                }
+                val cell = LinearLayout(this@ArEditorActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
+                    val globalIndex = variantProducts.indexOfFirst { it.productId == variant.productId }
+                    setOnClickListener {
+                        if (globalIndex >= 0) {
+                            swapVariantModel(globalIndex)
+                            updateProductThumbnail()
+                        }
+                        dialog.dismiss()
+                    }
+                }
+                val thumb = ImageView(this@ArEditorActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(72), dpToPx(72))
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    val url = variant.thumbnailUrl
+                    if (!url.isNullOrBlank()) {
+                        load(url) {
+                            crossfade(true)
+                            transformations(CircleCropTransformation())
+                            placeholder(R.drawable.bg_variant_placeholder)
+                            error(R.drawable.bg_variant_placeholder)
+                        }
+                    } else {
+                        setImageResource(R.drawable.bg_variant_placeholder)
+                    }
+                }
+                val name = TextView(this@ArEditorActivity).apply {
+                    text = variant.name
+                    textSize = 10f
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    setTextColor(0xFF222222.toInt())
+                }
+                cell.addView(thumb)
+                cell.addView(name)
+                row?.addView(
+                    cell,
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                )
+            }
+        }
+
+        searchField.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                rebuildGrid(s?.toString().orEmpty(), selectedCategory)
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+
+        categorySpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long
+            ) {
+                selectedCategory = categories.getOrNull(position) ?: "All"
+                rebuildGrid(searchField.text?.toString().orEmpty(), selectedCategory)
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        rebuildGrid("", "All")
+        dialog.show()
+    }
+
+    private fun startVideoRecording() {
+        if (isVideoRecording) return
+        isVideoRecording = true
+        videoFrameBitmaps.clear()
+        updateCaptureActionButtonUi()
+        Toast.makeText(this, "Recording…", Toast.LENGTH_SHORT).show()
+        videoRecordHandler = Handler(Looper.getMainLooper())
+        videoRecordRunnable = object : Runnable {
+            override fun run() {
+                if (!isVideoRecording) return
+                captureArFrameBitmap { bitmap ->
+                    if (bitmap != null) videoFrameBitmaps.add(bitmap)
+                }
+                videoRecordHandler?.postDelayed(this, 125L)
+            }
+        }
+        videoRecordHandler?.post(videoRecordRunnable!!)
+    }
+
+    private fun stopVideoRecording() {
+        if (!isVideoRecording) return
+        isVideoRecording = false
+        videoRecordRunnable?.let { videoRecordHandler?.removeCallbacks(it) }
+        videoRecordRunnable = null
+        updateCaptureActionButtonUi()
+        val frames = videoFrameBitmaps.toList()
+        videoFrameBitmaps.clear()
+        if (frames.isEmpty()) {
+            Toast.makeText(this, "No frames captured", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Thread {
+            val uri = ArMp4Recorder.saveFramesAsMp4(this, frames, fps = 8)
+            frames.forEach { it.recycle() }
+            runOnUiThread {
+                if (uri != null) {
+                    Toast.makeText(this, "Video saved to gallery", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Video save failed", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun captureArFrameBitmap(onResult: (Bitmap?) -> Unit) {
+        val sourceView = arSceneView
+        val w = sourceView.width
+        val h = sourceView.height
+        if (w <= 0 || h <= 0) {
+            onResult(null)
+            return
+        }
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            PixelCopy.request(sourceView, bitmap, { result ->
+                onResult(if (result == PixelCopy.SUCCESS) bitmap else null)
+            }, Handler(Looper.getMainLooper()))
+        } else {
+            val canvas = Canvas(bitmap)
+            sourceView.draw(canvas)
+            onResult(bitmap)
+        }
     }
 
     /**
@@ -1051,12 +1354,10 @@ class ArEditorActivity : ComponentActivity() {
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val navRailExtra = if (isLandscape) dp(40) else 0
 
-            scaleOverlayContainer?.let { v ->
+            bottomControlsPanel?.let { v ->
                 (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
                     lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                     val screenW = resources.displayMetrics.widthPixels
-                    // Carousel sits ABOVE the overlay pill (IG-style stacking).
-                    // So the overlay should not reserve carousel space.
                     lp.bottomMargin = insetBottom + dp(16)
                     lp.marginStart = insetStart + dp(16)
                     lp.marginEnd = insetEnd + dp(16)
@@ -1065,30 +1366,9 @@ class ArEditorActivity : ComponentActivity() {
                     v.layoutParams = lp
                 }
             }
-            variantCarouselContainer?.let { v ->
-                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                    lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                    // Keep carousel centered; don't reserve left/right safe areas here.
-                    lp.marginStart = 0
-                    lp.marginEnd = 0
-                    lp.topMargin = 0
-                    // Extra space so the strip does not feel glued to the IG pill below.
-                    lp.bottomMargin = insetBottom + dp(64)
-                    // Keep the IG viewport width set in attachVariantCarouselPlaceholder().
-                    v.layoutParams = lp
-                }
-            }
             overlaysEyeButton?.let { v ->
                 (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
                     lp.topMargin = insetTop + dp(8)
-                    lp.marginEnd = insetEnd + navRailExtra + dp(16)
-                    v.layoutParams = lp
-                }
-            }
-            placementLockButton?.let { v ->
-                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                    lp.gravity = Gravity.TOP or Gravity.END
-                    lp.topMargin = insetTop + dp(56)
                     lp.marginEnd = insetEnd + navRailExtra + dp(16)
                     v.layoutParams = lp
                 }
@@ -1108,24 +1388,6 @@ class ArEditorActivity : ComponentActivity() {
                     lp.topMargin = insetTop + (screenH * 0.20f).toInt() + dp(8)
                     lp.marginStart = insetStart + dp(20)
                     lp.marginEnd = insetEnd + dp(20)
-                    v.layoutParams = lp
-                }
-            }
-            hiddenActionsBar?.let { v ->
-                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-                    val screenW = resources.displayMetrics.widthPixels
-                    val availableW = (screenW - insetStart - insetEnd).coerceAtLeast(dp(200))
-                    val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-                    val sideReserve = dp(if (isLandscape) 96 else 88)
-                    val overlayW = if (scaleOverlayWidthPx > 0) scaleOverlayWidthPx else (screenW * 0.53f).toInt()
-                    // Bar width spans overlay pill + reserved sides so icons sit inline.
-                    val barW = (overlayW + (sideReserve * 2)).coerceAtMost(availableW)
-
-                    lp.width = barW
-                    lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                    lp.marginStart = 0
-                    lp.marginEnd = 0
-                    lp.bottomMargin = insetBottom + dp(12)
                     v.layoutParams = lp
                 }
             }
@@ -1186,8 +1448,18 @@ class ArEditorActivity : ComponentActivity() {
 
     private fun modelFootWorldPosition(): FloatArray? {
         val anchor = anchorNode ?: return null
-        val pos = anchor.worldPosition
-        return floatArrayOf(pos.x, pos.y, pos.z)
+        val node = modelNode ?: return floatArrayOf(
+            anchor.worldPosition.x,
+            anchor.worldPosition.y,
+            anchor.worldPosition.z,
+        )
+        val anchorPos = anchor.worldPosition
+        val local = node.position
+        return floatArrayOf(
+            anchorPos.x + local.x,
+            anchorPos.y + local.y,
+            anchorPos.z + local.z,
+        )
     }
 
     private fun centerFloorHitWorldPosition(): FloatArray? {
@@ -1400,8 +1672,9 @@ class ArEditorActivity : ComponentActivity() {
             .setTitle("How to use AR")
             .setMessage(
                 "1) Point at the floor — the model appears automatically.\n\n" +
-                    "2) Drag, pinch, and rotate to adjust size and position.\n\n" +
-                    "3) Tap the lock icon to freeze position. Tap again to edit."
+                    "2) Use the sliders to scale and rotate, or drag to reposition.\n\n" +
+                    "3) Tap Place Model when ready, then capture a photo or video.\n\n" +
+                    "4) Tap Unlock to move the model again."
             )
             .setPositiveButton("Got it", null)
             .show()
@@ -1416,258 +1689,6 @@ class ArEditorActivity : ComponentActivity() {
         darkTipFrameCount = 0
     }
 
-    private fun currentOverlayProductName(): String {
-        return variantProducts.getOrNull(selectedVariantIndex)?.name
-            ?: altText
-            ?: "Current model"
-    }
-
-    private fun updateOverlayProductNameLabel() {
-        overlayProductNameLabel?.text = currentOverlayProductName()
-    }
-
-    /**
-     * IG-style **horizontal** variant carousel:
-     * - Swipe to change the selected variant.
-     * - The selected variant is always snapped to the center.
-     * - The centered position acts as the "camera" button (capture on tap).
-     */
-    private fun attachVariantCarouselPlaceholder(root: FrameLayout) {
-        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
-        if (variantProducts.isEmpty()) return
-        val isLandscape =
-            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-        // Slightly smaller in landscape so it does not feel oversized on wide screens.
-        val thumbSizePx = dpToPx(if (isLandscape) 52 else 60)
-        val thumbInsetPx = dpToPx(4)
-        val itemGapPx = dpToPx(if (isLandscape) 12 else 14)
-
-        // Fixed height so the overlay above it can reserve space.
-        igVariantCarouselHeightPx = dpToPx(if (isLandscape) 88 else 100)
-        // Five "slots": center three read as full circles; left/right peek ~half width.
-        // Total width == 4 circle widths + 4 gaps (geometry: half + full + full + full + half).
-        val viewportW = thumbSizePx * 4 + itemGapPx * 4
-
-        val container = FrameLayout(this).apply {
-            // Intentionally subtle: thumbnails already have their own ring styling.
-            setBackgroundColor(0x00000000)
-        }
-        variantCarouselContainer = container
-
-        val scrollView = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            clipToPadding = false
-            isFillViewport = false
-        }
-        variantCarouselScrollView = scrollView
-
-        val host = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        scrollView.addView(
-            host,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-
-        // Center "camera" tap target.
-        val cameraOverlay = ImageButton(this).apply {
-            setImageDrawable(ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.ic_ar_camera))
-            background = ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_action_circle_transparent)
-            setBackgroundColor(0x00000000)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            adjustViewBounds = true
-            minimumWidth = thumbSizePx
-            minimumHeight = thumbSizePx
-            setPadding(dpToPx(14), dpToPx(14), dpToPx(14), dpToPx(14))
-            contentDescription = "Capture AR screen"
-            setOnClickListener { captureArScreenshot() }
-        }
-
-        container.addView(
-            scrollView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-        container.addView(
-            cameraOverlay,
-            FrameLayout.LayoutParams(
-                thumbSizePx,
-                thumbSizePx,
-                Gravity.CENTER
-            )
-        )
-
-        variantThumbFrames.clear()
-
-        // Local helpers must be declared before they are first used.
-        fun scrollToVariantIndex(index: Int, smooth: Boolean) {
-            if (index !in variantThumbFrames.indices) return
-            val thumb = variantThumbFrames[index]
-            val targetX = (thumb.left + thumb.width / 2) - scrollView.width / 2
-            val maxX = (host.width - scrollView.width).coerceAtLeast(0)
-            val clampedX = targetX.coerceIn(0, maxX)
-            if (smooth) scrollView.smoothScrollTo(clampedX, 0) else scrollView.scrollTo(clampedX, 0)
-            scrollView.post { this@ArEditorActivity.refreshVariantCarouselEdgeLook() }
-            if (index != selectedVariantIndex) {
-                selectedVariantIndex = index
-                updateVariantThumbnailStyles()
-                swapVariantModel(variantIndex = index)
-            }
-        }
-
-        fun findClosestCenteredIndex(
-            scroll: HorizontalScrollView
-        ): Int? {
-            if (variantThumbFrames.isEmpty()) return null
-            val scrollCenter = scroll.scrollX + scroll.width / 2
-            var bestIdx = 0
-            var bestDist = Int.MAX_VALUE
-            variantThumbFrames.forEachIndexed { idx, thumb ->
-                val thumbCenter = thumb.left + thumb.width / 2
-                val dist = kotlin.math.abs(thumbCenter - scrollCenter)
-                if (dist < bestDist) {
-                    bestDist = dist
-                    bestIdx = idx
-                }
-            }
-            return bestIdx
-        }
-
-        fun snapToIndex(
-            index: Int,
-            scroll: HorizontalScrollView,
-            containerHost: LinearLayout
-        ) {
-            if (index !in variantThumbFrames.indices) return
-            val thumb = variantThumbFrames[index]
-            val targetX = (thumb.left + thumb.width / 2) - scroll.width / 2
-            val maxX = (containerHost.width - scroll.width).coerceAtLeast(0)
-            val clampedX = targetX.coerceIn(0, maxX)
-            scroll.smoothScrollTo(clampedX, 0)
-        }
-
-        variantProducts.forEachIndexed { idx, variant ->
-            val frame = FrameLayout(this).apply {
-                layoutParams = LinearLayout.LayoutParams(thumbSizePx, thumbSizePx).apply {
-                    if (idx > 0) marginStart = itemGapPx
-                }
-                background = ContextCompat.getDrawable(
-                    this@ArEditorActivity,
-                    R.drawable.bg_variant_thumb_unselected
-                )
-                clipToPadding = false
-                setPadding(thumbInsetPx, thumbInsetPx, thumbInsetPx, thumbInsetPx)
-            }
-
-            val imageView = ImageView(this).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                contentDescription = variant.name
-            }
-
-            val url = variant.thumbnailUrl
-            if (!url.isNullOrBlank()) {
-                imageView.load(url) {
-                    crossfade(true)
-                    transformations(CircleCropTransformation())
-                    placeholder(R.drawable.bg_variant_placeholder)
-                    error(R.drawable.bg_variant_placeholder)
-                }
-            } else {
-                imageView.setImageResource(R.drawable.bg_variant_placeholder)
-            }
-
-            frame.addView(imageView)
-            frame.setOnClickListener {
-                if (idx == selectedVariantIndex) {
-                    // Center spot is reserved for the camera overlay.
-                    // Tapping the centered thumbnail should only keep it selected.
-                    return@setOnClickListener
-                }
-                // Snap this variant into the center, then swap the model.
-                scrollToVariantIndex(idx, smooth = true)
-            }
-
-            host.addView(frame)
-            variantThumbFrames.add(frame)
-        }
-
-        updateVariantThumbnailStyles()
-
-        // Snap logic: after user stops swiping, find the thumb nearest to center
-        // and smooth-scroll to perfectly center it.
-        val snapHandler = Handler(Looper.getMainLooper())
-        val snapRunnable = Runnable {
-            try {
-                val closest = findClosestCenteredIndex(scrollView)
-                if (closest == null) return@Runnable
-
-                // Smooth snap (ensures the centered variant is always stable).
-                snapToIndex(closest, scrollView, host)
-
-                if (closest != selectedVariantIndex) {
-                    selectedVariantIndex = closest
-                    updateVariantThumbnailStyles()
-                    swapVariantModel(variantIndex = closest)
-                } else {
-                    updateVariantThumbnailStyles()
-                }
-                refreshVariantCarouselEdgeLook()
-            } catch (t: Throwable) {
-                Log.e("ArEditorActivity", "carousel snap crash guard", t)
-            }
-        }
-
-        scrollView.setOnScrollChangeListener { _, _, _, _, _ ->
-            try {
-                refreshVariantCarouselEdgeLook()
-                snapHandler.removeCallbacks(snapRunnable)
-                snapHandler.postDelayed(snapRunnable, 140L)
-            } catch (t: Throwable) {
-                Log.e("ArEditorActivity", "carousel onScroll guard", t)
-            }
-        }
-
-        // Center the initially selected variant.
-        container.post {
-            val pad = (container.width - thumbSizePx) / 2
-            host.setPadding(pad, 0, pad, 0)
-            scrollToVariantIndex(selectedVariantIndex, smooth = false)
-            refreshVariantCarouselEdgeLook()
-        }
-
-        val layoutParams = FrameLayout.LayoutParams(
-            viewportW,
-            igVariantCarouselHeightPx
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            // Keep a little air from screen edges.
-            val safeInset = dpToPx(12)
-            marginStart = safeInset
-            marginEnd = safeInset
-        }
-        root.addView(container, layoutParams)
-    }
-
-    /**
-     * One-button UX toggle:
-     * - When pressed: hides the scale/size overlay AND the variant carousel.
-     * - When pressed again: shows them back.
-     *
-     * The scale overlay's internal "expanded/collapsed" state is preserved
-     * (so when we show again, the ScrollView uses [isOverlayExpanded]).
-     */
     private fun attachOverlaysEyeToggleButton(root: FrameLayout) {
         val dpToPx = { dp: Int -> (dp * resources.displayMetrics.density).roundToInt() }
         val toggleButton = ImageButton(this).apply {
@@ -1679,15 +1700,7 @@ class ArEditorActivity : ComponentActivity() {
             setOnClickListener {
                 overlaysVisible = !overlaysVisible
                 val visibility = if (overlaysVisible) View.VISIBLE else View.GONE
-
-                scaleOverlayContainer?.visibility = visibility
-                variantCarouselContainer?.visibility = visibility
-                // Gallery/Preview should never appear when overlays are hidden.
-                hiddenActionsBar?.visibility = if (overlaysVisible) View.VISIBLE else View.GONE
-                // Restore scale ScrollView based on the previous expanded state.
-                if (overlaysVisible) {
-                    scaleScrollView?.visibility = if (isOverlayExpanded) View.VISIBLE else View.GONE
-                }
+                bottomControlsPanel?.visibility = visibility
 
                 // Swap icon: eye when visible, eye-off when hidden.
                 setImageDrawable(
@@ -1713,86 +1726,6 @@ class ArEditorActivity : ComponentActivity() {
         root.addView(toggleButton, layoutParams)
     }
 
-    private fun attachHiddenActionsBar(root: FrameLayout) {
-        fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
-
-        val bar = FrameLayout(this).apply {
-            // No visible background behind icon buttons (clean, unobtrusive).
-            setBackgroundColor(0x00000000)
-            elevation = 10f
-            // Visible as soon as AR opens (paired with overlay visibility rules below).
-            visibility = if (overlaysVisible) View.VISIBLE else View.GONE
-        }
-
-        val btnSizePx = dpToPx(60)
-
-        fun createActionButton(iconResId: Int, contentDesc: String, onClick: () -> Unit): ImageButton {
-            return ImageButton(this).apply {
-                setImageDrawable(ContextCompat.getDrawable(this@ArEditorActivity, iconResId))
-                // Transparent circular touch target: no fill, no border.
-                background =
-                    ContextCompat.getDrawable(this@ArEditorActivity, R.drawable.bg_ar_action_circle_transparent)
-                setBackgroundColor(0x00000000)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                adjustViewBounds = true
-                minimumHeight = btnSizePx
-                minimumWidth = btnSizePx
-                setPadding(dpToPx(12), dpToPx(12), dpToPx(12), dpToPx(12))
-                contentDescription = contentDesc
-                setOnClickListener { onClick() }
-            }
-        }
-
-        val galleryBtn = createActionButton(
-            R.drawable.ic_ar_gallery,
-            "Open gallery",
-            { openGalleryPicker() }
-        )
-        val detailBtn = createActionButton(
-            R.drawable.ic_ar_preview,
-            "Open product details",
-            { openCurrentProductDetailInApp() }
-        )
-
-        val lpLeft = FrameLayout.LayoutParams(
-            btnSizePx,
-            btnSizePx,
-            Gravity.START or Gravity.CENTER_VERTICAL
-        ).apply {
-            marginStart = dpToPx(6)
-        }
-        val lpRight = FrameLayout.LayoutParams(
-            btnSizePx,
-            btnSizePx,
-            Gravity.END or Gravity.CENTER_VERTICAL
-        ).apply {
-            marginEnd = dpToPx(6)
-        }
-
-        bar.addView(galleryBtn, lpLeft)
-        bar.addView(detailBtn, lpRight)
-
-        hiddenActionsBar = bar
-
-        val lp = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            bottomMargin = dpToPx(16)
-        }
-        root.addView(bar, lp)
-    }
-
-    private fun openGalleryPicker() {
-        try {
-            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            startActivity(intent)
-        } catch (_: Exception) {
-            Toast.makeText(this, "Unable to open gallery", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     private fun captureArScreenshot() {
         // Capture ONLY the AR camera surface (no overlay UI, no status bar text).
         val sourceView = arSceneView
@@ -1812,13 +1745,11 @@ class ArEditorActivity : ComponentActivity() {
             v.visibility = View.GONE
         }
 
-        hide(scaleOverlayContainer)
-        hide(variantCarouselContainer)
+        hide(bottomControlsPanel)
         hide(overlaysEyeButton)
-        hide(hiddenActionsBar)
-        hide(placementLockButton)
         hide(arTipsBanner)
         hide(placementReticle)
+        hide(tipsHintButton)
 
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val handler = Handler(Looper.getMainLooper())
@@ -1901,49 +1832,6 @@ class ArEditorActivity : ComponentActivity() {
         }
     }
 
-    private fun updateVariantThumbnailStyles() {
-        variantThumbFrames.forEachIndexed { idx, frame ->
-            val selected = idx == selectedVariantIndex
-            frame.background = ContextCompat.getDrawable(
-                this,
-                if (selected) R.drawable.bg_variant_thumb_selected else R.drawable.bg_variant_thumb_unselected
-            )
-        }
-        refreshVariantCarouselEdgeLook()
-    }
-
-    /** Fade + slight blur for carousel thumbnails that only partially peek in. */
-    private fun refreshVariantCarouselEdgeLook() {
-        val scrollView = variantCarouselScrollView ?: return
-        val vw = scrollView.width
-        if (vw <= 0 || variantThumbFrames.isEmpty()) return
-        val sx = scrollView.scrollX
-        variantThumbFrames.forEach { frame ->
-            val left = frame.left - sx
-            val right = left + frame.width
-            val visibleLeft = kotlin.math.max(left, 0)
-            val visibleRight = kotlin.math.min(right, vw)
-            val visibleW = (visibleRight - visibleLeft).coerceAtLeast(0)
-            val frac = visibleW.toFloat() / frame.width.coerceAtLeast(1)
-            val edgeLike = frac < 0.82f
-            val alpha = when {
-                frac >= 0.94f -> 1f
-                frac >= 0.62f -> 0.72f
-                else -> 0.38f
-            }
-            frame.alpha = if (edgeLike) alpha else 1f
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                frame.setRenderEffect(
-                    if (edgeLike && frac < 0.9f) {
-                        RenderEffect.createBlurEffect(4f, 4f, Shader.TileMode.CLAMP)
-                    } else {
-                        null
-                    }
-                )
-            }
-        }
-    }
-
     private fun parseVariantsJson(variantsJson: String?): List<VariantProduct> {
         if (variantsJson == null || variantsJson.isBlank()) return emptyList()
         return try {
@@ -1963,10 +1851,12 @@ class ArEditorActivity : ComponentActivity() {
 
                 val thumb = obj.optString("thumbnailUrl", "").trim().takeIf { it.isNotEmpty() }
 
+                val category = obj.optString("category", "").trim().ifEmpty { "Other" }
                 list.add(
                     VariantProduct(
                         productId = productId,
                         name = name,
+                        category = category,
                         modelSrc = src,
                         thumbnailUrl = thumb,
                         realWidthMeters = optNullableDouble("realWidthMeters"),
@@ -1982,98 +1872,170 @@ class ArEditorActivity : ComponentActivity() {
         }
     }
 
+    private fun detachAndDestroyModelNode(anchor: AnchorNode, oldNode: YawLimitedModelNode?) {
+        if (oldNode == null) return
+        modelNode = null
+        try {
+            anchor.removeChildNode(oldNode)
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "removeChildNode during swap", t)
+        }
+        try {
+            oldNode.destroy()
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "destroy model node during swap", t)
+        }
+    }
+
+    private fun finishVariantSwapLoad() {
+        variantLoadInProgress = false
+        val pending = pendingVariantIndex
+        pendingVariantIndex = null
+        if (pending != null && pending != selectedVariantIndex) {
+            swapVariantModel(pending)
+        }
+    }
+
     /**
      * Option A: swaps the currently shown model to a different variant.
      *
-     * - If the user hasn't placed a model yet, we only preload the new
-     *   [modelInstance] so the existing auto-placement will use it.
-     * - If a model is already placed, we replace only the child model node
-     *   under the current [anchorNode], preserving the AR pose + gestures.
+     * Loads are serialized so two 50MB+ GLBs are never parsed at once (OOM).
      */
     private fun swapVariantModel(variantIndex: Int) {
         val currentVariant = variantProducts.getOrNull(variantIndex) ?: return
+
+        if (variantLoadInProgress) {
+            pendingVariantIndex = variantIndex
+            selectedVariantIndex = variantIndex
+            updateProductThumbnail()
+            updateProductNameLabel()
+            return
+        }
+
         selectedVariantIndex = variantIndex
+        variantLoadInProgress = true
 
         // Bump request id so late async loads don't apply out of order.
         variantSwapRequestId += 1
         val requestIdSnapshot = variantSwapRequestId
 
-        // Capture the user's current per-axis scale when swapping after
-        // placement. We want to preserve it so the user doesn't "lose" their
-        // custom scaling when they try a new variant.
         val preservedScale: Scale? = modelNode?.scale
         val preservedYaw: Float? = modelNode?.rotation?.y
         val preservedPosition: Position? = modelNode?.position
 
-        // Update labels-related state immediately so the UI feels responsive.
-        modelSrc = currentVariant.modelSrc
-        altText = currentVariant.name
-        realWidthMeters = currentVariant.realWidthMeters
-        realHeightMeters = currentVariant.realHeightMeters
-        realDepthMeters = currentVariant.realDepthMeters
-        modelBaseScale = currentVariant.modelBaseScale
-        updateOverlayProductNameLabel()
+        applyVariantFields(currentVariant)
+        updateProductThumbnail()
+        updateProductNameLabel()
 
-        // Loading can take time; we only apply if it's still the latest request.
         loadModelInstanceFromSource(currentVariant.modelSrc) { instance ->
-            if (instance == null) return@loadModelInstanceFromSource
-            if (requestIdSnapshot != variantSwapRequestId) return@loadModelInstanceFromSource
+            if (requestIdSnapshot != variantSwapRequestId) {
+                finishVariantSwapLoad()
+                return@loadModelInstanceFromSource
+            }
+            if (instance == null) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this@ArEditorActivity,
+                        "Could not load ${currentVariant.name}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                finishVariantSwapLoad()
+                return@loadModelInstanceFromSource
+            }
 
             try {
-                // Case A: no model placed yet -> preload and let auto-place happen.
                 if (anchorNode == null || modelNode == null) {
                     modelInstance = instance
                     tryAutoPlaceModel()
+                    finishVariantSwapLoad()
                     return@loadModelInstanceFromSource
                 }
 
-                // Case B: model already placed -> replace the child node under the
-                // current anchor so we preserve the AR pose + user gestures.
-                val anchor = anchorNode ?: return@loadModelInstanceFromSource
-                val oldNode = modelNode
-                if (oldNode != null) anchor.removeChildNode(oldNode)
-
-                val newNode = YawLimitedModelNode(modelInstance = instance).apply {
-                    isEditable = true
-                    isPositionEditable = false
-                    isRotationEditable = true
-                    isScaleEditable = true
-                    editableScaleRange = 0.3f..4.0f
-                    try {
-                        isShadowCaster = true
-                        isShadowReceiver = false
-                    } catch (_: Throwable) {
-                    }
-
-                    val current = preservedScale
-                    if (current != null) {
-                        val clamped = Scale(
-                            x = current.x.coerceIn(0.3f, 4.0f),
-                            y = current.y.coerceIn(0.3f, 4.0f),
-                            z = current.z.coerceIn(0.3f, 4.0f),
-                        )
-                        scale = clamped
-                    } else {
-                        val base = safeBaseScale(modelBaseScale)
-                        scale = Scale(base, base, base)
-                    }
-
-                    if (preservedYaw != null) {
-                        rotation = Rotation(x = 0f, y = preservedYaw, z = 0f)
-                    }
-                    if (preservedPosition != null) {
-                        position = preservedPosition
-                    }
+                val anchor = anchorNode
+                if (anchor == null) {
+                    modelInstance = instance
+                    finishVariantSwapLoad()
+                    return@loadModelInstanceFromSource
                 }
 
-                anchor.addChildNode(newNode)
-                modelNode = newNode
-                applyModelTransformLockState()
-                updateScaleAndSizeLabels()
-                maybePersistUserEdits()
+                val oldNode = modelNode
+                detachAndDestroyModelNode(anchor, oldNode)
+
+                val newNode = buildSwappedModelNode(
+                    instance = instance,
+                    preservedScale = preservedScale,
+                    preservedYaw = preservedYaw,
+                    preservedPosition = preservedPosition,
+                )
+
+                // Defer attach one frame so Filament can release the old instance.
+                Handler(Looper.getMainLooper()).post {
+                    if (requestIdSnapshot != variantSwapRequestId) {
+                        try {
+                            newNode.destroy()
+                        } catch (_: Throwable) {
+                        }
+                        finishVariantSwapLoad()
+                        return@post
+                    }
+                    try {
+                        anchor.addChildNode(newNode)
+                        modelNode = newNode
+                        modelInstance = instance
+                        applyModelTransformLockState()
+                        updateScaleAndSizeLabels()
+                        maybePersistUserEdits()
+                    } catch (t: Throwable) {
+                        Log.e("ArEditorActivity", "swapVariantModel attach failed", t)
+                        try {
+                            newNode.destroy()
+                        } catch (_: Throwable) {
+                        }
+                    } finally {
+                        finishVariantSwapLoad()
+                    }
+                }
             } catch (t: Throwable) {
                 Log.e("ArEditorActivity", "swapVariantModel apply failed", t)
+                finishVariantSwapLoad()
             }
+        }
+    }
+
+    private fun buildSwappedModelNode(
+        instance: ModelInstance,
+        preservedScale: Scale?,
+        preservedYaw: Float?,
+        preservedPosition: Position?,
+    ): YawLimitedModelNode {
+        return YawLimitedModelNode(modelInstance = instance).apply {
+            isEditable = true
+            isPositionEditable = false
+            isRotationEditable = true
+            isScaleEditable = true
+            editableScaleRange = 0.3f..4.0f
+            val current = preservedScale
+            if (current != null) {
+                scale = Scale(
+                    x = current.x.coerceIn(0.3f, 4.0f),
+                    y = current.y.coerceIn(0.3f, 4.0f),
+                    z = current.z.coerceIn(0.3f, 4.0f),
+                )
+            } else {
+                val base = safeBaseScale(modelBaseScale)
+                scale = Scale(base, base, base)
+            }
+
+            if (preservedYaw != null) {
+                rotation = Rotation(x = 0f, y = preservedYaw, z = 0f)
+            }
+            if (preservedPosition != null) {
+                position = Position(preservedPosition.x, 0f, preservedPosition.z)
+            }
+
+            configureArShadows()
+            seatOnFloorAnchor()
         }
     }
 
@@ -2124,6 +2086,16 @@ class ArEditorActivity : ComponentActivity() {
     // - If we get a valid hit, create an anchored node and attach a
     //   gesture‑editable [ModelNode] so users can scale and rotate.
 
+    /** True when Filament parsed a GLB that actually contains drawable meshes. */
+    private fun modelHasRenderables(instance: ModelInstance): Boolean {
+        return try {
+            instance.renderableEntities.isNotEmpty()
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "renderableEntities check failed", t)
+            false
+        }
+    }
+
     /**
      * Loads a GLB from http(s), file://, or Flutter bundled assets (assets/...).
      */
@@ -2131,21 +2103,65 @@ class ArEditorActivity : ComponentActivity() {
         rawSource: String,
         onLoaded: (ModelInstance?) -> Unit,
     ) {
-        val resolved = ArModelSourceResolver.resolve(this, rawSource)
-        if (resolved == null) {
-            Log.e("ArEditorActivity", "Could not resolve model source: $rawSource")
-            runOnUiThread { onLoaded(null) }
-            return
-        }
-
-        arSceneView.modelLoader.loadModelInstanceAsync(resolved) { instance: ModelInstance? ->
-            runOnUiThread {
-                try {
-                    onLoaded(instance)
-                } catch (t: Throwable) {
-                    Log.e("ArEditorActivity", "Model load callback failed", t)
-                    onLoaded(null)
+        ArModelSourceResolver.resolveAsync(this, rawSource) { resolved ->
+            if (resolved == null) {
+                Log.e("ArEditorActivity", "Could not resolve model source: $rawSource")
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "3D model file not found",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
+                onLoaded(null)
+                return@resolveAsync
+            }
+
+            Log.d("ArEditorActivity", "Loading GLB from: $resolved")
+            try {
+                arSceneView.modelLoader.loadModelInstanceAsync(resolved) { instance: ModelInstance? ->
+                    runOnUiThread {
+                        try {
+                            if (instance == null) {
+                                Log.e("ArEditorActivity", "Filament returned null for: $resolved")
+                                Toast.makeText(
+                                    this,
+                                    "3D model failed to load",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                onLoaded(null)
+                                return@runOnUiThread
+                            }
+                            if (!modelHasRenderables(instance)) {
+                                Log.e(
+                                    "ArEditorActivity",
+                                    "GLB has no renderables (check WebP textures?): $resolved"
+                                )
+                                Toast.makeText(
+                                    this,
+                                    "3D model has no visible geometry",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                onLoaded(null)
+                                return@runOnUiThread
+                            }
+                            Log.d(
+                                "ArEditorActivity",
+                                "Loaded ${instance.renderableEntities.size} renderables from $resolved"
+                            )
+                            onLoaded(instance)
+                        } catch (t: Throwable) {
+                            Log.e("ArEditorActivity", "Model load callback failed", t)
+                            onLoaded(null)
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e("ArEditorActivity", "loadModelInstanceAsync failed for $resolved", t)
+                runOnUiThread {
+                    Toast.makeText(this, "3D model failed to load", Toast.LENGTH_SHORT).show()
+                }
+                onLoaded(null)
             }
         }
     }
@@ -2238,12 +2254,6 @@ class ArEditorActivity : ComponentActivity() {
             isRotationEditable = true
             isScaleEditable = true
             editableScaleRange = 0.3f..4.0f
-            // Anti-floating pass (2/3): allow model to cast shadows.
-            try {
-                isShadowCaster = true
-                isShadowReceiver = false
-            } catch (_: Throwable) {
-            }
 
             // Apply the base scale (if provided by Flutter) so that the starting
             // size reflects any product‑level calibration before gestures.
@@ -2268,9 +2278,17 @@ class ArEditorActivity : ComponentActivity() {
 
             val rp = restorePosition
             if (rp != null) {
-                position = clampLocalPosition(rp)
+                // Keep horizontal drag offset only; Y is always derived from floor contact.
+                position = Position(
+                    x = rp.x.coerceIn(-8f, 8f),
+                    y = 0f,
+                    z = rp.z.coerceIn(-8f, 8f),
+                )
                 restorePosition = null
             }
+
+            configureArShadows()
+            seatOnFloorAnchor()
         }
 
         // Attach the model under the anchor, then add the anchor into the
@@ -2282,13 +2300,13 @@ class ArEditorActivity : ComponentActivity() {
         this.anchorNode = anchorNode
         this.modelNode = modelNode
         modelNode.isVisible = true
+        enableArShadowRendering()
         isModelTransformLocked = false
         applyModelTransformLockState()
-        updatePlacementLockButtonUi()
-
         // Refresh the overlay so users immediately see an accurate scale/size
         // read‑out once the model appears in the scene.
         updateScaleAndSizeLabels()
+        updateProductNameLabel()
 
         // Persist the restored placement as soon as it's available.
         maybePersistUserEdits()
@@ -2308,8 +2326,10 @@ class ArEditorActivity : ComponentActivity() {
         currentModelNode: YawLimitedModelNode,
         currentAnchorNode: AnchorNode
     ) {
-        // Clear any prior drag offset so the model sits exactly on the new anchor.
+        // Clear horizontal drag offset; vertical offset comes from floor seating.
         currentModelNode.position = Position(0f, 0f, 0f)
+        currentModelNode.seatOnFloorAnchor()
+        currentModelNode.configureArShadows()
 
         val newAnchorNode = AnchorNode(
             engine = arSceneView.engine,
@@ -2347,74 +2367,6 @@ class ArEditorActivity : ComponentActivity() {
     // 6. Scale helpers + overlay label updates
     // --------------------------------------------------------------------
 
-    /**
-     * Adjusts the model's width (X axis) by [factor] while leaving height and
-     * depth untouched. Scale is clamped to the same 0.3x–4x range enforced by
-     * [YawLimitedModelNode], then the overlay labels are refreshed.
-     */
-    private fun applyWidthDelta(factor: Float) {
-        if (isModelTransformLocked) return
-        val node = modelNode ?: return
-
-        val current = node.scale
-        val newScale = Scale(
-            x = (current.x * factor).coerceIn(0.3f, 4.0f),
-            y = current.y,
-            z = current.z
-        )
-        if (newScale != current) {
-            node.scale = newScale
-            updateScaleAndSizeLabels()
-            maybePersistUserEdits()
-        }
-    }
-
-    /**
-     * Adjusts the model's height (Y axis) by [factor] while leaving width and
-     * depth untouched.
-     */
-    private fun applyHeightDelta(factor: Float) {
-        if (isModelTransformLocked) return
-        val node = modelNode ?: return
-
-        val current = node.scale
-        val newScale = Scale(
-            x = current.x,
-            y = (current.y * factor).coerceIn(0.3f, 4.0f),
-            z = current.z
-        )
-        if (newScale != current) {
-            node.scale = newScale
-            updateScaleAndSizeLabels()
-            maybePersistUserEdits()
-        }
-    }
-
-    /**
-     * Adjusts the model's depth (Z axis) by [factor] while leaving width and
-     * height untouched.
-     */
-    private fun applyDepthDelta(factor: Float) {
-        if (isModelTransformLocked) return
-        val node = modelNode ?: return
-
-        val current = node.scale
-        val newScale = Scale(
-            x = current.x,
-            y = current.y,
-            z = (current.z * factor).coerceIn(0.3f, 4.0f)
-        )
-        if (newScale != current) {
-            node.scale = newScale
-            updateScaleAndSizeLabels()
-            maybePersistUserEdits()
-        }
-    }
-
-    /**
-     * Resets the model's uniform scale back to the base value supplied from
-     * Flutter (`modelBaseScale`), clamped to our safe editing range.
-     */
     /**
      * Clamps drag offset (meters, parent/anchor space) so corrupt prefs cannot
      * explode the scene graph.
@@ -2454,7 +2406,47 @@ class ArEditorActivity : ComponentActivity() {
         }
     }
 
-    private fun loadRestoredStateAndApplyToFields() {
+    /**
+     * Always load the product the user tapped on the card — not a gallery pick from
+     * a prior session and not variants[0] (sorted by date).
+     */
+    private fun applyTappedProductAsActiveModel() {
+        val tappedId = initialProductId?.trim().orEmpty()
+        if (tappedId.isNotEmpty() && variantProducts.isNotEmpty()) {
+            val idx = variantProducts.indexOfFirst { it.productId == tappedId }
+            if (idx >= 0) {
+                selectedVariantIndex = idx
+                applyVariantFields(variantProducts[idx])
+                return
+            }
+        }
+
+        // Fallback: keep Intent extras from Flutter (already on modelSrc / dimensions).
+        if (variantProducts.isNotEmpty()) {
+            val intentSrc = modelSrc?.trim().orEmpty()
+            val bySrc = if (intentSrc.isNotEmpty()) {
+                variantProducts.indexOfFirst { it.modelSrc == intentSrc }
+            } else {
+                -1
+            }
+            if (bySrc >= 0) {
+                selectedVariantIndex = bySrc
+                applyVariantFields(variantProducts[bySrc])
+            }
+        }
+    }
+
+    private fun applyVariantFields(variant: VariantProduct) {
+        modelSrc = variant.modelSrc
+        altText = variant.name
+        realWidthMeters = variant.realWidthMeters
+        realHeightMeters = variant.realHeightMeters
+        realDepthMeters = variant.realDepthMeters
+        modelBaseScale = variant.modelBaseScale
+    }
+
+    /** Restores last placement pose/scale for this product — not a different gallery model. */
+    private fun loadRestoredPlacementState() {
         val keyBase = initialProductId?.let { "ar_editor_state_$it" } ?: "ar_editor_state_unknown"
 
         restoreIsPlaced = prefs.getBoolean("${keyBase}.isPlaced", false)
@@ -2478,32 +2470,11 @@ class ArEditorActivity : ComponentActivity() {
         restoreYaw = if (yaw.isNaN() || !yaw.isFinite()) null else yaw
 
         val px = prefs.getFloat("${keyBase}.posX", Float.NaN)
-        val py = prefs.getFloat("${keyBase}.posY", Float.NaN)
         val pz = prefs.getFloat("${keyBase}.posZ", Float.NaN)
-        restorePosition = if (px.isNaN() || py.isNaN() || pz.isNaN() ||
-            !px.isFinite() || !py.isFinite() || !pz.isFinite()
-        ) {
+        restorePosition = if (px.isNaN() || pz.isNaN() || !px.isFinite() || !pz.isFinite()) {
             null
         } else {
-            clampLocalPosition(Position(x = px, y = py, z = pz))
-        }
-
-        restoreVariantProductId = prefs.getString("${keyBase}.variantProductId", null)
-
-        // If we restored a different variant, update the initial variant + base
-        // scale fields so placement + overlay sizing stay consistent.
-        val restoredVariantId = restoreVariantProductId
-        if (!restoredVariantId.isNullOrBlank() && variantProducts.isNotEmpty()) {
-            val idx = variantProducts.indexOfFirst { it.productId == restoredVariantId }
-            if (idx >= 0) {
-                selectedVariantIndex = idx
-                val variant = variantProducts[idx]
-                modelSrc = variant.modelSrc
-                realWidthMeters = variant.realWidthMeters
-                realHeightMeters = variant.realHeightMeters
-                realDepthMeters = variant.realDepthMeters
-                modelBaseScale = variant.modelBaseScale
-            }
+            Position(x = px.coerceIn(-8f, 8f), y = 0f, z = pz.coerceIn(-8f, 8f))
         }
     }
 
@@ -2569,11 +2540,15 @@ class ArEditorActivity : ComponentActivity() {
      */
     private fun updateScaleAndSizeLabels() {
         val node = modelNode ?: return
-        val s = node.scale
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            runOnUiThread { updateScaleAndSizeLabels() }
+            return
+        }
 
-        scaleValueW?.text = String.format("W:%.2f", s.x)
-        scaleValueH?.text = String.format("H:%.2f", s.y)
-        scaleValueD?.text = String.format("D:%.2f", s.z)
+        val s = node.scale
+        val uniform = ((s.x + s.y + s.z) / 3f).coerceIn(0.3f, 4.0f)
+
+        scaleFactorLabel?.text = String.format("%.2f×", uniform)
 
         val w = realWidthMeters
         val h = realHeightMeters
@@ -2583,42 +2558,27 @@ class ArEditorActivity : ComponentActivity() {
             val width = w?.times(s.x.toDouble())
             val height = h?.times(s.y.toDouble())
             val depth = d?.times(s.z.toDouble())
-
-            sizeValueW?.text = width?.let { String.format("W:%.2fm", it) } ?: "—"
-            sizeValueH?.text = height?.let { String.format("H:%.2fm", it) } ?: "—"
-            sizeValueD?.text = depth?.let { String.format("D:%.2fm", it) } ?: "—"
+            val wText = width?.let { String.format("W:%.2fm", it) } ?: "—"
+            val hText = height?.let { String.format("H:%.2fm", it) } ?: "—"
+            val dText = depth?.let { String.format("D:%.2fm", it) } ?: "—"
+            dimensionsLabel?.text = "$wText  $hText  $dText"
         } else {
-            val na = "—"
-            sizeValueW?.text = na
-            sizeValueH?.text = na
-            sizeValueD?.text = na
+            dimensionsLabel?.text = "—"
         }
+
+        isSyncingSlidersFromModel = true
+        scaleSeekBar?.progress = scaleToSeekProgress(uniform)
+        val yaw = ((node.rotation.y % 360f) + 360f) % 360f
+        rotationSeekBar?.progress = yaw.roundToInt().coerceIn(0, 360)
+        isSyncingSlidersFromModel = false
     }
 
     override fun onDestroy() {
+        if (isVideoRecording) stopVideoRecording()
         dismissArTipsBanner()
         super.onDestroy()
     }
 
-}
-
-/**
- * Caps vertical size so the scale/size block does not reserve a giant fixed band
- * of the screen; extra rows scroll inside the cap instead.
- */
-private class CappedHeightScrollView(context: Context) : ScrollView(context) {
-    var maxHeightPx: Int = 0
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        if (maxHeightPx <= 0) {
-            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-            return
-        }
-        super.onMeasure(
-            widthMeasureSpec,
-            MeasureSpec.makeMeasureSpec(maxHeightPx, MeasureSpec.AT_MOST)
-        )
-    }
 }
 
 // Small extension helpers to safely read nullable doubles from Bundle extras

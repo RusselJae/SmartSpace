@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- ARCore: optional so the app installs on non-AR devices; native AR checks at runtime. -->
+    <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
     <!-- Android 13+ requires runtime permission for posting notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
@@ -68,7 +71,7 @@
         <activity
             android:name=".ArEditorActivity"
             android:exported="false"
-            android:theme="@style/LaunchTheme"
+            android:theme="@style/ArEditorTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:screenOrientation="fullSensor" />
@@ -86,6 +89,9 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <meta-data
+            android:name="com.google.ar.core"
+            android:value="optional" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

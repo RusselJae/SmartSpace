@@ -416,11 +416,12 @@ class _AppInitializerState extends State<_AppInitializer> {
     }
 
     // Only block the cold splash for downloads when we are headed straight home.
+    // Only warm remote GLB URLs — bundled assets/ models must not be copied here.
     if (onboardingDone) {
       final prefetchSw = Stopwatch()..start();
       try {
         await CatalogModelPrefetch.warmCacheForStorefront()
-            .timeout(const Duration(seconds: 90));
+            .timeout(const Duration(seconds: 20));
       } catch (e) {
         developer.log('⚠️ Model cache warm-up timed out or failed: $e');
       }

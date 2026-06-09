@@ -9,7 +9,7 @@ class AppSettings {
     this.gcashAccountName = 'Rosalie M. Enon',
     this.qrCodeImagePath = 'assets/images/qrcode.jpg',
     this.codDownpaymentPercentage = 20.0,
-    this.paymentConfirmationTimeMinutes = 15,
+    this.paymentConfirmationTimeMinutes = 1440,
     
     // Shipping Settings
     this.freeShippingProductCount = 3,

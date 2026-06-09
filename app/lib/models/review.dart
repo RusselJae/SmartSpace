@@ -1,5 +1,23 @@
+/// Optional photo/video attached to a product review.
+class ReviewMediaItem {
+  const ReviewMediaItem({required this.url, required this.type});
+
+  final String url;
+  final String type; // image | video
+
+  bool get isVideo => type == 'video';
+
+  factory ReviewMediaItem.fromJson(Map<String, dynamic> json) {
+    return ReviewMediaItem(
+      url: json['url']?.toString() ?? '',
+      type: json['type']?.toString() == 'video' ? 'video' : 'image',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'url': url, 'type': type};
+}
+
 /// Review model representing customer feedback on products.
-/// Follows the same clean structure as other models in the app.
 class Review {
   const Review({
     required this.id,
@@ -11,6 +29,7 @@ class Review {
     required this.content,
     required this.status,
     required this.createdAt,
+    this.media = const [],
     this.updatedAt,
   });
 
@@ -19,23 +38,28 @@ class Review {
   final String productName;
   final String userId;
   final String userName;
-  final int rating; // 1-5 stars
+  final int rating;
   final String content;
-  final String status; // 'pending', 'published', 'flagged', 'rejected'
+  final String status;
+  final List<ReviewMediaItem> media;
   final DateTime createdAt;
   final DateTime? updatedAt;
 
   factory Review.fromJson(Map<String, dynamic> json) {
-    // Helper to parse dates safely - handles both string and already-parsed DateTime
     DateTime parseDate(dynamic value) {
-      if (value is DateTime) {
-        return value;
-      }
-      if (value is String) {
-        return DateTime.parse(value);
-      }
+      if (value is DateTime) return value;
+      if (value is String) return DateTime.parse(value);
       throw FormatException('Invalid date format: $value');
     }
+
+    final mediaRaw = json['media'];
+    final media = mediaRaw is List
+        ? mediaRaw
+            .whereType<Map>()
+            .map((e) => ReviewMediaItem.fromJson(Map<String, dynamic>.from(e)))
+            .where((m) => m.url.isNotEmpty)
+            .toList()
+        : <ReviewMediaItem>[];
 
     return Review(
       id: json['id'] as String,
@@ -46,6 +70,7 @@ class Review {
       rating: json['rating'] is int ? json['rating'] as int : (json['rating'] as num).toInt(),
       content: json['content'] as String? ?? '',
       status: json['status'] as String? ?? 'published',
+      media: media,
       createdAt: parseDate(json['createdAt']),
       updatedAt: json['updatedAt'] != null ? parseDate(json['updatedAt']) : null,
     );
@@ -61,6 +86,7 @@ class Review {
       'rating': rating,
       'content': content,
       'status': status,
+      'media': media.map((m) => m.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
     };
@@ -75,6 +101,7 @@ class Review {
     int? rating,
     String? content,
     String? status,
+    List<ReviewMediaItem>? media,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -87,16 +114,9 @@ class Review {
       rating: rating ?? this.rating,
       content: content ?? this.content,
       status: status ?? this.status,
+      media: media ?? this.media,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 }
-
-
-
-
-
-
-
-

@@ -1,3 +1,8 @@
+export type ReviewMediaItem = {
+  readonly url: string;
+  readonly type: 'image' | 'video';
+};
+
 export interface Review {
   readonly id: string;
   readonly productId: string;
@@ -7,6 +12,7 @@ export interface Review {
   readonly rating: number;
   readonly content: string;
   readonly status: string;
+  readonly media: readonly ReviewMediaItem[];
   readonly createdAt: Date;
   readonly updatedAt?: Date;
 }

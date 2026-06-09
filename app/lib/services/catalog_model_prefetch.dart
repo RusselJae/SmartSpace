@@ -14,20 +14,22 @@ import 'mysql_database_service.dart';
 class CatalogModelPrefetch {
   CatalogModelPrefetch._();
 
-  /// Unique http(s) model URLs for catalog products (skips archived / empty).
-  static Set<String> collectModelUrls(Iterable<Product> products) {
-    final urls = <String>{};
+  /// Remote http(s) model URLs only — bundled `assets/...` GLBs stay in the APK
+  /// and must not be copied at startup (parallel 50MB loads OOM-crash the app).
+  static Set<String> collectRemoteModelSources(Iterable<Product> products) {
+    final sources = <String>{};
     for (final p in products) {
       if (p.isArchived) continue;
       final u = ModelPathHelper.normalize(p.modelPath).trim();
       if (u.isEmpty) continue;
+      if (u.startsWith('assets/')) continue;
       if (!u.startsWith('http://') && !u.startsWith('https://')) continue;
-      urls.add(u);
+      sources.add(u);
     }
-    return urls;
+    return sources;
   }
 
-  /// Fetches the full product list and ensures each remote model exists on disk.
+  /// Ensures remote GLB URLs exist on disk (one at a time). Skips bundled assets.
   static Future<void> warmCacheForStorefront() async {
     final db = MySQLDatabaseService();
     late final List<Product> products;
@@ -37,12 +39,13 @@ class CatalogModelPrefetch {
       return;
     }
 
-    final urls = collectModelUrls(products);
-    if (urls.isEmpty) return;
+    final sources = collectRemoteModelSources(products);
+    if (sources.isEmpty) return;
 
     try {
-      await ModelFileCacheService.prefetchAll(urls)
-          .timeout(const Duration(seconds: 90));
+      final limited = sources.take(4).toList();
+      await ModelFileCacheService.prefetchAll(limited)
+          .timeout(const Duration(seconds: 45));
     } catch (_) {
       // Catalog still works; [CachedModelSrcLoader] falls back to the remote URL.
     }

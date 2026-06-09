@@ -74,6 +74,9 @@ class Product {
   final bool isArchived;
   final DateTime createdAt;
 
+  /// Catalog purchase allowed only when qty > 0 and marked in stock.
+  bool get isAvailableForPurchase => inStock && inventoryQty > 0;
+
   const Product({
     required this.id,
     required this.name,
@@ -135,8 +138,8 @@ class Product {
       orderCount: (json['orderCount'] as num?)?.toInt(),
       isPopular: json['isPopular'] as bool,
       isNewArrival: json['isNewArrival'] as bool,
-      inStock: json['inStock'] as bool,
       inventoryQty: (json['inventoryQty'] ?? json['inventory_qty'] ?? 0) as int,
+      inStock: ((json['inventoryQty'] ?? json['inventory_qty'] ?? 0) as num) > 0,
       isArchived: (json['isArchived'] ?? json['is_archived'] ?? false) as bool,
       createdAt: DateTime.parse(json['createdAt'] as String),
     );

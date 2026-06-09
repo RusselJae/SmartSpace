@@ -1414,6 +1414,73 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
       return;
     }
 
+    // Admin cancellation — optional note stored on the order for audit/support.
+    if (normalizedTarget == 'cancelled' && order.status.toLowerCase() != 'cancelled') {
+      final noteController = TextEditingController();
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(
+            'Cancel order',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Add an internal note about why this order is being cancelled (optional).',
+                style: GoogleFonts.poppins(fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noteController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Cancellation note…',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text('Back', style: GoogleFonts.poppins()),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(
+                'Cancel order',
+                style: GoogleFonts.poppins(
+                  color: CupertinoColors.systemRed,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      final noteText = noteController.text.trim();
+      noteController.dispose();
+      if (proceed != true) return;
+
+      try {
+        await _db.updateOrderStatus(
+          order.id,
+          status,
+          cancellationComment: noteText.isEmpty ? null : noteText,
+        );
+        if (!mounted) return;
+        Toast.success(context, 'Order cancelled');
+        await _loadOrders();
+      } catch (e) {
+        if (!mounted) return;
+        Toast.error(context, _humanMessage(e));
+      }
+      return;
+    }
+
     // Show confirmation dialog for order confirmation
     if (status == 'confirmed' && order.status != 'confirmed') {
       final confirmed = await showDialog<bool>(

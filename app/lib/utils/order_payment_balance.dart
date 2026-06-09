@@ -63,6 +63,14 @@ double amountDueNow(OrderRecord order) {
   return outstandingBalanceAmount(order);
 }
 
+/// Customer may cancel before the order ships (including after a confirmed down payment).
+bool canCustomerCancelOrder(OrderRecord order) {
+  final status = order.status.toLowerCase();
+  if (status == 'cancelled' || status == 'expired') return false;
+  if (status == 'shipped' || status == 'delivered') return false;
+  return true;
+}
+
 /// User can open the GCash proof screen (no proof yet, or follow-up balance due).
 bool canOpenPaymentProofScreen(OrderRecord order) {
   final status = order.status.toLowerCase();

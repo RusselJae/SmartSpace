@@ -40,8 +40,15 @@ class ProductDetailScreen extends StatefulWidget {
 }
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
-  /// Catalog items are not limited by SKU stock; cap quantity per line for checkout.
+  /// Cap quantity per line for checkout (also bounded by on-hand catalog qty).
   static const int _maxOrderQuantity = 99;
+
+  bool get _canPurchase => widget.product.isAvailableForPurchase;
+
+  int _maxPurchasableQty(Product product) {
+    if (!product.isAvailableForPurchase) return 1;
+    return product.inventoryQty.clamp(1, _maxOrderQuantity);
+  }
 
   final CartService _cart = CartService();
   final AuthService _auth = AuthService();
@@ -266,8 +273,28 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
+  void _openMadeToOrder() {
+    if (!_auth.isAuthenticated) {
+      Navigator.of(context, rootNavigator: true).push(
+        CupertinoPageRoute(
+          builder: (_) => const SignInScreen(),
+          fullscreenDialog: true,
+        ),
+      );
+      Toast.info(context, 'Please sign in first');
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push(
+      CupertinoPageRoute(
+        builder: (_) => MadeToOrderRequestScreen(
+          prefilledProductName: widget.product.name,
+        ),
+      ),
+    );
+  }
+
   void _inc() {
-    final maxQty = widget.product.inStock ? _maxOrderQuantity : 1;
+    final maxQty = _maxPurchasableQty(widget.product);
     if (_quantity >= maxQty) {
       HapticFeedback.selectionClick();
       return;
@@ -296,9 +323,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   void _addToCart() {
-    // Prevent adding to cart if out of stock
-    if (!widget.product.inStock) {
-      Toast.info(context, 'This product is currently out of stock');
+    if (!_canPurchase) {
+      Toast.info(
+        context,
+        'Out of stock — use Made to Order below for a custom build.',
+      );
       return;
     }
 
@@ -315,7 +344,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
     
-    final maxQty = _maxOrderQuantity;
+    final maxQty = _maxPurchasableQty(widget.product);
     final q = _quantity.clamp(1, maxQty);
     if (q != _quantity) {
       setState(() {
@@ -332,9 +361,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   void _buyNow() {
-    // Prevent buying if out of stock
-    if (!widget.product.inStock) {
-      Toast.info(context, 'This product is currently out of stock');
+    if (!_canPurchase) {
+      Toast.info(
+        context,
+        'Out of stock — use Made to Order below for a custom build.',
+      );
       return;
     }
 
@@ -351,7 +382,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
     
-    final maxQty = _maxOrderQuantity;
+    final maxQty = _maxPurchasableQty(widget.product);
     final q = _quantity.clamp(1, maxQty);
     if (q != _quantity) {
       setState(() {
@@ -763,7 +794,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Left: bold "Available Stock" + count. Right: quantity stepper (same row).
   Widget _buildStockQuantityBlock(Product product) {
-    final maxQty = product.inStock ? _maxOrderQuantity : 1;
+    final canBuy = product.isAvailableForPurchase;
+    final maxQty = _maxPurchasableQty(product);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -782,14 +814,31 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                product.inStock ? 'Available to order' : 'Unavailable',
+                canBuy
+                    ? 'In stock · ${product.inventoryQty} available'
+                    : 'Out of stock',
                 style: GoogleFonts.poppins(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: product.inStock ? _kWalnut : Colors.red.shade700,
+                  color: canBuy ? _kWalnut : Colors.red.shade700,
                   decoration: TextDecoration.none,
                 ),
               ),
+              if (!canBuy) ...[
+                const SizedBox(height: 6),
+                GestureDetector(
+                  onTap: _openMadeToOrder,
+                  child: Text(
+                    'Need this piece? Try Made to Order →',
+                    style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _kWalnut,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -798,7 +847,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           children: [
             _QtyButton(
               icon: CupertinoIcons.minus,
-              onPressed: product.inStock ? _dec : null,
+              onPressed: canBuy ? _dec : null,
               walnutStyle: true,
             ),
             const SizedBox(width: 6),
@@ -815,7 +864,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
               child: CupertinoTextField(
                 controller: _quantityController,
-                enabled: product.inStock,
+                enabled: canBuy,
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.poppins(
@@ -864,7 +913,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 },
               ),
             ),
-            if (product.inStock && maxQty > 1)
+            if (canBuy && maxQty > 1)
               ...[
                 const SizedBox(width: 6),
                 _QtyButton(
@@ -881,8 +930,42 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Full-width bar pinned to the bottom; square buttons, solid walnut Buy Now.
   Widget _buildPurchaseBar(BuildContext context, Product product) {
-    final hideAddToCart = !product.inStock;
+    final canBuy = product.isAvailableForPurchase;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
+    if (!canBuy) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(
+            top: BorderSide(color: CupertinoColors.separator.resolveFrom(context)),
+          ),
+        ),
+        padding: EdgeInsets.fromLTRB(
+          _kPurchaseBarHorizontalPad,
+          _kPurchaseBarVerticalPad,
+          _kPurchaseBarHorizontalPad,
+          bottomInset + _kPurchaseBarVerticalPad,
+        ),
+        child: SizedBox(
+          width: double.infinity,
+          height: _kPurchaseBarButtonHeight,
+          child: CupertinoButton(
+            padding: EdgeInsets.zero,
+            borderRadius: BorderRadius.zero,
+            onPressed: _openMadeToOrder,
+            color: _kWalnut,
+            child: Text(
+              'Made to Order',
+              style: GoogleFonts.poppins(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -907,23 +990,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         height: _kPurchaseBarButtonHeight,
         child: Row(
           children: [
-            if (!hideAddToCart) ...[
-              Expanded(
-                child: CupertinoButton(
-                  padding: EdgeInsets.zero,
-                  borderRadius: BorderRadius.zero,
-                  onPressed: product.inStock ? _addToCart : null,
+            Expanded(
+              child: CupertinoButton(
+                padding: EdgeInsets.zero,
+                borderRadius: BorderRadius.zero,
+                onPressed: _addToCart,
                   color: Colors.transparent,
                   child: Container(
                     height: _kPurchaseBarButtonHeight,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: product.inStock
-                          ? Colors.white.withValues(alpha: _kPurchaseButtonFillOpacity)
-                          : CupertinoColors.systemGrey5
-                              .withValues(alpha: _kPurchaseButtonFillOpacity),
+                      color: Colors.white.withValues(alpha: _kPurchaseButtonFillOpacity),
                       border: Border.all(
-                        color: product.inStock ? _kWalnut : Colors.grey.shade400,
+                        color: _kWalnut,
                         width: 1.5,
                       ),
                     ),
@@ -933,13 +1012,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         Icon(
                           CupertinoIcons.cart,
                           size: 20,
-                          color: product.inStock ? _kWalnut : Colors.grey,
+                          color: _kWalnut,
                         ),
                         const SizedBox(width: 8),
                         Text(
                           'Add to Cart',
                           style: GoogleFonts.poppins(
-                            color: product.inStock ? _kWalnut : Colors.grey,
+                            color: _kWalnut,
                             fontWeight: FontWeight.w700,
                             fontSize: 15,
                             decoration: TextDecoration.none,
@@ -950,21 +1029,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-            ],
+            const SizedBox(width: 10),
             Expanded(
               child: CupertinoButton(
                 padding: EdgeInsets.zero,
                 borderRadius: BorderRadius.zero,
-                onPressed: product.inStock ? _buyNow : null,
+                onPressed: _buyNow,
                 color: Colors.transparent,
                 child: Container(
                   height: _kPurchaseBarButtonHeight,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: product.inStock
-                        ? _kWalnut
-                        : CupertinoColors.systemGrey4,
+                    color: _kWalnut,
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -972,13 +1048,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       Icon(
                         CupertinoIcons.creditcard,
                         size: 20,
-                        color: product.inStock ? Colors.white : Colors.grey,
+                        color: Colors.white,
                       ),
                       const SizedBox(width: 8),
                       Text(
                         'Buy Now',
                         style: GoogleFonts.poppins(
-                          color: product.inStock ? Colors.white : Colors.grey,
+                          color: Colors.white,
                           fontWeight: FontWeight.w800,
                           fontSize: 15,
                           decoration: TextDecoration.none,

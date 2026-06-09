@@ -817,6 +817,19 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       return;
     }
 
+    final unavailable = checkoutItems
+        .where((item) => !item.product.isAvailableForPurchase)
+        .map((item) => item.product.name)
+        .toList();
+    if (unavailable.isNotEmpty) {
+      setState(() => _loading = false);
+      Toast.warning(
+        context,
+        '${unavailable.first} is out of stock. Try Made to Order for a custom build.',
+      );
+      return;
+    }
+
     if (_validIdXFile == null) {
       setState(() => _loading = false);
       Toast.warning(context, 'Upload one valid government ID to continue');

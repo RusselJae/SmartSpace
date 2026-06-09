@@ -2243,11 +2243,22 @@ class MySQLDatabaseService {
 
   Future<List<InventoryMaterial>> getInventoryMaterials() async {
     if (!_useApi) return const [];
-    final data = await _sendRequest(method: 'GET', path: '/inventory-materials');
-    // _sendRequest already unwraps `{ success, data }` — data is the list itself.
-    final list = data is List ? data : (data is Map ? data['data'] : null);
-    if (list is! List) return const [];
-    return list
+    final raw = await _sendRequest(method: 'GET', path: '/inventory-materials');
+    return _parseInventoryMaterialList(raw);
+  }
+
+  /// Normalizes list payloads — never index a [List] with the string `"data"`.
+  List<InventoryMaterial> _parseInventoryMaterialList(dynamic raw) {
+    final List<dynamic> rows;
+    if (raw is List) {
+      rows = raw;
+    } else if (raw is Map) {
+      final nested = raw['data'];
+      rows = nested is List ? nested : const [];
+    } else {
+      rows = const [];
+    }
+    return rows
         .whereType<Map>()
         .map((e) => InventoryMaterial.fromJson(Map<String, dynamic>.from(e)))
         .toList();

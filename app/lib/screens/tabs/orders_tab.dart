@@ -403,7 +403,6 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
 
   /// Get available actions for an order based on its status
   List<PopupMenuItem<String>> _getOrderActions(OrderRecord order) {
-    final status = order.status.toLowerCase();
     final canPay = canOpenPaymentProofScreen(order);
 
     final List<PopupMenuItem<String>> items = [];
@@ -446,32 +445,29 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
           ),
         ),
       );
+    }
 
-      // Only allow cancelling while the order is still awaiting fulfillment.
-      final isStillPreFulfillment = status == 'pending' ||
-          status == 'pending_payment_verification' ||
-          (status == 'confirmed' && outstandingBalanceAmount(order) > 0.01);
-      if (isStillPreFulfillment) {
-        items.add(
-          PopupMenuItem<String>(
-            value: 'cancel',
-            child: Row(
-              children: [
-                const Icon(CupertinoIcons.xmark_circle, size: 18, color: CupertinoColors.systemRed),
-                const SizedBox(width: 12),
-                Text(
-                  'Cancel',
-                  style: GoogleFonts.poppins(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: CupertinoColors.systemRed,
-                  ),
+    // Cancel allowed until shipped/delivered — even after down payment is confirmed.
+    if (canCustomerCancelOrder(order)) {
+      items.add(
+        PopupMenuItem<String>(
+          value: 'cancel',
+          child: Row(
+            children: [
+              const Icon(CupertinoIcons.xmark_circle, size: 18, color: CupertinoColors.systemRed),
+              const SizedBox(width: 12),
+              Text(
+                'Cancel',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: CupertinoColors.systemRed,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        );
-      }
+        ),
+      );
     }
 
     return items;
@@ -505,6 +501,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     final paymentStatus =
         order.shippingAddress['paymentStatus']?.toString() ?? 'pending';
     final showCompletePayment = canOpenPaymentProofScreen(order);
+    final showCancelOrder = canCustomerCancelOrder(order);
     final currentUser = _auth.currentUser;
 
     showCupertinoModalPopup<void>(
@@ -580,8 +577,9 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                  if (showCompletePayment) ...[
+                  if (showCompletePayment || showCancelOrder) ...[
                     const SizedBox(height: 12),
+                    if (showCompletePayment)
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
@@ -600,6 +598,29 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
                         ),
                         child: Text(
                           'Complete payment',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                    if (showCompletePayment && showCancelOrder) const SizedBox(height: 10),
+                    if (showCancelOrder)
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _confirmCancelOrder(order);
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: CupertinoColors.systemRed,
+                          side: const BorderSide(color: CupertinoColors.systemRed),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          'Cancel order',
                           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                         ),
                       ),

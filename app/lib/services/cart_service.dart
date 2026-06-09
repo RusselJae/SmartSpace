@@ -74,6 +74,7 @@ class CartService extends ChangeNotifier {
   }
 
   void add(Product product, {int quantity = 1}) {
+    if (!product.isAvailableForPurchase) return;
     final maxQty = product.inventoryQty.clamp(1, 999999);
     final delta = (quantity < 1 ? 1 : quantity).clamp(1, maxQty);
     final existing = _itemsById[product.id];
@@ -96,7 +97,7 @@ class CartService extends ChangeNotifier {
 
   void increment(String productId) {
     final existing = _itemsById[productId];
-    if (existing == null) return;
+    if (existing == null || !existing.product.isAvailableForPurchase) return;
     final maxQty = existing.product.inventoryQty.clamp(1, 999999);
     if (existing.quantity >= maxQty) return;
     _itemsById[productId] = existing.copyWith(quantity: existing.quantity + 1);

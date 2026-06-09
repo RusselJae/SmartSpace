@@ -111,7 +111,8 @@ const mapProduct = (row: ProductRowWithOrderCount): Product => {
     // Calculate popular and new arrival dynamically
     isPopular: orderCount > 0, // Product is popular if it has any orders
     isNewArrival: isNewArrival(createdAt), // New arrival if created within last 7 days
-    inStock: parseBooleanFlag(row.in_stock),
+    // Stock is driven by quantity — 0 qty means not purchasable from catalog.
+    inStock: Number(row.inventory_qty ?? 0) > 0,
     isArchived: parseBooleanFlag(row.is_archived),
     createdAt,
   };
@@ -193,6 +194,7 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
   await ensureProductSchema();
   const pool = getPool();
   const inventoryQty = input.inventoryQty ?? 0;
+  const inStock = inventoryQty > 0;
   const components = input.components ?? [];
   const realWidthM = input.realWidthM ?? null;
   const realHeightM = input.realHeightM ?? null;
@@ -237,7 +239,7 @@ export const createProduct = async (input: ProductInput): Promise<Product> => {
       inventoryQty,
       0, // is_popular (calculated dynamically)
       0, // is_new_arrival (calculated dynamically)
-      input.inStock ? 1 : 0,
+      inStock ? 1 : 0,
       isArchived ? 1 : 0,
     ],
   );
@@ -264,6 +266,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
   }
 
   const inventoryQty = input.inventoryQty ?? existing.inventoryQty;
+  const inStock = inventoryQty > 0;
   const components = input.components ?? existing.components;
   const isArchived = input.isArchived ?? existing.isArchived;
 
@@ -294,7 +297,7 @@ export const updateProduct = async (id: string, input: ProductInput): Promise<Pr
       JSON.stringify(input.imageUrls),
       JSON.stringify(components),
       inventoryQty,
-      input.inStock ? 1 : 0,
+      inStock ? 1 : 0,
       isArchived ? 1 : 0,
       id,
     ],

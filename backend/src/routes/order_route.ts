@@ -1114,7 +1114,13 @@ orderRouter.patch(
   requireAdminPermission(ADMIN_PERMISSIONS.ordersWrite),
   asyncHandler(async (req, res) => {
     const payload = statusSchema.parse(req.body);
-    await updateOrderStatus(req.params.id, payload.status);
+    const comment =
+      typeof payload.cancellationComment === 'string'
+        ? payload.cancellationComment.trim()
+        : undefined;
+    await updateOrderStatus(req.params.id, payload.status, {
+      cancellationComment: comment,
+    });
     const normalizedStatus = payload.status.toLowerCase();
     const action =
       normalizedStatus === 'cancelled'

@@ -410,23 +410,13 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.circle,
-                              size: 10,
-                              color: online ? Colors.green[600] : Colors.grey[500],
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              online ? 'online' : 'offline',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: online ? Colors.green[700] : Colors.grey[600],
-                              ),
-                            ),
-                          ],
+                        Tooltip(
+                          message: online ? 'Online' : 'Offline',
+                          child: Icon(
+                            Icons.circle,
+                            size: 10,
+                            color: online ? Colors.green[600] : Colors.grey[500],
+                          ),
                         ),
                       ],
                     ),

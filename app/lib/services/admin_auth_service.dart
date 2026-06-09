@@ -156,7 +156,9 @@ class AdminAuthService {
     } catch (error) {
       if (error is Exception) {
         final s = error.toString();
-        if (s.contains('verify your email') || s.contains('verify your email before')) {
+        if (s.contains('verify your email') ||
+            s.contains('disabled') ||
+            s.contains('administrator account')) {
           rethrow;
         }
       }

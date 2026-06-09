@@ -342,7 +342,11 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
       Navigator.of(context).pushReplacementNamed(adminPostLoginTargetPath());
     } catch (error) {
       if (!mounted) return;
-      Toast.error(context, 'Failed to sign in: $error');
+      final raw = error.toString();
+      final message = raw.startsWith('Exception: ')
+          ? raw.substring('Exception: '.length)
+          : raw;
+      Toast.error(context, message);
       setState(() => isLoading = false);
     }
   }

@@ -286,7 +286,24 @@ class _AdminsAdminPageState extends State<AdminsAdminPage> {
         role: data.role,
       );
       if (!mounted) return;
-      Toast.success(context, 'Please check your email for a verification link.');
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Staff invite sent'),
+          content: Text(
+            'An account was saved as pending for ${data.email}.\n\n'
+            'Please check your email for a verification link. '
+            'They cannot sign in to the admin panel until email is verified.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
       await _loadAdmins();
     } catch (e) {
       if (!mounted) return;
@@ -644,6 +661,20 @@ class _AdminsTableRow extends StatelessWidget {
                     child: Text(
                       'Disabled',
                       style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.red.shade800),
+                    ),
+                  ),
+                ] else if (!admin.emailVerified) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Text(
+                      'Pending email',
+                      style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.orange.shade900),
                     ),
                   ),
                 ],
@@ -1416,6 +1447,47 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF8E1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFFE082)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.mark_email_unread_outlined, color: Color(0xFFF57C00), size: 22),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Email verification required',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.orange.shade900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'After you tap Create, we send a verification link to the email above. '
+                                    'The staff member cannot sign in until they confirm their email.',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 12.5,
+                                      height: 1.4,
+                                      color: Colors.orange.shade900.withValues(alpha: 0.9),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
                       if (_inlineError != null) ...[
                         Material(
                           color: Colors.red.shade50,
@@ -1510,23 +1582,16 @@ class _AdminFormDialogState extends State<_AdminFormDialog> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.blue.withAlpha(30),
+                          color: Colors.grey.shade100,
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.info_outline, size: 18, color: Colors.blue),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                '${PasswordPolicy.strongPasswordMessage} Please check your email for a verification link before first login.',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 12,
-                                  color: Colors.blue[900],
-                                ),
-                              ),
-                            ),
-                          ],
+                        child: Text(
+                          PasswordPolicy.strongPasswordMessage,
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.grey[800],
+                            height: 1.35,
+                          ),
                         ),
                       ),
                     ],

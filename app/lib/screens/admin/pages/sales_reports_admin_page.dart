@@ -99,18 +99,59 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
-  Future<void> _pickSelectedPeriod() async {
-    final now = DateTime.now();
+  /// White, compact picker — not full-screen (Apple-style modal on admin web).
+  ThemeData _salesReportPickerTheme(BuildContext context) {
     final base = Theme.of(context);
-    final pickerTheme = base.copyWith(
-      dialogTheme: base.dialogTheme.copyWith(backgroundColor: Colors.white),
-      colorScheme: base.colorScheme.copyWith(surface: Colors.white),
+    const walnut = Color(0xFF5D4037);
+    return base.copyWith(
+      canvasColor: Colors.white,
+      dialogTheme: base.dialogTheme.copyWith(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      colorScheme: base.colorScheme.copyWith(
+        surface: Colors.white,
+        onSurface: Colors.black87,
+        primary: walnut,
+        onPrimary: Colors.white,
+      ),
       datePickerTheme: base.datePickerTheme.copyWith(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
-        rangeSelectionBackgroundColor: const Color(0xFF8D6E63).withValues(alpha: 0.12),
+        headerBackgroundColor: walnut,
+        headerForegroundColor: Colors.white,
+        dayForegroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return Colors.white;
+          return Colors.black87;
+        }),
+        rangeSelectionBackgroundColor: const Color(0xFF8D6E63).withValues(alpha: 0.18),
+        rangeSelectionOverlayColor: WidgetStateProperty.all(
+          const Color(0xFF8D6E63).withValues(alpha: 0.10),
+        ),
       ),
     );
+  }
+
+  Widget _salesReportDatePickerBuilder(BuildContext context, Widget? child) {
+    return Theme(
+      data: _salesReportPickerTheme(context),
+      child: Dialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400, maxHeight: 500),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: child ?? const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickSelectedPeriod() async {
+    final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
@@ -121,10 +162,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
           : _trendGranularity == AdminTrendGranularity.monthly
               ? 'Select report month'
               : 'Select report year',
-      builder: (context, child) => Theme(
-        data: pickerTheme,
-        child: child ?? const SizedBox.shrink(),
-      ),
+      builder: _salesReportDatePickerBuilder,
     );
     if (picked == null) return;
     setState(() {
@@ -149,6 +187,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
       lastDate: DateTime(now.year + 1, 12, 31),
       initialDateRange: initial,
       helpText: 'Select report date range',
+      builder: _salesReportDatePickerBuilder,
     );
     if (picked == null) return;
     setState(() => _customRange = picked);
@@ -427,15 +466,48 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
+  /// Explicit label for PDF/XLSX exports (always includes start–end when custom range is set).
+  String get _exportDateRangeLabel => _selectedPeriodLabel;
+
+  String _exportFilenameStem() {
+    if (_customRange != null) {
+      final s = DateFormat('yyyyMMdd').format(_customRange!.start);
+      final e = DateFormat('yyyyMMdd').format(_customRange!.end);
+      return 'sales_report_${s}_$e';
+    }
+    return 'sales_report_${_granularityLabel}_${_selectedDate.year}_'
+        '${_selectedDate.month.toString().padLeft(2, '0')}_'
+        '${_selectedDate.day.toString().padLeft(2, '0')}';
+  }
+
   String _trendXAxisLabel(DateTime date) => _salesTrendXLabel(_trendGranularity, date);
+
+  void _setXlsxCell(
+    excel.Sheet sheet,
+    String coord,
+    excel.CellValue value, {
+    excel.CellStyle? style,
+  }) {
+    final cell = sheet.cell(excel.CellIndex.indexByString(coord));
+    cell.value = value;
+    if (style != null) cell.cellStyle = style;
+  }
+
+  void _appendXlsxHeaderRow(excel.Sheet sheet, List<String> headers, excel.CellStyle style) {
+    final row = sheet.maxRows;
+    for (var col = 0; col < headers.length; col++) {
+      final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
+      cell.value = excel.TextCellValue(headers[col]);
+      cell.cellStyle = style;
+    }
+  }
 
   Future<void> _exportExcelXlsx() async {
     if (_exporting) return;
     setState(() => _exporting = true);
     try {
       final bytes = _buildXlsxForGranularity();
-      final filename =
-          'sales_report_${_granularityLabel}_${_selectedDate.year}_${_selectedDate.month.toString().padLeft(2, '0')}_${_selectedDate.day.toString().padLeft(2, '0')}.xlsx';
+      final filename = '${_exportFilenameStem()}.xlsx';
       final savedAt = await saveReportFile(
         filename: filename,
         bytes: bytes,
@@ -471,6 +543,34 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     final workbook = excel.Excel.createExcel();
     workbook.delete('Sheet1');
 
+    const walnut = '#5D4037';
+    const walnutSoft = '#EFE8E3';
+
+    final brandBanner = excel.CellStyle(
+      bold: true,
+      fontSize: 16,
+      fontColorHex: excel.ExcelColor.white,
+      backgroundColorHex: excel.ExcelColor.fromHexString(walnut),
+      horizontalAlign: excel.HorizontalAlign.Center,
+      verticalAlign: excel.VerticalAlign.Center,
+    );
+    final metaLabel = excel.CellStyle(
+      bold: true,
+      backgroundColorHex: excel.ExcelColor.fromHexString(walnutSoft),
+    );
+    final tableHeader = excel.CellStyle(
+      bold: true,
+      fontColorHex: excel.ExcelColor.white,
+      backgroundColorHex: excel.ExcelColor.fromHexString(walnut),
+      horizontalAlign: excel.HorizontalAlign.Center,
+    );
+    final sectionTitle = excel.CellStyle(
+      bold: true,
+      fontSize: 12,
+      fontColorHex: excel.ExcelColor.fromHexString(walnut),
+    );
+    final currencyFormat = excel.NumFormat.standard_2;
+
     final generatedAt = AdminFormatters.dateYmdHm(DateTime.now());
     final trend = _activeTrendPoints;
     final summaryRows = _summaryRows();
@@ -480,65 +580,89 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
     final overview = workbook['Overview'];
     overview.setColumnWidth(0, 34);
-    overview.setColumnWidth(1, 30);
-    overview.appendRow([
-      excel.TextCellValue('Wood Home Furniture Trading'),
-      excel.TextCellValue(''),
-    ]);
-    overview.appendRow([
+    overview.setColumnWidth(1, 32);
+    overview.setRowHeight(0, 36);
+
+    _setXlsxCell(overview, 'A1', excel.TextCellValue('Wood Home Furniture Trading'), style: brandBanner);
+    _setXlsxCell(overview, 'B1', excel.TextCellValue(''), style: brandBanner);
+    _setXlsxCell(
+      overview,
+      'A2',
       excel.TextCellValue('Sales Report (${_granularityLabel.toUpperCase()})'),
-      excel.TextCellValue(_selectedPeriodLabel),
-    ]);
-    overview.appendRow([
-      excel.TextCellValue('Generated At'),
-      excel.TextCellValue(generatedAt),
-    ]);
+      style: sectionTitle,
+    );
+    _setXlsxCell(overview, 'A3', excel.TextCellValue('Date Range'), style: metaLabel);
+    _setXlsxCell(overview, 'B3', excel.TextCellValue(_exportDateRangeLabel));
+    _setXlsxCell(overview, 'A4', excel.TextCellValue('Generated At'), style: metaLabel);
+    _setXlsxCell(overview, 'B4', excel.TextCellValue(generatedAt));
     overview.appendRow([excel.TextCellValue(''), excel.TextCellValue('')]);
-    overview.appendRow([excel.TextCellValue('Summary'), excel.TextCellValue('Value')]);
+    _appendXlsxHeaderRow(overview, ['Summary', 'Value'], tableHeader);
     for (final row in summaryRows) {
       overview.appendRow([excel.TextCellValue(row.$1), excel.TextCellValue(row.$2)]);
     }
 
     final trendSheet = workbook['Revenue Trend'];
-    trendSheet.setColumnWidth(0, 20);
+    trendSheet.setColumnWidth(0, 22);
     trendSheet.setColumnWidth(1, 18);
-    trendSheet.appendRow([
-      excel.TextCellValue(_granularityLabel.toUpperCase()),
-      excel.TextCellValue('Amount'),
-    ]);
+    _setXlsxCell(
+      trendSheet,
+      'A1',
+      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
+      style: sectionTitle,
+    );
+    _appendXlsxHeaderRow(trendSheet, [_granularityLabel.toUpperCase(), 'Amount'], tableHeader);
     for (final p in trend) {
-      trendSheet.appendRow([
-        excel.TextCellValue(_trendXAxisLabel(p.x)),
-        excel.DoubleCellValue(p.y),
-      ]);
+      final row = trendSheet.maxRows;
+      trendSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+          excel.TextCellValue(_trendXAxisLabel(p.x));
+      final amountCell =
+          trendSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: row));
+      amountCell.value = excel.DoubleCellValue(p.y);
+      amountCell.cellStyle = excel.CellStyle(numberFormat: currencyFormat);
     }
 
     final sellingSheet = workbook['Top Selling'];
     sellingSheet.setColumnWidth(0, 30);
     sellingSheet.setColumnWidth(1, 14);
     sellingSheet.setColumnWidth(2, 18);
-    sellingSheet.appendRow([
-      excel.TextCellValue('Product'),
-      excel.TextCellValue('Units Sold'),
-      excel.TextCellValue('Estimated Revenue'),
-    ]);
+    _setXlsxCell(
+      sellingSheet,
+      'A1',
+      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
+      style: sectionTitle,
+    );
+    _appendXlsxHeaderRow(
+      sellingSheet,
+      ['Product', 'Units Sold', 'Estimated Revenue'],
+      tableHeader,
+    );
     for (final item in topSelling) {
-      sellingSheet.appendRow([
-        excel.TextCellValue(item.name),
-        excel.DoubleCellValue(item.value),
-        excel.DoubleCellValue(item.secondaryValue),
-      ]);
+      final row = sellingSheet.maxRows;
+      sellingSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+          excel.TextCellValue(item.name);
+      sellingSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: row)).value =
+          excel.DoubleCellValue(item.value);
+      final revCell =
+          sellingSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: row));
+      revCell.value = excel.DoubleCellValue(item.secondaryValue);
+      revCell.cellStyle = excel.CellStyle(numberFormat: currencyFormat);
     }
 
     final ratedSheet = workbook['Top Rated'];
     ratedSheet.setColumnWidth(0, 30);
     ratedSheet.setColumnWidth(1, 14);
     ratedSheet.setColumnWidth(2, 14);
-    ratedSheet.appendRow([
-      excel.TextCellValue('Product'),
-      excel.TextCellValue('Average Rating'),
-      excel.TextCellValue('Review Count'),
-    ]);
+    _setXlsxCell(
+      ratedSheet,
+      'A1',
+      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
+      style: sectionTitle,
+    );
+    _appendXlsxHeaderRow(
+      ratedSheet,
+      ['Product', 'Average Rating', 'Review Count'],
+      tableHeader,
+    );
     for (final item in topRated) {
       ratedSheet.appendRow([
         excel.TextCellValue(item.name),
@@ -550,10 +674,13 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     final cancelledSheet = workbook['Most Cancelled'];
     cancelledSheet.setColumnWidth(0, 30);
     cancelledSheet.setColumnWidth(1, 20);
-    cancelledSheet.appendRow([
-      excel.TextCellValue('Product'),
-      excel.TextCellValue('Cancelled Orders'),
-    ]);
+    _setXlsxCell(
+      cancelledSheet,
+      'A1',
+      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
+      style: sectionTitle,
+    );
+    _appendXlsxHeaderRow(cancelledSheet, ['Product', 'Cancelled Orders'], tableHeader);
     for (final item in mostCancelled) {
       cancelledSheet.appendRow([
         excel.TextCellValue(item.name),
@@ -652,8 +779,17 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
                     ),
                     pw.SizedBox(height: 2),
                     pw.Text(
-                      'Sales Report (${_granularityLabel.toUpperCase()}) - $_selectedPeriodLabel',
+                      'Sales Report (${_granularityLabel.toUpperCase()})',
                       style: const pw.TextStyle(fontSize: 11),
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Text(
+                      'Date Range: $_exportDateRangeLabel',
+                      style: pw.TextStyle(
+                        fontSize: 11,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.brown800,
+                      ),
                     ),
                   ],
                 ),
@@ -960,6 +1096,14 @@ class _SalesTrendSection extends StatelessWidget {
                   icon: const Icon(Icons.picture_as_pdf_outlined),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Report period: $selectedLabel',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF5D4037),
+                  ),
             ),
             const SizedBox(height: 12),
             AdminUnifiedTrendChartCard(

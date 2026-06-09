@@ -226,8 +226,9 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
         'paymentMethod': 'gcash',
         'paymentPlan': 'downpayment',
         'orderOption': 'layaway',
-        'downpayment': dp,
-        'remainingBalance': remaining,
+        'downpayment': 0,
+        'remainingBalance': total,
+        'plannedDownPayment': dp,
         'merchandiseSubtotal': total - ship,
       };
 

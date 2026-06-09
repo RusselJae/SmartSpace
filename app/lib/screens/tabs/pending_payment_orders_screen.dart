@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../models/order_record.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
+import '../../utils/order_payment_balance.dart';
 import '../../widgets/order_installment_balance_callout.dart';
 import '../checkout/models.dart';
 import '../checkout/payment_confirmation_screen.dart';
@@ -83,42 +84,8 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
     }
   }
 
-  /// Get payment amount for an order
-  double _getPaymentAmount(OrderRecord order) {
-    final paymentMethod = order.shippingAddress['paymentMethod']?.toString();
-    final totalAmount = order.totalAmount;
-
-    // Handle downpayment value coming back as num or string from backend
-    final downpaymentRaw = order.shippingAddress['downpayment'];
-    double? downpayment;
-    if (downpaymentRaw is num) {
-      downpayment = downpaymentRaw.toDouble();
-    } else if (downpaymentRaw is String) {
-      downpayment = double.tryParse(downpaymentRaw);
-    }
-
-    final remRaw = order.shippingAddress['remainingBalance'];
-    double? remaining;
-    if (remRaw is num) {
-      remaining = remRaw.toDouble();
-    } else if (remRaw is String) {
-      remaining = double.tryParse(remRaw);
-    }
-
-    if (paymentMethod == 'cod') {
-      return downpayment ?? (totalAmount * 0.20);
-    }
-    if (paymentMethod == 'gcash' || paymentMethod == 'paymongo') {
-      final ps = order.shippingAddress['paymentStatus']?.toString();
-      if (ps == 'downpayment_received' && (remaining ?? 0) > 0.01) {
-        return remaining ?? totalAmount;
-      }
-      if ((remaining ?? 0) > 0.01 && (downpayment ?? 0) > 0) {
-        return downpayment ?? totalAmount;
-      }
-    }
-    return totalAmount;
-  }
+  /// Get payment amount for an order (GCash proof screen).
+  double _getPaymentAmount(OrderRecord order) => amountDueNow(order);
 
   /// Get payment method enum
   PaymentMethod _getPaymentMethod(OrderRecord order) {

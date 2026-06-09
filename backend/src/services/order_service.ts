@@ -28,6 +28,8 @@ type OrderRow = RowDataPacket & {
   readonly total_amount: number;
   readonly downpayment_amount: number | null;
   readonly remaining_balance: number | null;
+  /** Planned first tranche for down-payment checkout (0 until paid). */
+  readonly planned_downpayment_amount?: number | null;
   readonly status: string;
   readonly payment_method: string;
   /** full | downpayment — nullable if migration not applied */
@@ -99,6 +101,7 @@ const mapOrder = async (row: OrderRow): Promise<OrderRecord> => {
     label: row.shipping_label ?? 'Home',
     downpayment: row.downpayment_amount ?? 0,
     remainingBalance: row.remaining_balance ?? row.total_amount,
+    plannedDownPayment: Number(row.planned_downpayment_amount ?? 0) || undefined,
     validIdUrl: row.valid_id_proof_url ?? undefined,
     // So Flutter can show correct payment UI (GCash manual vs PayMongo vs COD)
     paymentMethod: row.payment_method,
@@ -1258,10 +1261,31 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
   const paymentPlan = (shippingAddress['paymentPlan'] as string | undefined) ?? undefined;
   const orderOption = (shippingAddress['orderOption'] as string | undefined) ?? undefined;
 
-  // Get downpayment amount for GCash orders (20% of total)
-  // This is required for GCash payments to verify user authenticity and security
-  const downpayment = (shippingAddress['downpayment'] as number) ?? 0;
-  const remainingBalance = (shippingAddress['remainingBalance'] as number) ?? input.totalAmount;
+  // Paid so far (0 at checkout). Planned first tranche stored separately for down-payment plans.
+  const downpayment = Number(shippingAddress['downpayment'] ?? 0);
+  const remainingBalance =
+    Number(shippingAddress['remainingBalance'] ?? input.totalAmount) || input.totalAmount;
+  const plannedDownPayment = Number(shippingAddress['plannedDownPayment'] ?? 0);
+
+  const ensurePlannedDownpaymentColumn = async (): Promise<boolean> => {
+    try {
+      await pool.query(
+        `ALTER TABLE orders
+         ADD COLUMN planned_downpayment_amount DECIMAL(12,2) NOT NULL DEFAULT 0
+         COMMENT 'Planned first GCash tranche for down-payment checkout'`,
+      );
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Duplicate column') || msg.toLowerCase().includes('duplicate column name')) {
+        return true;
+      }
+      console.warn('ensurePlannedDownpaymentColumn:', msg);
+      return false;
+    }
+  };
+
+  const hasPlannedDownColumn = await ensurePlannedDownpaymentColumn();
 
   // Insert order with downpayment tracking for GCash orders
   // Note: If downpayment_amount and remaining_balance columns don't exist yet,
@@ -1417,6 +1441,17 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
       );
     } else {
       throw e;
+    }
+  }
+
+  if (hasPlannedDownColumn && plannedDownPayment > 0) {
+    try {
+      await conn.query(
+        `UPDATE orders SET planned_downpayment_amount = ? WHERE id = ?`,
+        [plannedDownPayment, id],
+      );
+    } catch (e) {
+      console.warn('planned_downpayment_amount update skipped:', e);
     }
   }
 
@@ -1828,12 +1863,19 @@ export const confirmPayment = async (
       throw e;
     }
   } else if (isDownPaymentPlan) {
-    if (downpaymentAmount < MIN_DOWN_PAYMENT_PESOS) {
+    const plannedDown = Number(order.planned_downpayment_amount ?? 0);
+    const applyAmount =
+      downpaymentAmount >= MIN_DOWN_PAYMENT_PESOS
+        ? downpaymentAmount
+        : plannedDown >= MIN_DOWN_PAYMENT_PESOS
+          ? plannedDown
+          : downpaymentAmount;
+    if (applyAmount < MIN_DOWN_PAYMENT_PESOS) {
       throw new Error(
         `Down payment must be at least ₱${MIN_DOWN_PAYMENT_PESOS.toLocaleString('en-PH')} before payment can be confirmed.`,
       );
     }
-    const appliedDown = Math.min(downpaymentAmount, orderTotal);
+    const appliedDown = Math.min(applyAmount, orderTotal);
     const newRemaining = Math.max(0, Number((orderTotal - appliedDown).toFixed(2)));
     paymentStatus = paymentMethod === 'cod' ? 'downpayment_paid' : 'downpayment_received';
     confirmedAmount = appliedDown;

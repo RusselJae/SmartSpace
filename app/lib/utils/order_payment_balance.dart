@@ -18,6 +18,67 @@ double? parseShippingDouble(Map<String, dynamic> map, String key) {
   return null;
 }
 
+/// Payment has been recorded by staff (not just proof uploaded).
+bool isPaymentRecordedByStaff(OrderRecord order) {
+  final ps = order.shippingAddress['paymentStatus']?.toString().toLowerCase() ?? 'pending';
+  return ps == 'completed' ||
+      ps == 'downpayment_received' ||
+      ps == 'downpayment_paid';
+}
+
+/// Amount actually paid toward the order (down payment tranche or full pay).
+double paidDownPaymentAmount(OrderRecord order) {
+  if (!isPaymentRecordedByStaff(order)) return 0;
+  return parseShippingDouble(order.shippingAddress, 'downpayment') ?? 0;
+}
+
+/// Outstanding balance after confirmed payments.
+double outstandingBalanceAmount(OrderRecord order) {
+  final rem = parseShippingDouble(order.shippingAddress, 'remainingBalance');
+  final ps = order.shippingAddress['paymentStatus']?.toString().toLowerCase() ?? 'pending';
+
+  // Legacy rows: pending but remaining was wrongly zeroed at checkout.
+  if ((ps == 'pending' || ps == 'failed') && (rem == null || rem <= 0.01)) {
+    return order.totalAmount;
+  }
+  return rem ?? order.totalAmount;
+}
+
+/// GCash amount the customer should pay on the next proof upload.
+double amountDueNow(OrderRecord order) {
+  final ps = order.shippingAddress['paymentStatus']?.toString().toLowerCase() ?? 'pending';
+
+  if (ps == 'downpayment_received' || ps == 'downpayment_paid') {
+    final rem = parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? 0;
+    return rem > 0.01 ? rem : 0;
+  }
+
+  if (ps == 'completed') return 0;
+
+  if (isInstallmentDownPaymentPlan(order)) {
+    final planned = parseShippingDouble(order.shippingAddress, 'plannedDownPayment');
+    if (planned != null && planned > 0.01) return planned;
+  }
+
+  return outstandingBalanceAmount(order);
+}
+
+/// User can open the GCash proof screen (no proof yet, or follow-up balance due).
+bool canOpenPaymentProofScreen(OrderRecord order) {
+  final status = order.status.toLowerCase();
+  if (status == 'cancelled' || status == 'expired') return false;
+  if (status == 'pending_payment_verification') return false;
+
+  final ps = order.shippingAddress['paymentStatus']?.toString().toLowerCase() ?? 'pending';
+  if (ps == 'completed') return false;
+
+  if (ps == 'downpayment_received' || ps == 'downpayment_paid') {
+    return outstandingBalanceAmount(order) > 0.01;
+  }
+
+  return ps == 'pending' || ps == 'failed' || amountDueNow(order) > 0.01;
+}
+
 /// PayMongo installment plan with a down payment + remaining balance.
 bool isInstallmentDownPaymentPlan(OrderRecord order) {
   return order.shippingAddress['paymentPlan']?.toString() == 'downpayment';

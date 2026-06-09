@@ -902,12 +902,12 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       final totalForOrder = _orderGrandTotalForOrder();
 
       final planLabel = _paymentPlan == CheckoutPaymentPlan.full ? 'full' : 'downpayment';
-      final downLine = _paymentPlan == CheckoutPaymentPlan.full
-          ? totalForOrder
-          : _effectiveDownPaymentPesos();
-      final remainingLine = _paymentPlan == CheckoutPaymentPlan.full
-          ? 0.0
-          : _remainingAfterDownPesos();
+      // Nothing paid until admin confirms proof — full balance remains until then.
+      const paidDownLine = 0.0;
+      final remainingLine = totalForOrder;
+      final plannedDownLine = _paymentPlan == CheckoutPaymentPlan.downpayment
+          ? _effectiveDownPaymentPesos()
+          : 0.0;
 
       // Build merged address line 1 (Block & Lot + Street)
       final mergedLine1 = [
@@ -933,8 +933,9 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         // In-app GCash QR + payment proof (no external checkout redirect).
         'paymentMethod': 'gcash',
         'paymentPlan': planLabel,
-        'downpayment': downLine,
+        'downpayment': paidDownLine,
         'remainingBalance': remainingLine,
+        if (plannedDownLine > 0) 'plannedDownPayment': plannedDownLine,
         // Line items only — correct subtotal in DB when total includes hulugan interest.
         'merchandiseSubtotal': subtotal,
         if (_paymentPlan == CheckoutPaymentPlan.downpayment)

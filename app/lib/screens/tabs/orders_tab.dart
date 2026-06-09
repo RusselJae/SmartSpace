@@ -264,44 +264,8 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     return filtered.toList();
   }
 
-  /// Get payment amount for an order
-  double _getPaymentAmount(OrderRecord order) {
-    final paymentMethod = order.shippingAddress['paymentMethod']?.toString();
-    final totalAmount = order.totalAmount;
-
-    // Handle downpayment value coming back as num or string from backend
-    final downpaymentRaw = order.shippingAddress['downpayment'];
-    double? downpayment;
-    if (downpaymentRaw is num) {
-      downpayment = downpaymentRaw.toDouble();
-    } else if (downpaymentRaw is String) {
-      downpayment = double.tryParse(downpaymentRaw);
-    }
-
-    final remRaw = order.shippingAddress['remainingBalance'];
-    double? remaining;
-    if (remRaw is num) {
-      remaining = remRaw.toDouble();
-    } else if (remRaw is String) {
-      remaining = double.tryParse(remRaw);
-    }
-
-    if (paymentMethod == 'cod') {
-      // COD: 20% downpayment (fallback if downpayment missing)
-      return downpayment ?? (totalAmount * 0.20);
-    }
-    if (paymentMethod == 'gcash' || paymentMethod == 'paymongo') {
-      final ps = order.shippingAddress['paymentStatus']?.toString();
-      // After first GCash tranche on a down-payment plan, user pays remaining balance next.
-      if (ps == 'downpayment_received' && (remaining ?? 0) > 0.01) {
-        return remaining ?? totalAmount;
-      }
-      if ((remaining ?? 0) > 0.01 && (downpayment ?? 0) > 0) {
-        return downpayment ?? totalAmount;
-      }
-    }
-    return totalAmount;
-  }
+  /// Get payment amount for an order (GCash proof screen).
+  double _getPaymentAmount(OrderRecord order) => amountDueNow(order);
 
   /// Get payment method enum
   PaymentMethod _getPaymentMethod(OrderRecord order) {
@@ -440,9 +404,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   /// Get available actions for an order based on its status
   List<PopupMenuItem<String>> _getOrderActions(OrderRecord order) {
     final status = order.status.toLowerCase();
-    final remainingBalance = parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? 0;
-
-    final hasOutstandingBalance = status != 'cancelled' && remainingBalance > 0.01;
+    final canPay = canOpenPaymentProofScreen(order);
 
     final List<PopupMenuItem<String>> items = [];
 
@@ -463,8 +425,8 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       ),
     );
 
-    // Keep Pay action visible while there is an outstanding balance.
-    if (hasOutstandingBalance) {
+    // Pay while proof not yet uploaded (or follow-up balance is due).
+    if (canPay) {
       items.add(
         PopupMenuItem<String>(
           value: 'pay',
@@ -488,7 +450,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       // Only allow cancelling while the order is still awaiting fulfillment.
       final isStillPreFulfillment = status == 'pending' ||
           status == 'pending_payment_verification' ||
-          (status == 'confirmed' && remainingBalance > 0.01);
+          (status == 'confirmed' && outstandingBalanceAmount(order) > 0.01);
       if (isStillPreFulfillment) {
         items.add(
           PopupMenuItem<String>(
@@ -537,12 +499,12 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
         .map((id) => _productLookup[id])
         .whereType<Product>()
         .toList();
-    final remainingBalance =
-        parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? 0;
-    final downpayment =
-        parseShippingDouble(order.shippingAddress, 'downpayment') ?? 0;
+    final remainingBalance = outstandingBalanceAmount(order);
+    final paidDown = paidDownPaymentAmount(order);
+    final amountDue = amountDueNow(order);
     final paymentStatus =
         order.shippingAddress['paymentStatus']?.toString() ?? 'pending';
+    final showCompletePayment = canOpenPaymentProofScreen(order);
     final currentUser = _auth.currentUser;
 
     showCupertinoModalPopup<void>(
@@ -608,14 +570,41 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
                         _buildDetailRow('Status', _labelForStatus(order.status)),
                         _buildDetailRow('Payment status', _labelForStatus(paymentStatus)),
                         _buildDetailRow('Order total', '₱${order.totalAmount.toStringAsFixed(2)}'),
-                        if (downpayment > 0)
-                          _buildDetailRow('Down payment', '₱${downpayment.toStringAsFixed(2)}'),
-                        if (remainingBalance > 0)
+                        if (paymentStatus == 'pending' || paymentStatus == 'failed')
+                          _buildDetailRow('Amount due', '₱${amountDue.toStringAsFixed(2)}'),
+                        if (paidDown > 0)
+                          _buildDetailRow('Down payment (paid)', '₱${paidDown.toStringAsFixed(2)}'),
+                        if (isPaymentRecordedByStaff(order) && remainingBalance > 0.01)
                           _buildDetailRow('Remaining balance', '₱${remainingBalance.toStringAsFixed(2)}'),
                         _buildDetailRow('Created', _dateFormat.format(order.createdAt)),
                       ],
                     ),
                   ),
+                  if (showCompletePayment) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _navigateToPayment(order);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF9800),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          'Complete payment',
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   _buildDetailCard(
                     title: 'Delivery',

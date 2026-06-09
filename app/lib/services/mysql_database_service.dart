@@ -2244,7 +2244,8 @@ class MySQLDatabaseService {
   Future<List<InventoryMaterial>> getInventoryMaterials() async {
     if (!_useApi) return const [];
     final data = await _sendRequest(method: 'GET', path: '/inventory-materials');
-    final list = data['data'];
+    // _sendRequest already unwraps `{ success, data }` — data is the list itself.
+    final list = data is List ? data : (data is Map ? data['data'] : null);
     if (list is! List) return const [];
     return list
         .whereType<Map>()

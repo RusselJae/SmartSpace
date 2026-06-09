@@ -2,8 +2,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import '../../models/address_entry.dart';
 import '../../models/app_settings.dart';
 import '../../models/made_to_order_request.dart';
@@ -14,8 +12,10 @@ import '../../services/mysql_database_service.dart';
 import '../../services/profile_storage.dart';
 import '../../utils/phone_input_formatters.dart';
 import '../../widgets/toast.dart';
+import '../checkout/models.dart';
+import '../checkout/payment_confirmation_screen.dart';
 
-/// After admin quotes, customer confirms shipping and creates the PayMongo order.
+/// After admin quotes, customer confirms shipping and opens GCash payment.
 class MtoQuoteCheckoutScreen extends StatefulWidget {
   const MtoQuoteCheckoutScreen({super.key, required this.request});
 
@@ -223,7 +223,7 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
         'postalCode': postal,
         'label': 'Home',
         'shippingFee': ship,
-        'paymentMethod': 'paymongo',
+        'paymentMethod': 'gcash',
         'paymentPlan': 'downpayment',
         'orderOption': 'layaway',
         'downpayment': dp,
@@ -244,21 +244,22 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
       await _auth.updateCurrentUser(user.copyWith(orderIds: updatedOrders));
 
       if (!mounted) return;
-      Toast.success(context, 'Opening PayMongo checkout');
+      Toast.success(context, 'Order created — complete GCash payment');
 
-      final checkoutUrl = await _db.createPaymongoCheckoutSession(
-        orderId: order.id,
-        userId: user.id,
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        CupertinoPageRoute(
+          builder: (_) => PaymentConfirmationScreen(
+            orderId: order.id,
+            paymentAmount: dp,
+            paymentMethod: PaymentMethod.gcash,
+            totalAmount: total,
+            orderCreatedAt: order.createdAt,
+          ),
+        ),
       );
       if (!mounted) return;
-      final uri = Uri.parse(checkoutUrl);
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!mounted) return;
-      if (opened) {
-        Navigator.of(context).pop();
-      } else {
-        Toast.warning(context, 'Could not open browser');
-      }
+      Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
       Toast.error(context, '$e');

@@ -3,12 +3,9 @@ import 'dart:developer' as developer;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import '../../models/order_record.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
-import '../../widgets/toast.dart';
 import '../../widgets/order_installment_balance_callout.dart';
 import '../checkout/models.dart';
 import '../checkout/payment_confirmation_screen.dart';
@@ -111,7 +108,7 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
     if (paymentMethod == 'cod') {
       return downpayment ?? (totalAmount * 0.20);
     }
-    if (paymentMethod == 'paymongo') {
+    if (paymentMethod == 'gcash' || paymentMethod == 'paymongo') {
       final ps = order.shippingAddress['paymentStatus']?.toString();
       if (ps == 'downpayment_received' && (remaining ?? 0) > 0.01) {
         return remaining ?? totalAmount;
@@ -130,50 +127,15 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
       case 'gcash':
         return PaymentMethod.gcash;
       case 'paymongo':
-        return PaymentMethod.paymongo;
+        return PaymentMethod.gcash;
       case 'cod':
       default:
         return PaymentMethod.cod;
     }
   }
 
-  /// PayMongo opens hosted checkout; COD/GCash use manual proof screen.
+  /// Opens in-app GCash QR + payment proof screen (legacy paymongo orders treated as gcash).
   Future<void> _openPaymentForOrder(OrderRecord order) async {
-    final pm = order.shippingAddress['paymentMethod']?.toString();
-    if (pm == 'paymongo') {
-      final user = _auth.currentUser;
-      if (user == null) {
-        if (mounted) Toast.error(context, 'Please sign in');
-        return;
-      }
-      try {
-        final paymentStatus = order.shippingAddress['paymentStatus']?.toString();
-        final isFollowUp = paymentStatus == 'downpayment_received';
-        final maxPayable = _getPaymentAmount(order);
-        double? selectedAmount;
-        if (isFollowUp) {
-          selectedAmount = await _promptForPaymongoAmount(maxPesos: maxPayable);
-          if (selectedAmount == null) {
-            if (mounted) Toast.info(context, 'Payment cancelled');
-            return;
-          }
-        }
-        final url = await _db.createPaymongoCheckoutSession(
-          orderId: order.id,
-          userId: user.id,
-          // First PayMongo charge is server-fixed; follow-up allows custom amount.
-          amountPesos: selectedAmount,
-        );
-        if (!mounted) return;
-        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-        if (mounted) Toast.info(context, 'Complete payment in the browser');
-      } catch (e) {
-        if (mounted) Toast.error(context, 'PayMongo: $e');
-      }
-      await _loadPendingOrders();
-      return;
-    }
-
     if (!mounted) return;
     await Navigator.of(context).push(
       CupertinoPageRoute(
@@ -187,84 +149,6 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
       ),
     );
     await _loadPendingOrders();
-  }
-
-  /// Let users choose a custom amount during pay-again.
-  /// This keeps the amount between 0 and the currently payable ceiling.
-  Future<double?> _promptForPaymongoAmount({required double maxPesos}) async {
-    final safeMax = maxPesos > 0.01 ? maxPesos : 1.0;
-    final controller = TextEditingController(text: safeMax.toStringAsFixed(2));
-
-    final result = await showCupertinoDialog<double>(
-      context: context,
-      builder: (ctx) => CupertinoAlertDialog(
-        title: Text(
-          'Enter amount to pay',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CupertinoTextField(
-              controller: controller,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              placeholder: '0.00',
-              style: GoogleFonts.poppins(),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: const Color(0xFF8D6E63).withValues(alpha: 0.30),
-                  width: 1,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Max: ₱${safeMax.toStringAsFixed(2)}',
-              style: GoogleFonts.poppins(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF8D6E63),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-            ),
-          ),
-          CupertinoDialogAction(
-            isDefaultAction: true,
-            onPressed: () {
-              final raw = controller.text.trim();
-              final cleaned = raw.replaceAll(',', '');
-              final parsed = double.tryParse(cleaned);
-              if (parsed == null || parsed <= 0.01) {
-                Navigator.pop(ctx, null);
-                return;
-              }
-              final clamped = parsed > safeMax ? safeMax : parsed;
-              Navigator.pop(ctx, clamped);
-            },
-            child: Text(
-              'Continue',
-              style: GoogleFonts.poppins(
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF8D6E63),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    controller.dispose();
-    return result;
   }
 
   @override

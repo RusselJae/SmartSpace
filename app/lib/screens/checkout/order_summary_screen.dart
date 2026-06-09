@@ -8,8 +8,6 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:model_viewer_plus/model_viewer_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import '../../models/address_entry.dart';
 import '../../models/app_settings.dart';
 import '../../models/cart_item.dart';
@@ -26,6 +24,7 @@ import '../views/sign_in.dart';
 import '../profile/terms_and_conditions_screen.dart';
 import '../profile/privacy_policy_screen.dart';
 import 'models.dart';
+import 'payment_confirmation_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Walnut-forward palette (warm wood tone — Apple HIG: legible contrast, calm CTAs).
@@ -931,8 +930,8 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         'region': region,
         'postalCode': _postalCodeController.text.trim(),
         'shippingFee': shipping,
-        // Hosted PayMongo only — backend routes checkout + webhooks to this method.
-        'paymentMethod': 'paymongo',
+        // In-app GCash QR + payment proof (no external checkout redirect).
+        'paymentMethod': 'gcash',
         'paymentPlan': planLabel,
         'downpayment': downLine,
         'remainingBalance': remainingLine,
@@ -951,7 +950,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
         status: 'pending',
       );
 
-      // KYC: one valid ID, stored server-side before we send the user to PayMongo.
+      // KYC: one valid ID, stored server-side before the GCash payment screen.
       final idFile = _validIdXFile!;
       final idBytes = await idFile.readAsBytes();
       final idName = idFile.name.isNotEmpty ? idFile.name : 'valid_id.jpg';
@@ -989,39 +988,22 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       setState(() {
         _loading = false;
       });
-      Toast.success(context, 'Order created — opening PayMongo checkout');
+      Toast.success(context, 'Order created — complete GCash payment below');
 
-      // PayMongo: full pay and down payment both use hosted checkout (amount decided server-side).
-      try {
-        final checkoutUrl = await _db.createPaymongoCheckoutSession(
-          orderId: order.id,
-          userId: user.id,
-        );
-        if (!mounted) return;
-        final payUri = Uri.parse(checkoutUrl);
-        final opened = await launchUrl(
-          payUri,
-          mode: LaunchMode.externalApplication,
-        );
-        if (!opened && mounted) {
-          Toast.warning(
-            context,
-            'Could not open browser — complete payment from Orders when ready.',
-          );
-          return;
-        }
-        if (mounted) {
-          Toast.info(context, 'Complete payment in the browser. You’ll return to the app when done.');
-        }
-        // Let PayMongo come to the foreground first; thank-you shows after “return to merchant” deep link.
-        await Future<void>.delayed(const Duration(milliseconds: 450));
-        if (!mounted) return;
-        Navigator.of(context).popUntil((route) => route.isFirst);
-      } catch (e) {
-        if (!mounted) return;
-        Toast.error(context, 'PayMongo checkout failed: $e');
-        developer.log('PayMongo checkout error: $e', name: 'OrderSummary');
-      }
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        CupertinoPageRoute(
+          builder: (_) => PaymentConfirmationScreen(
+            orderId: order.id,
+            paymentAmount: _paymongoChargeAmountPesos(),
+            paymentMethod: PaymentMethod.gcash,
+            totalAmount: totalForOrder,
+            orderCreatedAt: order.createdAt,
+          ),
+        ),
+      );
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -1824,9 +1806,9 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
                     Text(
                       _orderOption == CheckoutOrderOption.hulugan
                           ? 'After down payment, balance includes ${_huluganInterestPercent.toStringAsFixed(1)}% on the financed portion. '
-                              'Second charge via PayMongo from Orders. '
+                              'Pay the balance from Orders via GCash. '
                               'Delivery target: 10–12 days after the order is confirmed.'
-                          : 'Second payment via PayMongo from Orders. 0% for $_policyTermMonths months from first payment; '
+                          : 'Second payment via GCash from Orders. 0% for $_policyTermMonths months from first payment; '
                               'delivery after full payment.',
                       style: GoogleFonts.poppins(
                         fontSize: 12,

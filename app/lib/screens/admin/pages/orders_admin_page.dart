@@ -1490,6 +1490,76 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     return msg.isEmpty ? 'Something went wrong. Please try again.' : msg;
   }
 
+  /// True when staff can verify uploaded proof and post balances.
+  bool _canConfirmPayment(OrderRecord order) {
+    final ps = order.shippingAddress['paymentStatus']?.toString().toLowerCase() ?? 'pending';
+    if (ps == 'completed') return false;
+
+    final rem = parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? 0;
+    if (ps == 'downpayment_received' || ps == 'downpayment_paid') {
+      if (rem <= 0.01) return false;
+    } else if (ps != 'pending') {
+      return false;
+    }
+
+    final proof = (order.paymentProofUrl ??
+            order.shippingAddress['paymentProofUrl']?.toString() ??
+            '')
+        .trim();
+    return order.status == 'pending_payment_verification' || _isLikelyImageUrl(proof);
+  }
+
+  /// Admin verifies payment proof — applies down-payment or full-pay balance rules.
+  Future<void> _confirmPayment(OrderRecord order) async {
+    final plan = order.shippingAddress['paymentPlan']?.toString() ?? 'full';
+    final isDown = plan == 'downpayment';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Confirm payment',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          isDown
+              ? 'This will apply the down payment (minimum ₱3,000) and update the customer\'s remaining balance. Continue?'
+              : 'This will mark the order as fully paid and reset the customer\'s balance to ₱0. Continue?',
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              'Confirm payment',
+              style: GoogleFonts.poppins(
+                color: CupertinoColors.systemBlue,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await _db.confirmOrderPayment(order.id);
+      if (!mounted) return;
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      Toast.success(context, 'Payment confirmed — balances updated');
+      await _loadOrders();
+    } catch (e) {
+      if (!mounted) return;
+      Toast.error(context, _humanMessage(e));
+    }
+  }
+
   /// Shows detailed order information in a centered modal dialog following Apple's
   /// modal presentation style.
   void _showOrderDetails(OrderRecord order) {
@@ -1499,6 +1569,7 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
         order: order,
         productNames: _productNames,
         productThumbUrls: _productThumbUrls,
+        onConfirmPayment: _canConfirmPayment(order) ? () => _confirmPayment(order) : null,
       ),
     );
   }
@@ -2215,11 +2286,13 @@ class _OrderDetailsDialog extends StatelessWidget {
     required this.order,
     required this.productNames,
     required this.productThumbUrls,
+    this.onConfirmPayment,
   });
 
   final OrderRecord order;
   final Map<String, String> productNames;
   final Map<String, String> productThumbUrls;
+  final VoidCallback? onConfirmPayment;
 
   String _paymentMethodLabel(String? raw) {
     final pm = raw?.toString().trim().toLowerCase() ?? '';
@@ -2972,6 +3045,24 @@ class _OrderDetailsDialog extends StatelessWidget {
                                             ],
                                           ),
                                         ),
+                                      if (onConfirmPayment != null) ...[
+                                        const SizedBox(height: 12),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: FilledButton.icon(
+                                            onPressed: onConfirmPayment,
+                                            icon: const Icon(Icons.verified_outlined, size: 18),
+                                            label: Text(
+                                              'Confirm payment',
+                                              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                                            ),
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor: AdminConsoleSurfaces.walnutText,
+                                              padding: const EdgeInsets.symmetric(vertical: 12),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   );
                                 },

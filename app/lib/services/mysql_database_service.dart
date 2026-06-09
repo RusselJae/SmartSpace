@@ -895,6 +895,16 @@ class MySQLDatabaseService {
     );
   }
 
+  /// Admin confirms uploaded GCash/COD payment proof and updates balances.
+  Future<void> confirmOrderPayment(String orderId) async {
+    if (!_useApi) return;
+    await _sendRequest(
+      method: 'POST',
+      path: '/orders/$orderId/confirm-payment',
+      body: {},
+    );
+  }
+
   Future<OrderRecord> createOrder({
     required String userId,
     required String userName,

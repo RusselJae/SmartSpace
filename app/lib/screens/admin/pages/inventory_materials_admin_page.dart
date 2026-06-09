@@ -262,16 +262,13 @@ class _MaterialRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String statusLabel;
+    final String statusLabel = material.stockStatusLabel;
     final Color statusColor;
     if (material.isOutOfStock) {
-      statusLabel = 'Out of stock';
       statusColor = Colors.red.shade700;
     } else if (material.isLowStock) {
-      statusLabel = 'Low stock';
       statusColor = Colors.orange.shade800;
     } else {
-      statusLabel = 'OK';
       statusColor = Colors.green.shade700;
     }
 
@@ -427,7 +424,10 @@ class _MaterialFormDialogState extends State<_MaterialFormDialog> {
               TextField(
                 controller: _qty,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Quantity on hand'),
+                decoration: const InputDecoration(
+                  labelText: 'Quantity on hand',
+                  helperText: 'Status: out of stock (0), low stock (1–3), in stock (>3)',
+                ),
               ),
               TextField(
                 controller: _reorder,

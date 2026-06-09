@@ -13,6 +13,9 @@ class InventoryMaterial {
     required this.updatedAt,
   });
 
+  /// Low stock when on-hand is 1–3; in stock when > 3; out of stock when 0.
+  static const double lowStockThreshold = 3;
+
   final String id;
   final String name;
   final String? sku;
@@ -24,10 +27,18 @@ class InventoryMaterial {
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  bool get isLowStock =>
-      reorderLevel > 0 && quantityOnHand > 0 && quantityOnHand <= reorderLevel;
-
   bool get isOutOfStock => quantityOnHand <= 0;
+
+  bool get isLowStock =>
+      quantityOnHand > 0 && quantityOnHand <= lowStockThreshold;
+
+  bool get isInStock => quantityOnHand > lowStockThreshold;
+
+  String get stockStatusLabel {
+    if (isOutOfStock) return 'Out of stock';
+    if (isLowStock) return 'Low stock';
+    return 'In stock';
+  }
 
   factory InventoryMaterial.fromJson(Map<String, dynamic> json) {
     return InventoryMaterial(

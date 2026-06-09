@@ -18,9 +18,8 @@ import 'order_invoice_screen.dart';
 
 /// Payment confirmation screen with QR code and payment proof upload.
 ///
-/// NOTE: Expiration auto-cancel is intentionally disabled.
-/// Users can still pay later from Orders; unpaid orders are cancelled explicitly
-/// via the PayMongo cancel return route.
+/// 24-hour auto-cancel runs only while no payment proof has been uploaded.
+/// After proof upload the order stays pending until staff confirms payment.
 class PaymentConfirmationScreen extends StatefulWidget {
   const PaymentConfirmationScreen({
     super.key,
@@ -133,7 +132,8 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
   }
 
   Future<void> _handlePaymentTimeout() async {
-    if (_autoCancelling || _paymentConfirmed || _orderCancelled) return;
+    // Proof uploaded → hold for manual review; do not auto-cancel.
+    if (_autoCancelling || _paymentConfirmed || _orderCancelled || _proofSubmitted) return;
     _autoCancelling = true;
     try {
       final uid = _auth.currentUser?.id;
@@ -198,9 +198,21 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
         orElse: () => throw Exception('Order not found'),
       );
       
+      // Proof submitted server-side — stop countdown even if local flag was missed.
+      if (order.status == 'pending_payment_verification' ||
+          (order.paymentProofUrl != null && order.paymentProofUrl!.trim().isNotEmpty)) {
+        if (mounted && !_proofSubmitted) {
+          setState(() => _proofSubmitted = true);
+          _stopTimers();
+        }
+      }
+
       // Check if payment is already confirmed or order is cancelled
       final paymentStatus = order.shippingAddress['paymentStatus'] as String?;
-      if (paymentStatus == 'confirmed' || paymentStatus == 'downpayment_paid' || paymentStatus == 'completed') {
+      if (paymentStatus == 'confirmed' ||
+          paymentStatus == 'downpayment_paid' ||
+          paymentStatus == 'downpayment_received' ||
+          paymentStatus == 'completed') {
         if (mounted && !_paymentConfirmed) {
           setState(() => _paymentConfirmed = true);
           _stopTimers();
@@ -341,6 +353,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
           _uploading = false;
           _proofSubmitted = true;
         });
+        _stopTimers();
         Toast.success(context, 'Payment proof submitted! We will verify and show your invoice here.');
         _startStatusPolling();
       }
@@ -544,7 +557,8 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                   style: GoogleFonts.poppins(fontSize: 13, height: 1.35, color: const Color(0xFF2E7D32)),
                 ),
               ),
-            // Timer warning
+            // 24h auto-cancel countdown — hidden after proof upload.
+            if (!_proofSubmitted)
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(

@@ -291,8 +291,8 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
         realDepthM: data.realDepthM,
         modelBaseScale: data.modelBaseScale,
         imageUrls: data.imageUrls,
-        inventoryQty: 999,
-        inStock: true,
+        inventoryQty: data.inventoryQty,
+        inStock: data.inventoryQty > 0,
       );
       if (!mounted) return;
       final message = _db.isConnected
@@ -333,8 +333,8 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
           realDepthMeters: data.realDepthM,
           modelBaseScale: data.modelBaseScale,
           imageUrls: data.imageUrls,
-          inventoryQty: product.inventoryQty,
-          inStock: true,
+          inventoryQty: data.inventoryQty,
+          inStock: data.inventoryQty > 0,
           // Preserve isArchived status when editing
           isArchived: product.isArchived,
         ),
@@ -622,6 +622,7 @@ class _ProductsHeaderRow extends StatelessWidget {
           Expanded(flex: 3, child: Text('Product', style: style)),
           Expanded(flex: 2, child: Text('Category', style: style)),
           Expanded(flex: 2, child: Text('Price', style: style)),
+          Expanded(flex: 1, child: Text('Qty', style: style)),
           Expanded(flex: 2, child: Text('Listing', style: style)),
           const SizedBox(width: 80),
         ],
@@ -720,6 +721,13 @@ class _ProductRow extends StatelessWidget {
             child: Text('₱${product.price.toStringAsFixed(2)}'),
           ),
           Expanded(
+            flex: 1,
+            child: Text(
+              '${product.inventoryQty}',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Expanded(
             flex: 2,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -780,6 +788,7 @@ class _ProductFormData {
     required this.modelPath,
     required this.components,
     required this.imageUrls,
+    required this.inventoryQty,
   });
 
   final String name;
@@ -796,6 +805,7 @@ class _ProductFormData {
   final String modelPath;
   final List<ProductSetComponent> components;
   final List<String> imageUrls;
+  final int inventoryQty;
 }
 
 class _ProductFormDialog extends StatefulWidget {
@@ -812,6 +822,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _name;
   late final TextEditingController _description;
   late final TextEditingController _price;
+  late final TextEditingController _inventoryQty;
   late final TextEditingController _realWidthM;
   late final TextEditingController _realHeightM;
   late final TextEditingController _realDepthM;
@@ -909,6 +920,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _description = TextEditingController(text: product?.description ?? '');
     // Format price with commas
     _price = TextEditingController(text: product != null ? _formatPrice(product.price) : '');
+    _inventoryQty = TextEditingController(
+      text: product != null ? product.inventoryQty.toString() : '0',
+    );
     _selectedCategory = product?.category.isNotEmpty == true ? product!.category : null;
     _selectedStyle = product?.style.isNotEmpty == true ? product!.style : null;
     _selectedMaterial = product?.material.isNotEmpty == true ? product!.material : null;
@@ -1453,6 +1467,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _description.dispose();
     _price.removeListener(_onPriceChanged);
     _price.dispose();
+    _inventoryQty.dispose();
     _realWidthM.dispose();
     _realHeightM.dispose();
     _realDepthM.dispose();
@@ -1480,6 +1495,10 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     if (_name.text.trim().isEmpty) _fieldErrors['name'] = 'Fill this field';
     if (_description.text.trim().isEmpty) _fieldErrors['description'] = 'Fill this field';
     if (parsedPrice == null || parsedPrice <= 0) _fieldErrors['price'] = 'Enter a valid price';
+    final parsedInventoryQty = int.tryParse(_inventoryQty.text.trim());
+    if (parsedInventoryQty == null || parsedInventoryQty < 0) {
+      _fieldErrors['inventoryQty'] = 'Enter a valid quantity (0 or more)';
+    }
     if (_selectedCategory == null || _selectedCategory!.isEmpty) _fieldErrors['category'] = 'Choose a category';
     if (_selectedStyle == null || _selectedStyle!.isEmpty) _fieldErrors['style'] = 'Choose a style';
     if (_selectedMaterial == null || _selectedMaterial!.isEmpty) _fieldErrors['material'] = 'Choose a material';
@@ -1559,6 +1578,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       modelPath: _modelPath.text.trim(),
       components: parsedComponents,
       imageUrls: _imageUrls,
+      inventoryQty: parsedInventoryQty!,
     );
     Navigator.of(context).pop(data);
   }
@@ -1626,6 +1646,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                       _buildField(_name, 'Name', errorText: _fieldErrors['name']),
                       _buildField(_description, 'Description', maxLines: 3, errorText: _fieldErrors['description']),
                       _buildPriceField(errorText: _fieldErrors['price']),
+                      _buildField(
+                        _inventoryQty,
+                        'Quantity',
+                        keyboardType: TextInputType.number,
+                        errorText: _fieldErrors['inventoryQty'],
+                      ),
                       _buildDropdownField(
                         label: 'Category',
                         value: _selectedCategory,

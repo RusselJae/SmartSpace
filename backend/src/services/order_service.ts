@@ -1555,6 +1555,32 @@ export const updateOrderStatus = async (
   const deliveryOffsetDays = (): number => randomDeliveryOffsetDays();
 
   if (status === 'confirmed' && previousStatus !== 'confirmed') {
+    const paymentPlan = orderRows[0].payment_plan?.toString().toLowerCase() ?? 'full';
+    const downpaymentAmount = Number(orderRows[0].downpayment_amount ?? 0);
+
+    if (paymentStatus === 'pending' || paymentStatus === 'failed') {
+      throw new Error(
+        'Cannot confirm order until payment has been verified. Use Confirm Payment after reviewing the proof.',
+      );
+    }
+
+    if (paymentPlan === 'downpayment') {
+      if (downpaymentAmount < MIN_DOWN_PAYMENT_PESOS) {
+        throw new Error(
+          `Down payment must be at least ₱${MIN_DOWN_PAYMENT_PESOS.toLocaleString('en-PH')} before the order can be confirmed.`,
+        );
+      }
+      if (
+        paymentStatus !== 'downpayment_received' &&
+        paymentStatus !== 'downpayment_paid' &&
+        paymentStatus !== 'completed'
+      ) {
+        throw new Error('Confirm the customer\'s down payment before processing this order.');
+      }
+    } else if (!paymentCompleted) {
+      throw new Error('Full-payment orders must be fully paid before confirmation.');
+    }
+
     const shouldSetEta = isHulugan || (isLayaway && paymentCompleted);
     if (shouldSetEta) {
       try {
@@ -1742,10 +1768,14 @@ export const uploadPaymentProof = async (
   });
 };
 
+/** Minimum first tranche for down-payment plans (₱3,000 policy). */
+const MIN_DOWN_PAYMENT_PESOS = 3000;
+
 /**
- * Admin confirms payment proof and updates order status
- * Sets payment_status to 'downpayment_paid' or 'completed' based on payment method
- * Sends confirmation email to user
+ * Admin confirms payment proof and updates balances.
+ * - Full payment: remaining_balance → 0, payment_status → completed.
+ * - Down payment: requires ≥ ₱3,000 applied; remaining_balance = total − down payment.
+ * - Follow-up balance payment: remaining_balance → 0, payment_status → completed.
  */
 export const confirmPayment = async (
   orderId: string,
@@ -1767,26 +1797,98 @@ export const confirmPayment = async (
   const paymentMethod = order.payment_method;
   const userId = order.user_id;
   const orderTotal = Number(order.total_amount);
-  
-  // Determine payment status based on payment method
-  // COD: downpayment_paid (20% paid, 80% remaining)
-  // GCash: completed (full payment)
-  const paymentStatus = paymentMethod === 'cod' ? 'downpayment_paid' : 'completed';
-  
-  // Update order payment status
-  await pool.query(
-    `UPDATE orders 
-     SET payment_status = ?,
-        status = 'pending',
-         updated_at = NOW()
-     WHERE id = ?`,
-    [paymentStatus, orderId],
-  );
+  const paymentPlan = (order.payment_plan ?? 'full').toString().toLowerCase();
+  const downpaymentAmount = Number(order.downpayment_amount ?? 0);
+  const remainingBalance = Number(order.remaining_balance ?? orderTotal);
+  const currentPaymentStatus = order.payment_status?.toString().toLowerCase() ?? 'pending';
+  const isDownPaymentPlan = paymentPlan === 'downpayment';
+
+  let paymentStatus: string;
+  let confirmedAmount = orderTotal;
+
+  if (
+    isDownPaymentPlan &&
+    (currentPaymentStatus === 'downpayment_received' || currentPaymentStatus === 'downpayment_paid') &&
+    remainingBalance > 0.01
+  ) {
+    // Second (or final) tranche — clear outstanding balance.
+    paymentStatus = 'completed';
+    confirmedAmount = remainingBalance;
+    try {
+      await pool.query(
+        `UPDATE orders
+         SET payment_status = ?,
+             remaining_balance = 0,
+             status = 'pending',
+             updated_at = NOW()
+         WHERE id = ?`,
+        [paymentStatus, orderId],
+      );
+    } catch (e) {
+      throw e;
+    }
+  } else if (isDownPaymentPlan) {
+    if (downpaymentAmount < MIN_DOWN_PAYMENT_PESOS) {
+      throw new Error(
+        `Down payment must be at least ₱${MIN_DOWN_PAYMENT_PESOS.toLocaleString('en-PH')} before payment can be confirmed.`,
+      );
+    }
+    const appliedDown = Math.min(downpaymentAmount, orderTotal);
+    const newRemaining = Math.max(0, Number((orderTotal - appliedDown).toFixed(2)));
+    paymentStatus = paymentMethod === 'cod' ? 'downpayment_paid' : 'downpayment_received';
+    confirmedAmount = appliedDown;
+    try {
+      await pool.query(
+        `UPDATE orders
+         SET payment_status = ?,
+             downpayment_amount = ?,
+             remaining_balance = ?,
+             first_installment_paid_at = COALESCE(first_installment_paid_at, NOW()),
+             status = 'pending',
+             updated_at = NOW()
+         WHERE id = ?`,
+        [paymentStatus, appliedDown, newRemaining, orderId],
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('first_installment_paid_at') || msg.includes('Unknown column')) {
+        await pool.query(
+          `UPDATE orders
+           SET payment_status = ?,
+               downpayment_amount = ?,
+               remaining_balance = ?,
+               status = 'pending',
+               updated_at = NOW()
+           WHERE id = ?`,
+          [paymentStatus, appliedDown, newRemaining, orderId],
+        );
+      } else {
+        throw e;
+      }
+    }
+  } else {
+    // Full payment — zero out customer balance immediately.
+    paymentStatus = 'completed';
+    try {
+      await pool.query(
+        `UPDATE orders
+         SET payment_status = ?,
+             remaining_balance = 0,
+             downpayment_amount = ?,
+             status = 'pending',
+             updated_at = NOW()
+         WHERE id = ?`,
+        [paymentStatus, orderTotal, orderId],
+      );
+    } catch (e) {
+      throw e;
+    }
+  }
   
   console.log(`✅ Payment confirmed by admin ${adminId} for order ${orderId}`);
   
   // Send confirmation email to user
-  EmailService.sendPaymentConfirmationEmail(userId, orderId, orderTotal, paymentMethod).catch((error) => {
+  EmailService.sendPaymentConfirmationEmail(userId, orderId, confirmedAmount, paymentMethod).catch((error) => {
     console.error('Failed to send payment confirmation email:', error);
   });
 
@@ -1858,6 +1960,7 @@ export const autoCancelUnpaidOrders = async (): Promise<number> => {
          WHERE status = 'pending'
            AND LOWER(COALESCE(payment_status, 'pending')) = 'pending'
            AND payment_method IN ('gcash', 'cod', 'paymongo')
+           AND (payment_proof_url IS NULL OR payment_proof_url = '')
            AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) >= ?
            AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) < ?
            AND checkout_reminder_sent_at IS NULL`,
@@ -1888,6 +1991,7 @@ export const autoCancelUnpaidOrders = async (): Promise<number> => {
      WHERE status = 'pending'
        AND LOWER(COALESCE(payment_status, 'pending')) = 'pending'
        AND payment_method IN ('gcash', 'cod', 'paymongo')
+       AND (payment_proof_url IS NULL OR payment_proof_url = '')
        AND TIMESTAMPDIFF(MINUTE, created_at, NOW()) >= ?`,
     [cancelMin],
   );

@@ -17,8 +17,6 @@ import '../checkout/order_invoice_screen.dart';
 import '../views/sign_in.dart';
 import '../checkout/payment_confirmation_screen.dart';
 import '../checkout/models.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 /// =============================================================
 /// OrdersTab
 ///
@@ -292,9 +290,9 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       // COD: 20% downpayment (fallback if downpayment missing)
       return downpayment ?? (totalAmount * 0.20);
     }
-    if (paymentMethod == 'paymongo') {
+    if (paymentMethod == 'gcash' || paymentMethod == 'paymongo') {
       final ps = order.shippingAddress['paymentStatus']?.toString();
-      // After first PayMongo charge on a down-payment plan, user pays remaining balance next.
+      // After first GCash tranche on a down-payment plan, user pays remaining balance next.
       if (ps == 'downpayment_received' && (remaining ?? 0) > 0.01) {
         return remaining ?? totalAmount;
       }
@@ -312,88 +310,14 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       case 'gcash':
         return PaymentMethod.gcash;
       case 'paymongo':
-        return PaymentMethod.paymongo;
+        return PaymentMethod.gcash;
       case 'cod':
       default:
         return PaymentMethod.cod;
     }
   }
 
-  /// Opens manual GCash proof flow or PayMongo hosted checkout.
-  Future<double?> _promptForPaymongoAmount({required double maxPesos}) async {
-    final initial = (maxPesos > 0.01) ? maxPesos : 1.0;
-    final controller = TextEditingController(text: initial.toStringAsFixed(2));
-
-    final result = await showCupertinoDialog<double>(
-      context: context,
-      builder: (ctx) {
-        return CupertinoAlertDialog(
-          title: Text(
-            'Choose amount to pay',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CupertinoTextField(
-                controller: controller,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                placeholder: '0.00',
-                style: GoogleFonts.poppins(),
-                decoration: BoxDecoration(
-                  border: Border.all(color: _kWalnut.withValues(alpha: 0.25), width: 1),
-                  borderRadius: BorderRadius.circular(12),
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Max: ₱${maxPesos.toStringAsFixed(2)}',
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  color: _kWalnut,
-                  fontWeight: FontWeight.w600,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(
-                'Cancel',
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-              ),
-            ),
-            CupertinoDialogAction(
-              isDefaultAction: true,
-              onPressed: () {
-                final raw = controller.text.trim();
-                final cleaned = raw.replaceAll(',', '');
-                final parsed = double.tryParse(cleaned);
-                if (parsed == null || parsed <= 0.01) {
-                  Navigator.pop(ctx, null);
-                  return;
-                }
-                final clamped = parsed > maxPesos ? maxPesos : parsed;
-                Navigator.pop(ctx, clamped);
-              },
-              child: Text(
-                'Pay',
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w700, color: _kWalnut),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-
-    controller.dispose();
-    return result;
-  }
-
-  /// Opens manual GCash proof flow or PayMongo hosted checkout.
+  /// Opens in-app GCash QR + payment proof flow.
   Future<void> _navigateToPayment(OrderRecord order) async {
     if (!mounted) return;
     await Navigator.of(context).push(
@@ -1748,21 +1672,24 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
     }
     setState(() => _submitting = true);
     try {
-      final url = await widget.db.createPaymongoCheckoutSession(
-        orderId: widget.order.id,
-        userId: user.id,
-          // Always send an amount. When custom is disabled we still want to charge
-          // the exact remaining balance (instead of letting the server default).
-          amountPesos: amountToPay,
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        CupertinoPageRoute(
+          builder: (_) => PaymentConfirmationScreen(
+            orderId: widget.order.id,
+            paymentAmount: amountToPay,
+            paymentMethod: PaymentMethod.gcash,
+            totalAmount: widget.order.totalAmount,
+            orderCreatedAt: widget.order.createdAt,
+            resetTimer: true,
+          ),
+        ),
       );
       if (!mounted) return;
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      if (!mounted) return;
-      Toast.info(context, 'Complete payment in the browser');
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
-      Toast.error(context, 'PayMongo: $e');
+      Toast.error(context, 'Payment: $e');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

@@ -8,6 +8,28 @@ import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
 import '../../../widgets/toast.dart';
 
+/// Shared field decoration for material modals — white surface, admin palette.
+InputDecoration _materialFieldDecoration({
+  required String label,
+  String? helperText,
+}) {
+  return InputDecoration(
+    labelText: label,
+    helperText: helperText,
+    filled: true,
+    fillColor: const Color(0xFFF8F8F8),
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide(color: Colors.grey.shade300),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Color(0xFF8D6E63), width: 2),
+    ),
+  );
+}
+
 /// Materials stock panel — plywood, hardware, finishes, etc. (not catalog product stock).
 class InventoryMaterialsAdminPage extends StatefulWidget {
   const InventoryMaterialsAdminPage({super.key});
@@ -86,7 +108,9 @@ class _InventoryMaterialsAdminPageState extends State<InventoryMaterialsAdminPag
         await _db.createInventoryMaterial(
           name: data.name,
           sku: data.sku,
+          materialType: data.materialType,
           unit: data.unit,
+          costPerUnit: data.costPerUnit,
           quantityOnHand: data.quantityOnHand,
           reorderLevel: data.reorderLevel,
           supplier: data.supplier,
@@ -99,7 +123,9 @@ class _InventoryMaterialsAdminPageState extends State<InventoryMaterialsAdminPag
           id: existing.id,
           name: data.name,
           sku: data.sku,
+          materialType: data.materialType,
           unit: data.unit,
+          costPerUnit: data.costPerUnit,
           quantityOnHand: data.quantityOnHand,
           reorderLevel: data.reorderLevel,
           supplier: data.supplier,
@@ -330,7 +356,9 @@ class _MaterialFormData {
   _MaterialFormData({
     required this.name,
     this.sku,
+    required this.materialType,
     required this.unit,
+    required this.costPerUnit,
     required this.quantityOnHand,
     required this.reorderLevel,
     this.supplier,
@@ -339,7 +367,9 @@ class _MaterialFormData {
 
   final String name;
   final String? sku;
+  final String materialType;
   final String unit;
+  final double costPerUnit;
   final double quantityOnHand;
   final double reorderLevel;
   final String? supplier;
@@ -358,11 +388,14 @@ class _MaterialFormDialog extends StatefulWidget {
 class _MaterialFormDialogState extends State<_MaterialFormDialog> {
   late final TextEditingController _name;
   late final TextEditingController _sku;
-  late final TextEditingController _unit;
+  late final TextEditingController _cost;
   late final TextEditingController _qty;
   late final TextEditingController _reorder;
   late final TextEditingController _supplier;
   late final TextEditingController _notes;
+
+  String _selectedType = 'Other';
+  String _selectedUnit = 'pcs';
 
   @override
   void initState() {
@@ -370,18 +403,26 @@ class _MaterialFormDialogState extends State<_MaterialFormDialog> {
     final m = widget.material;
     _name = TextEditingController(text: m?.name ?? '');
     _sku = TextEditingController(text: m?.sku ?? '');
-    _unit = TextEditingController(text: m?.unit ?? 'pcs');
+    _cost = TextEditingController(text: m?.costPerUnit.toString() ?? '0');
     _qty = TextEditingController(text: m?.quantityOnHand.toString() ?? '0');
     _reorder = TextEditingController(text: m?.reorderLevel.toString() ?? '0');
     _supplier = TextEditingController(text: m?.supplier ?? '');
     _notes = TextEditingController(text: m?.notes ?? '');
+    _selectedType = m?.materialType ?? 'Other';
+    _selectedUnit = m?.unit ?? 'pcs';
+    if (!InventoryMaterial.materialTypes.contains(_selectedType)) {
+      _selectedType = 'Other';
+    }
+    if (!InventoryMaterial.units.contains(_selectedUnit)) {
+      _selectedUnit = 'pcs';
+    }
   }
 
   @override
   void dispose() {
     _name.dispose();
     _sku.dispose();
-    _unit.dispose();
+    _cost.dispose();
     _qty.dispose();
     _reorder.dispose();
     _supplier.dispose();
@@ -394,12 +435,15 @@ class _MaterialFormDialogState extends State<_MaterialFormDialog> {
     if (name.isEmpty) return;
     final qty = double.tryParse(_qty.text.trim()) ?? 0;
     final reorder = double.tryParse(_reorder.text.trim()) ?? 0;
+    final cost = double.tryParse(_cost.text.trim()) ?? 0;
     Navigator.pop(
       context,
       _MaterialFormData(
         name: name,
         sku: _sku.text.trim().isEmpty ? null : _sku.text.trim(),
-        unit: _unit.text.trim().isEmpty ? 'pcs' : _unit.text.trim(),
+        materialType: _selectedType,
+        unit: _selectedUnit,
+        costPerUnit: cost < 0 ? 0 : cost,
         quantityOnHand: qty < 0 ? 0 : qty,
         reorderLevel: reorder < 0 ? 0 : reorder,
         supplier: _supplier.text.trim().isEmpty ? null : _supplier.text.trim(),
@@ -408,46 +452,143 @@ class _MaterialFormDialogState extends State<_MaterialFormDialog> {
     );
   }
 
+  Widget _dropdown({
+    required String label,
+    required String value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: DropdownButtonFormField<String>(
+        value: value,
+        decoration: _materialFieldDecoration(label: label),
+        items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+        onChanged: onChanged,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.material == null ? 'Add material' : 'Edit material'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
+    final isEdit = widget.material != null;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 480),
+          color: Colors.white,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: _name, decoration: const InputDecoration(labelText: 'Name *')),
-              TextField(controller: _sku, decoration: const InputDecoration(labelText: 'SKU')),
-              TextField(controller: _unit, decoration: const InputDecoration(labelText: 'Unit (pcs, sheet, m)')),
-              TextField(
-                controller: _qty,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Quantity on hand',
-                  helperText: 'Status: out of stock (0), low stock (1–3), in stock (>3)',
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(24, 20, 16, 16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        isEdit ? 'Edit material' : 'Add material',
+                        style: GoogleFonts.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF6D4C41),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
                 ),
               ),
-              TextField(
-                controller: _reorder,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Reorder level'),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: _name,
+                        decoration: _materialFieldDecoration(label: 'Name *'),
+                      ),
+                      TextField(
+                        controller: _sku,
+                        decoration: _materialFieldDecoration(label: 'SKU'),
+                      ),
+                      _dropdown(
+                        label: 'Type',
+                        value: _selectedType,
+                        items: InventoryMaterial.materialTypes,
+                        onChanged: (v) => setState(() => _selectedType = v ?? 'Other'),
+                      ),
+                      _dropdown(
+                        label: 'Unit',
+                        value: _selectedUnit,
+                        items: InventoryMaterial.units,
+                        onChanged: (v) => setState(() => _selectedUnit = v ?? 'pcs'),
+                      ),
+                      TextField(
+                        controller: _cost,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: _materialFieldDecoration(label: 'Cost per unit (PHP)'),
+                      ),
+                      TextField(
+                        controller: _qty,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: _materialFieldDecoration(label: 'Quantity on hand'),
+                      ),
+                      TextField(
+                        controller: _reorder,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: _materialFieldDecoration(
+                          label: 'Reorder level',
+                          helperText: 'Alert triggers when stock reaches this number',
+                        ),
+                      ),
+                      TextField(
+                        controller: _supplier,
+                        decoration: _materialFieldDecoration(label: 'Supplier'),
+                      ),
+                      TextField(
+                        controller: _notes,
+                        maxLines: 3,
+                        decoration: _materialFieldDecoration(label: 'Notes'),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              TextField(controller: _supplier, decoration: const InputDecoration(labelText: 'Supplier')),
-              TextField(controller: _notes, maxLines: 3, decoration: const InputDecoration(labelText: 'Notes')),
+              Container(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      onPressed: _save,
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
+                      child: const Text('Save'),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: _save,
-          style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8D6E63)),
-          child: const Text('Save'),
-        ),
-      ],
     );
   }
 }

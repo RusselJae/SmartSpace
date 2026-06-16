@@ -3,10 +3,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../models/product.dart';
+import '../../../models/inventory_material.dart';
 import '../admin_theme.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
+import '../widgets/product_variant_form_section.dart';
 import '../../../services/backend_storage_service.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/model_path_helper.dart';
@@ -272,11 +274,11 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
     if (!mounted) return;
     final data = await showDialog<_ProductFormData>(
       context: context,
-      builder: (_) => _ProductFormDialog(allProducts: _products),
+      builder: (_) => _ProductFormDialog(db: _db, allProducts: _products),
     );
     if (data == null) return;
     try {
-      await _db.createProduct(
+      final created = await _db.createProduct(
         name: data.name,
         description: data.description,
         price: data.price,
@@ -294,6 +296,9 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
         inventoryQty: data.inventoryQty,
         inStock: data.inventoryQty > 0,
       );
+      if (_db.isConnected && data.variantPayloads.isNotEmpty) {
+        await _db.syncProductVariants(productId: created.id, payloads: data.variantPayloads);
+      }
       if (!mounted) return;
       final message = _db.isConnected
           ? 'Product created successfully and saved to database'
@@ -313,7 +318,7 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
   Future<void> _editProduct(Product product) async {
     final data = await showDialog<_ProductFormData>(
       context: context,
-      builder: (_) => _ProductFormDialog(product: product, allProducts: _products),
+      builder: (_) => _ProductFormDialog(db: _db, product: product, allProducts: _products),
     );
     if (data == null) return;
     try {
@@ -335,10 +340,12 @@ class _ProductsAdminPageState extends State<ProductsAdminPage> {
           imageUrls: data.imageUrls,
           inventoryQty: data.inventoryQty,
           inStock: data.inventoryQty > 0,
-          // Preserve isArchived status when editing
           isArchived: product.isArchived,
         ),
       );
+      if (_db.isConnected) {
+        await _db.syncProductVariants(productId: product.id, payloads: data.variantPayloads);
+      }
       if (!mounted) return;
       Toast.success(context, 'Product updated successfully');
       await _loadProducts();
@@ -789,6 +796,7 @@ class _ProductFormData {
     required this.components,
     required this.imageUrls,
     required this.inventoryQty,
+    required this.variantPayloads,
   });
 
   final String name;
@@ -806,11 +814,17 @@ class _ProductFormData {
   final List<ProductSetComponent> components;
   final List<String> imageUrls;
   final int inventoryQty;
+  final List<Map<String, dynamic>> variantPayloads;
 }
 
 class _ProductFormDialog extends StatefulWidget {
-  const _ProductFormDialog({this.product, required this.allProducts});
+  const _ProductFormDialog({
+    required this.db,
+    this.product,
+    required this.allProducts,
+  });
 
+  final MySQLDatabaseService db;
   final Product? product;
   final List<Product> allProducts; // Pass all products to extract unique values
 
@@ -823,13 +837,13 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _description;
   late final TextEditingController _price;
   late final TextEditingController _inventoryQty;
-  late final TextEditingController _realWidthM;
-  late final TextEditingController _realHeightM;
-  late final TextEditingController _realDepthM;
-  late final TextEditingController _modelBaseScale;
   late final TextEditingController _modelPath;
   late final List<String> _imageUrls;
   late final List<_SetComponentDraft> _componentDrafts;
+  late final List<VariantDraft> _variantDrafts;
+
+  List<InventoryMaterial> _inventoryMaterials = const [];
+  bool _loadingVariants = false;
   
   // Dropdown selected values
   String? _selectedCategory;
@@ -927,26 +941,106 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _selectedStyle = product?.style.isNotEmpty == true ? product!.style : null;
     _selectedMaterial = product?.material.isNotEmpty == true ? product!.material : null;
     _selectedColor = product?.color.isNotEmpty == true ? product!.color : null;
-    _realWidthM = TextEditingController(
-      text: DimensionFormat.metersToInchesFieldValue(product?.realWidthMeters),
-    );
-    _realHeightM = TextEditingController(
-      text: DimensionFormat.metersToInchesFieldValue(product?.realHeightMeters),
-    );
-    _realDepthM = TextEditingController(
-      text: DimensionFormat.metersToInchesFieldValue(product?.realDepthMeters),
-    );
-    _modelBaseScale = TextEditingController(text: product?.modelBaseScale.toStringAsFixed(2) ?? '1.00');
     _modelPath = TextEditingController(text: product?.modelPath ?? '');
     _componentDrafts = (product?.components ?? const <ProductSetComponent>[])
         .map(_SetComponentDraft.fromComponent)
         .toList(growable: true);
     _imageUrls = List<String>.from(product?.imageUrls ?? []);
-    
-    // Add listener to format price as user types
+
+    if (product != null) {
+      _variantDrafts = [VariantDraft.fromProduct(product)];
+    } else {
+      _variantDrafts = [
+        VariantDraft(variantName: 'Standard', isDefault: true),
+      ];
+    }
+
     _price.addListener(_onPriceChanged);
-    // Rebuild when model path changes so Remove / suffix clear stay in sync with the field.
     _modelPath.addListener(_onModelPathChanged);
+    _loadVariantAndMaterialData();
+  }
+
+  Future<void> _loadVariantAndMaterialData() async {
+    setState(() => _loadingVariants = true);
+    try {
+      await widget.db.initialize();
+      final materials = await widget.db.getInventoryMaterials();
+      if (!mounted) return;
+      setState(() => _inventoryMaterials = materials);
+
+      final product = widget.product;
+      if (product != null && widget.db.isConnected) {
+        final variants = await widget.db.getProductVariants(product.id);
+        if (!mounted) return;
+        if (variants.isNotEmpty) {
+          for (final old in _variantDrafts) {
+            old.dispose();
+          }
+          setState(() {
+            _variantDrafts = variants.map(VariantDraft.fromVariant).toList();
+          });
+        }
+      }
+    } catch (_) {
+      // Keep seeded draft variants if API load fails.
+    } finally {
+      if (mounted) setState(() => _loadingVariants = false);
+    }
+  }
+
+  void _prefillBomFromProductMaterial(String? materialLabel) {
+    final match = ProductVariantFormSection.matchInventoryMaterial(
+      materialLabel,
+      _inventoryMaterials,
+    );
+    if (match == null) return;
+
+    for (final variant in _variantDrafts) {
+      if (variant.bomLines.isEmpty ||
+          (variant.bomLines.length == 1 &&
+              variant.bomLines.first.inventoryMaterialId == null &&
+              variant.bomLines.first.quantity.text.trim().isEmpty)) {
+        variant.bomLines = [BomLineDraft(inventoryMaterialId: match.id, quantity: '1')];
+      }
+    }
+    setState(() {});
+  }
+
+  void _addVariantDraft() {
+    setState(() {
+      _variantDrafts.add(
+        VariantDraft(
+          variantName: 'Variant ${_variantDrafts.length + 1}',
+          isDefault: _variantDrafts.isEmpty,
+        ),
+      );
+    });
+  }
+
+  void _removeVariantDraft(int index) {
+    if (_variantDrafts.length <= 1) return;
+    setState(() {
+      final removed = _variantDrafts.removeAt(index);
+      removed.dispose();
+      if (!_variantDrafts.any((v) => v.isDefault)) {
+        _variantDrafts.first.isDefault = true;
+      }
+    });
+  }
+
+  void _setDefaultVariant(int index) {
+    setState(() {
+      for (var i = 0; i < _variantDrafts.length; i++) {
+        _variantDrafts[i].isDefault = i == index;
+      }
+    });
+  }
+
+  VariantDraft? get _defaultVariantDraft {
+    for (final v in _variantDrafts) {
+      if (v.isDefault) return v;
+    }
+    return _variantDrafts.isEmpty ? null : _variantDrafts.first;
   }
 
   void _onModelPathChanged() {
@@ -1468,13 +1562,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _price.removeListener(_onPriceChanged);
     _price.dispose();
     _inventoryQty.dispose();
-    _realWidthM.dispose();
-    _realHeightM.dispose();
-    _realDepthM.dispose();
-    _modelBaseScale.dispose();
     _modelPath.removeListener(_onModelPathChanged);
     _modelPath.dispose();
     for (final draft in _componentDrafts) {
+      draft.dispose();
+    }
+    for (final draft in _variantDrafts) {
       draft.dispose();
     }
     super.dispose();
@@ -1485,12 +1578,36 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _fieldErrors.clear();
 
     final parsedPrice = _parsePrice(_price.text);
-    final double? widthM = DimensionFormat.inchesFieldToMeters(_realWidthM.text);
-    final double? heightM = DimensionFormat.inchesFieldToMeters(_realHeightM.text);
-    final double? depthM = DimensionFormat.inchesFieldToMeters(_realDepthM.text);
-    final double baseScale =
-        double.tryParse(_modelBaseScale.text.trim().replaceAll(',', '.')) ?? 1.0;
+    final defaultVariant = _defaultVariantDraft;
+    final double? widthM = defaultVariant == null
+        ? null
+        : DimensionFormat.inchesFieldToMeters(defaultVariant.widthIn.text);
+    final double? heightM = defaultVariant == null
+        ? null
+        : DimensionFormat.inchesFieldToMeters(defaultVariant.heightIn.text);
+    final double? depthM = defaultVariant == null
+        ? null
+        : DimensionFormat.inchesFieldToMeters(defaultVariant.depthIn.text);
+    final double baseScale = defaultVariant == null
+        ? 1.0
+        : double.tryParse(defaultVariant.modelBaseScale.text.trim().replaceAll(',', '.')) ?? 1.0;
     final parsedComponents = <ProductSetComponent>[];
+
+    if (_variantDrafts.isEmpty) {
+      _fieldErrors['variants'] = 'Add at least one variant';
+    }
+    for (var i = 0; i < _variantDrafts.length; i++) {
+      final draft = _variantDrafts[i];
+      final prefix = 'variant_${i}_';
+      final w = DimensionFormat.inchesFieldToMeters(draft.widthIn.text);
+      final h = DimensionFormat.inchesFieldToMeters(draft.heightIn.text);
+      final d = DimensionFormat.inchesFieldToMeters(draft.depthIn.text);
+      final scale = double.tryParse(draft.modelBaseScale.text.trim()) ?? 0;
+      if (w == null || w <= 0) _fieldErrors['${prefix}width'] = 'Enter width in inches';
+      if (h == null || h <= 0) _fieldErrors['${prefix}height'] = 'Enter height in inches';
+      if (d == null || d <= 0) _fieldErrors['${prefix}depth'] = 'Enter depth in inches';
+      if (scale <= 0) _fieldErrors['${prefix}scale'] = 'Must be greater than 0';
+    }
 
     if (_name.text.trim().isEmpty) _fieldErrors['name'] = 'Fill this field';
     if (_description.text.trim().isEmpty) _fieldErrors['description'] = 'Fill this field';
@@ -1503,16 +1620,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     if (_selectedStyle == null || _selectedStyle!.isEmpty) _fieldErrors['style'] = 'Choose a style';
     if (_selectedMaterial == null || _selectedMaterial!.isEmpty) _fieldErrors['material'] = 'Choose a material';
     if (_selectedColor == null || _selectedColor!.isEmpty) _fieldErrors['color'] = 'Choose a color';
-    if (widthM == null || widthM <= 0) {
-      _fieldErrors['width'] = 'Enter width in inches (greater than 0)';
-    }
-    if (heightM == null || heightM <= 0) {
-      _fieldErrors['height'] = 'Enter height in inches (greater than 0)';
-    }
-    if (depthM == null || depthM <= 0) {
-      _fieldErrors['depth'] = 'Enter depth in inches (greater than 0)';
-    }
-    if (baseScale <= 0) _fieldErrors['modelBaseScale'] = 'Must be greater than 0';
     if (_modelPath.text.trim().isEmpty) _fieldErrors['modelPath'] = 'Add a model path';
     for (final draft in _componentDrafts) {
       final name = draft.name.text.trim();
@@ -1579,6 +1686,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       components: parsedComponents,
       imageUrls: _imageUrls,
       inventoryQty: parsedInventoryQty!,
+      variantPayloads: _variantDrafts.map((v) => v.toSyncPayload()).toList(),
     );
     Navigator.of(context).pop(data);
   }
@@ -1670,7 +1778,10 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                         label: 'Material',
                         value: _selectedMaterial,
                         items: _availableMaterials,
-                        onChanged: (value) => setState(() => _selectedMaterial = value),
+                        onChanged: (value) {
+                          setState(() => _selectedMaterial = value);
+                          _prefillBomFromProductMaterial(value);
+                        },
                         errorText: _fieldErrors['material'],
                       ),
                       _buildDropdownField(
@@ -1680,42 +1791,23 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                         onChanged: (value) => setState(() => _selectedColor = value),
                         errorText: _fieldErrors['color'],
                       ),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildField(
-                              _realWidthM,
-                              'Width (in)',
-                              keyboardType: TextInputType.number,
-                              errorText: _fieldErrors['width'],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildField(
-                              _realHeightM,
-                              'Height (in)',
-                              keyboardType: TextInputType.number,
-                              errorText: _fieldErrors['height'],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildField(
-                              _realDepthM,
-                              'Depth (in)',
-                              keyboardType: TextInputType.number,
-                              errorText: _fieldErrors['depth'],
-                            ),
-                          ),
-                        ],
-                      ),
-                      _buildField(
-                        _modelBaseScale,
-                        'Model base scale',
-                        keyboardType: TextInputType.number,
-                        errorText: _fieldErrors['modelBaseScale'],
-                      ),
+                      if (_loadingVariants)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else
+                        ProductVariantFormSection(
+                          variants: _variantDrafts,
+                          inventoryMaterials: _inventoryMaterials,
+                          onChanged: () => setState(() {}),
+                          onAddVariant: _addVariantDraft,
+                          onRemoveVariant: _removeVariantDraft,
+                          onDefaultChanged: _setDefaultVariant,
+                          onProductMaterialSelected: _prefillBomFromProductMaterial,
+                          fieldErrors: _fieldErrors,
+                          buildField: _buildField,
+                        ),
                       _buildSetComponentsEditor(),
                       const SizedBox(height: 8),
               // 3D Model Upload Section

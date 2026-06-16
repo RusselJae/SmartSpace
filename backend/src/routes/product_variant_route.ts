@@ -21,6 +21,10 @@ const variantSchema = z.object({
   dimensionsLabel: z.string().nullable().optional(),
   priceAdjustment: z.coerce.number().optional(),
   isDefault: z.boolean().optional(),
+  realWidthM: z.coerce.number().nonnegative().nullable().optional(),
+  realHeightM: z.coerce.number().nonnegative().nullable().optional(),
+  realDepthM: z.coerce.number().nonnegative().nullable().optional(),
+  modelBaseScale: z.coerce.number().positive().max(100).optional(),
   bomLines: z.array(bomLineSchema).optional(),
 });
 

@@ -12,7 +12,9 @@ export const ensureSchema = async (): Promise<void> => {
       id              VARCHAR(50) PRIMARY KEY,
       name            VARCHAR(255) NOT NULL,
       sku             VARCHAR(80) NULL,
+      material_type   VARCHAR(64) NOT NULL DEFAULT 'Other',
       unit            VARCHAR(32) NOT NULL DEFAULT 'pcs',
+      cost_per_unit   DECIMAL(12,2) NOT NULL DEFAULT 0,
       quantity_on_hand DECIMAL(12,2) NOT NULL DEFAULT 0,
       reorder_level   DECIMAL(12,2) NOT NULL DEFAULT 0,
       supplier        VARCHAR(255) NULL,
@@ -20,9 +22,25 @@ export const ensureSchema = async (): Promise<void> => {
       created_at      TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at      TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_material_name (name),
-      KEY idx_material_sku (sku)
+      KEY idx_material_sku (sku),
+      KEY idx_material_type (material_type)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
+
+  for (const alterSql of [
+    `ALTER TABLE inventory_materials ADD COLUMN material_type VARCHAR(64) NOT NULL DEFAULT 'Other' AFTER sku`,
+    `ALTER TABLE inventory_materials ADD COLUMN cost_per_unit DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER unit`,
+  ]) {
+    try {
+      await pool.query(alterSql);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('Duplicate column') && !msg.toLowerCase().includes('duplicate column name')) {
+        console.warn('ensureSchema inventory_materials alter:', msg);
+      }
+    }
+  }
+
   _schemaEnsured = true;
 };
 
@@ -30,7 +48,9 @@ type MaterialRow = RowDataPacket & {
   readonly id: string;
   readonly name: string;
   readonly sku: string | null;
+  readonly material_type: string;
   readonly unit: string;
+  readonly cost_per_unit: number;
   readonly quantity_on_hand: number;
   readonly reorder_level: number;
   readonly supplier: string | null;
@@ -43,7 +63,9 @@ export type InventoryMaterial = {
   readonly id: string;
   readonly name: string;
   readonly sku: string | null;
+  readonly materialType: string;
   readonly unit: string;
+  readonly costPerUnit: number;
   readonly quantityOnHand: number;
   readonly reorderLevel: number;
   readonly supplier: string | null;
@@ -56,7 +78,9 @@ const rowToMaterial = (row: MaterialRow): InventoryMaterial => ({
   id: row.id,
   name: row.name,
   sku: row.sku,
+  materialType: row.material_type ?? 'Other',
   unit: row.unit ?? 'pcs',
+  costPerUnit: Number(row.cost_per_unit ?? 0),
   quantityOnHand: Number(row.quantity_on_hand ?? 0),
   reorderLevel: Number(row.reorder_level ?? 0),
   supplier: row.supplier,
@@ -68,7 +92,9 @@ const rowToMaterial = (row: MaterialRow): InventoryMaterial => ({
 export type InventoryMaterialInput = {
   name: string;
   sku?: string | null;
+  materialType?: string;
   unit?: string;
+  costPerUnit?: number;
   quantityOnHand?: number;
   reorderLevel?: number;
   supplier?: string | null;
@@ -79,7 +105,7 @@ export const listInventoryMaterials = async (): Promise<InventoryMaterial[]> => 
   await ensureSchema();
   const pool = getPool();
   const [rows] = await pool.query<MaterialRow[]>(
-    `SELECT id, name, sku, unit, quantity_on_hand, reorder_level, supplier, notes, created_at, updated_at
+    `SELECT id, name, sku, material_type, unit, cost_per_unit, quantity_on_hand, reorder_level, supplier, notes, created_at, updated_at
      FROM inventory_materials
      ORDER BY name ASC`,
   );
@@ -94,13 +120,15 @@ export const createInventoryMaterial = async (
   const id = generateId('mat');
   await pool.query(
     `INSERT INTO inventory_materials
-      (id, name, sku, unit, quantity_on_hand, reorder_level, supplier, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, name, sku, material_type, unit, cost_per_unit, quantity_on_hand, reorder_level, supplier, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.name.trim(),
       input.sku?.trim() || null,
+      (input.materialType ?? 'Other').trim() || 'Other',
       (input.unit ?? 'pcs').trim() || 'pcs',
+      input.costPerUnit ?? 0,
       input.quantityOnHand ?? 0,
       input.reorderLevel ?? 0,
       input.supplier?.trim() || null,
@@ -108,7 +136,7 @@ export const createInventoryMaterial = async (
     ],
   );
   const [rows] = await pool.query<MaterialRow[]>(
-    `SELECT id, name, sku, unit, quantity_on_hand, reorder_level, supplier, notes, created_at, updated_at
+    `SELECT id, name, sku, material_type, unit, cost_per_unit, quantity_on_hand, reorder_level, supplier, notes, created_at, updated_at
      FROM inventory_materials WHERE id = ?`,
     [id],
   );
@@ -125,12 +153,14 @@ export const updateInventoryMaterial = async (
   const pool = getPool();
   const [result] = await pool.query<ResultSetHeader>(
     `UPDATE inventory_materials SET
-      name = ?, sku = ?, unit = ?, quantity_on_hand = ?, reorder_level = ?, supplier = ?, notes = ?
+      name = ?, sku = ?, material_type = ?, unit = ?, cost_per_unit = ?, quantity_on_hand = ?, reorder_level = ?, supplier = ?, notes = ?
      WHERE id = ?`,
     [
       input.name.trim(),
       input.sku?.trim() || null,
+      (input.materialType ?? 'Other').trim() || 'Other',
       (input.unit ?? 'pcs').trim() || 'pcs',
+      input.costPerUnit ?? 0,
       input.quantityOnHand ?? 0,
       input.reorderLevel ?? 0,
       input.supplier?.trim() || null,
@@ -142,7 +172,7 @@ export const updateInventoryMaterial = async (
     throw new Error('Material not found');
   }
   const [rows] = await pool.query<MaterialRow[]>(
-    `SELECT id, name, sku, unit, quantity_on_hand, reorder_level, supplier, notes, created_at, updated_at
+    `SELECT id, name, sku, material_type, unit, cost_per_unit, quantity_on_hand, reorder_level, supplier, notes, created_at, updated_at
      FROM inventory_materials WHERE id = ?`,
     [id],
   );

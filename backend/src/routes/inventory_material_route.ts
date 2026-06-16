@@ -16,7 +16,9 @@ export const inventoryMaterialRouter = Router();
 const materialSchema = z.object({
   name: z.string().min(1),
   sku: z.string().optional().nullable(),
+  materialType: z.string().default('Other'),
   unit: z.string().default('pcs'),
+  costPerUnit: z.coerce.number().nonnegative().default(0),
   quantityOnHand: z.coerce.number().nonnegative().default(0),
   reorderLevel: z.coerce.number().nonnegative().default(0),
   supplier: z.string().optional().nullable(),

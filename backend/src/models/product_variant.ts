@@ -15,6 +15,10 @@ export type ProductVariant = {
   readonly dimensionsLabel: string | null;
   readonly priceAdjustment: number;
   readonly isDefault: boolean;
+  readonly realWidthM: number | null;
+  readonly realHeightM: number | null;
+  readonly realDepthM: number | null;
+  readonly modelBaseScale: number;
   readonly bomLines: ProductVariantBomLine[];
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -30,5 +34,9 @@ export type ProductVariantInput = {
   readonly dimensionsLabel?: string | null;
   readonly priceAdjustment?: number;
   readonly isDefault?: boolean;
+  readonly realWidthM?: number | null;
+  readonly realHeightM?: number | null;
+  readonly realDepthM?: number | null;
+  readonly modelBaseScale?: number;
   readonly bomLines?: readonly ProductVariantBomLineInput[];
 };

@@ -4,7 +4,9 @@ class InventoryMaterial {
     required this.id,
     required this.name,
     this.sku,
+    this.materialType = 'Other',
     required this.unit,
+    this.costPerUnit = 0,
     required this.quantityOnHand,
     required this.reorderLevel,
     this.supplier,
@@ -12,6 +14,28 @@ class InventoryMaterial {
     required this.createdAt,
     required this.updatedAt,
   });
+
+  /// Material grouping options for admin filtering.
+  static const List<String> materialTypes = [
+    'Lumber',
+    'Hardware',
+    'Finishing',
+    'Fabric / Upholstery',
+    'Foam / Padding',
+    'Other',
+  ];
+
+  /// Supported inventory units.
+  static const List<String> units = [
+    'pcs',
+    'sheet',
+    'bd ft',
+    'ml',
+    'liter',
+    'yard',
+    'kg',
+    'g',
+  ];
 
   /// Low stock when on-hand is above zero but at or below [reorderLevel].
   static String stockStatusLabelFor({required double quantityOnHand, required double reorderLevel}) {
@@ -23,7 +47,9 @@ class InventoryMaterial {
   final String id;
   final String name;
   final String? sku;
+  final String materialType;
   final String unit;
+  final double costPerUnit;
   final double quantityOnHand;
   final double reorderLevel;
   final String? supplier;
@@ -45,7 +71,9 @@ class InventoryMaterial {
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       sku: json['sku'] as String?,
+      materialType: json['materialType']?.toString() ?? 'Other',
       unit: json['unit']?.toString() ?? 'pcs',
+      costPerUnit: _toDouble(json['costPerUnit']),
       quantityOnHand: _toDouble(json['quantityOnHand']),
       reorderLevel: _toDouble(json['reorderLevel']),
       supplier: json['supplier'] as String?,

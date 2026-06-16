@@ -18,6 +18,7 @@ import '../models/product.dart';
 import '../models/review.dart';
 import '../models/faq.dart';
 import '../models/inventory_material.dart';
+import '../models/product_variant.dart';
 import '../models/support_conversation.dart';
 import '../models/support_message.dart';
 import '../models/support_form_request.dart';
@@ -2306,7 +2307,9 @@ class MySQLDatabaseService {
   Future<InventoryMaterial> createInventoryMaterial({
     required String name,
     String? sku,
+    String materialType = 'Other',
     String unit = 'pcs',
+    double costPerUnit = 0,
     double quantityOnHand = 0,
     double reorderLevel = 0,
     String? supplier,
@@ -2318,7 +2321,9 @@ class MySQLDatabaseService {
       body: {
         'name': name,
         'sku': sku,
+        'materialType': materialType,
         'unit': unit,
+        'costPerUnit': costPerUnit,
         'quantityOnHand': quantityOnHand,
         'reorderLevel': reorderLevel,
         'supplier': supplier,
@@ -2332,7 +2337,9 @@ class MySQLDatabaseService {
     required String id,
     required String name,
     String? sku,
+    String materialType = 'Other',
     String unit = 'pcs',
+    double costPerUnit = 0,
     double quantityOnHand = 0,
     double reorderLevel = 0,
     String? supplier,
@@ -2344,7 +2351,9 @@ class MySQLDatabaseService {
       body: {
         'name': name,
         'sku': sku,
+        'materialType': materialType,
         'unit': unit,
+        'costPerUnit': costPerUnit,
         'quantityOnHand': quantityOnHand,
         'reorderLevel': reorderLevel,
         'supplier': supplier,
@@ -2356,6 +2365,95 @@ class MySQLDatabaseService {
 
   Future<void> deleteInventoryMaterial({required String id}) async {
     await _sendRequest(method: 'DELETE', path: '/inventory-materials/$id');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Product variants + BOM (admin)
+  // ---------------------------------------------------------------------------
+
+  Future<List<ProductVariant>> getProductVariants(String productId) async {
+    if (!_useApi) return const [];
+    final raw = await _sendRequest(method: 'GET', path: '/products/$productId/variants');
+    return _parseProductVariantList(raw);
+  }
+
+  List<ProductVariant> _parseProductVariantList(dynamic raw) {
+    final List<dynamic> rows;
+    if (raw is List) {
+      rows = raw;
+    } else if (raw is Map) {
+      final nested = raw['data'];
+      rows = nested is List ? nested : const [];
+    } else {
+      rows = const [];
+    }
+    return rows
+        .whereType<Map>()
+        .map((e) => ProductVariant.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<ProductVariant> createProductVariant({
+    required String productId,
+    required Map<String, dynamic> body,
+  }) async {
+    final data = await _sendRequest(
+      method: 'POST',
+      path: '/products/$productId/variants',
+      body: body,
+    );
+    return ProductVariant.fromJson(_asMap(data, 'product variant'));
+  }
+
+  Future<ProductVariant> updateProductVariant({
+    required String productId,
+    required String variantId,
+    required Map<String, dynamic> body,
+  }) async {
+    final data = await _sendRequest(
+      method: 'PUT',
+      path: '/products/$productId/variants/$variantId',
+      body: body,
+    );
+    return ProductVariant.fromJson(_asMap(data, 'product variant'));
+  }
+
+  Future<void> deleteProductVariant({
+    required String productId,
+    required String variantId,
+  }) async {
+    await _sendRequest(
+      method: 'DELETE',
+      path: '/products/$productId/variants/$variantId',
+    );
+  }
+
+  /// Creates, updates, and removes variants so the server matches [payloads].
+  Future<void> syncProductVariants({
+    required String productId,
+    required List<Map<String, dynamic>> payloads,
+  }) async {
+    if (!_useApi) return;
+    final existing = await getProductVariants(productId);
+    final keptIds = <String>{};
+
+    for (final payload in payloads) {
+      final serverId = payload['serverId'] as String?;
+      final writeBody = Map<String, dynamic>.from(payload)..remove('serverId');
+      if (serverId != null && serverId.isNotEmpty) {
+        await updateProductVariant(productId: productId, variantId: serverId, body: writeBody);
+        keptIds.add(serverId);
+      } else {
+        final created = await createProductVariant(productId: productId, body: writeBody);
+        keptIds.add(created.id);
+      }
+    }
+
+    for (final variant in existing) {
+      if (!keptIds.contains(variant.id)) {
+        await deleteProductVariant(productId: productId, variantId: variant.id);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

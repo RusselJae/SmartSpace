@@ -86,6 +86,22 @@ export const ensureProductVariantSchema = async (): Promise<void> => {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
+  for (const alterSql of [
+    `ALTER TABLE product_variants ADD COLUMN real_width_m DECIMAL(6,3) NULL AFTER is_default`,
+    `ALTER TABLE product_variants ADD COLUMN real_height_m DECIMAL(6,3) NULL AFTER real_width_m`,
+    `ALTER TABLE product_variants ADD COLUMN real_depth_m DECIMAL(6,3) NULL AFTER real_height_m`,
+    `ALTER TABLE product_variants ADD COLUMN model_base_scale DECIMAL(5,2) NOT NULL DEFAULT 1.00 AFTER real_depth_m`,
+  ]) {
+    try {
+      await pool.query(alterSql);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('Duplicate column') && !msg.toLowerCase().includes('duplicate column name')) {
+        console.warn('ensureProductVariantSchema product_variants alter:', msg);
+      }
+    }
+  }
+
   _schemaEnsured = true;
 };
 
@@ -96,6 +112,10 @@ type VariantRow = RowDataPacket & {
   readonly dimensions_label: string | null;
   readonly price_adjustment: number;
   readonly is_default: number | boolean;
+  readonly real_width_m: number | null;
+  readonly real_height_m: number | null;
+  readonly real_depth_m: number | null;
+  readonly model_base_scale: number | null;
   readonly created_at: Date;
   readonly updated_at: Date;
 };
@@ -151,16 +171,23 @@ const mapVariant = (row: VariantRow, bomLines: ProductVariantBomLine[]): Product
   dimensionsLabel: row.dimensions_label,
   priceAdjustment: Number(row.price_adjustment ?? 0),
   isDefault: Boolean(row.is_default),
+  realWidthM: row.real_width_m != null ? Number(row.real_width_m) : null,
+  realHeightM: row.real_height_m != null ? Number(row.real_height_m) : null,
+  realDepthM: row.real_depth_m != null ? Number(row.real_depth_m) : null,
+  modelBaseScale: Number(row.model_base_scale ?? 1),
   bomLines,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
 
+const variantSelectColumns = `id, product_id, name, dimensions_label, price_adjustment, is_default,
+  real_width_m, real_height_m, real_depth_m, model_base_scale, created_at, updated_at`;
+
 export const listVariantsForProduct = async (productId: string): Promise<ProductVariant[]> => {
   await ensureProductVariantSchema();
   const pool = getPool();
   const [rows] = await pool.query<VariantRow[]>(
-    `SELECT id, product_id, name, dimensions_label, price_adjustment, is_default, created_at, updated_at
+    `SELECT ${variantSelectColumns}
      FROM product_variants
      WHERE product_id = ?
      ORDER BY is_default DESC, name ASC`,
@@ -175,8 +202,7 @@ export const getVariantById = async (variantId: string): Promise<ProductVariant 
   await ensureProductVariantSchema();
   const pool = getPool();
   const [rows] = await pool.query<VariantRow[]>(
-    `SELECT id, product_id, name, dimensions_label, price_adjustment, is_default, created_at, updated_at
-     FROM product_variants WHERE id = ? LIMIT 1`,
+    `SELECT ${variantSelectColumns} FROM product_variants WHERE id = ? LIMIT 1`,
     [variantId],
   );
   const row = rows?.[0];
@@ -219,8 +245,10 @@ export const createProductVariant = async (
   }
 
   await pool.query(
-    `INSERT INTO product_variants (id, product_id, name, dimensions_label, price_adjustment, is_default)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO product_variants (
+      id, product_id, name, dimensions_label, price_adjustment, is_default,
+      real_width_m, real_height_m, real_depth_m, model_base_scale
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       productId,
@@ -228,6 +256,10 @@ export const createProductVariant = async (
       input.dimensionsLabel?.trim() || null,
       input.priceAdjustment ?? 0,
       input.isDefault ? 1 : 0,
+      input.realWidthM ?? null,
+      input.realHeightM ?? null,
+      input.realDepthM ?? null,
+      input.modelBaseScale ?? 1,
     ],
   );
 
@@ -252,13 +284,18 @@ export const updateProductVariant = async (
 
   const [result] = await pool.query<ResultSetHeader>(
     `UPDATE product_variants SET
-      name = ?, dimensions_label = ?, price_adjustment = ?, is_default = ?
+      name = ?, dimensions_label = ?, price_adjustment = ?, is_default = ?,
+      real_width_m = ?, real_height_m = ?, real_depth_m = ?, model_base_scale = ?
      WHERE id = ?`,
     [
       input.name.trim(),
       input.dimensionsLabel?.trim() || null,
       input.priceAdjustment ?? 0,
       input.isDefault ? 1 : 0,
+      input.realWidthM ?? null,
+      input.realHeightM ?? null,
+      input.realDepthM ?? null,
+      input.modelBaseScale ?? 1,
       variantId,
     ],
   );

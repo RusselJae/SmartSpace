@@ -51,13 +51,15 @@ class SalesReportsAdminPage extends StatefulWidget {
 
 class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
-  DateTime _selectedDate = DateTime(
+  final DateTime _selectedDate = DateTime(
     DateTime.now().year,
     DateTime.now().month,
     DateTime.now().day,
   );
   AdminTrendGranularity _trendGranularity = AdminTrendGranularity.monthly;
-  DateTimeRange? _customRange;
+  /// Custom report window — both ends must be set before filtering overrides granularity.
+  DateTime? _rangeFrom;
+  DateTime? _rangeTo;
   List<OrderRecord> _orders = const [];
   List<Product> _products = const [];
   List<Review> _reviews = const [];
@@ -150,55 +152,65 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     );
   }
 
-  Future<void> _pickSelectedPeriod() async {
+  bool get _hasCustomRange => _rangeFrom != null && _rangeTo != null;
+
+  String _formatRangeButtonDate(DateTime date) => DateFormat.yMMMd().format(date);
+
+  /// Opens a compact modal so the admin can pick the range **start** date.
+  Future<void> _pickRangeFrom() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedDate,
+      initialDate: _rangeFrom ?? _rangeTo ?? now,
       firstDate: DateTime(now.year - 5, 1, 1),
       lastDate: DateTime(now.year + 1, 12, 31),
-      helpText: _trendGranularity == AdminTrendGranularity.weekly
-          ? 'Select any day in the report week (Mon–Sun)'
-          : _trendGranularity == AdminTrendGranularity.monthly
-              ? 'Select report month'
-              : 'Select report year',
+      helpText: 'Select range start date',
       builder: _salesReportDatePickerBuilder,
     );
     if (picked == null) return;
     setState(() {
-      _selectedDate = _trendGranularity == AdminTrendGranularity.weekly
-          ? DateTime(picked.year, picked.month, picked.day)
-          : _trendGranularity == AdminTrendGranularity.monthly
-              ? DateTime(picked.year, picked.month, 1)
-              : DateTime(picked.year, 1, 1);
+      _rangeFrom = DateTime(picked.year, picked.month, picked.day);
+      // Keep the window valid when the user adjusts the start after picking an end.
+      if (_rangeTo != null && _rangeTo!.isBefore(_rangeFrom!)) {
+        _rangeTo = _rangeFrom;
+      }
     });
   }
 
-  Future<void> _pickDateRange() async {
+  /// Opens a compact modal so the admin can pick the range **end** date.
+  Future<void> _pickRangeTo() async {
     final now = DateTime.now();
-    final initial = _customRange ??
-        DateTimeRange(
-          start: DateTime(now.year, now.month, 1),
-          end: DateTime(now.year, now.month, now.day),
-        );
-    final picked = await showDateRangePicker(
+    final picked = await showDatePicker(
       context: context,
+      initialDate: _rangeTo ?? _rangeFrom ?? now,
       firstDate: DateTime(now.year - 5, 1, 1),
       lastDate: DateTime(now.year + 1, 12, 31),
-      initialDateRange: initial,
-      helpText: 'Select report date range',
+      helpText: 'Select range end date',
       builder: _salesReportDatePickerBuilder,
     );
     if (picked == null) return;
-    setState(() => _customRange = picked);
+    setState(() {
+      _rangeTo = DateTime(picked.year, picked.month, picked.day);
+      // Keep the window valid when the user adjusts the end before picking a start.
+      if (_rangeFrom != null && _rangeFrom!.isAfter(_rangeTo!)) {
+        _rangeFrom = _rangeTo;
+      }
+    });
+  }
+
+  void _clearDateRange() {
+    setState(() {
+      _rangeFrom = null;
+      _rangeTo = null;
+    });
   }
 
   DateTime get _periodStart {
-    if (_customRange != null) {
+    if (_hasCustomRange) {
       return DateTime(
-        _customRange!.start.year,
-        _customRange!.start.month,
-        _customRange!.start.day,
+        _rangeFrom!.year,
+        _rangeFrom!.month,
+        _rangeFrom!.day,
       );
     }
     switch (_trendGranularity) {
@@ -212,11 +224,11 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   }
 
   DateTime get _periodEnd {
-    if (_customRange != null) {
+    if (_hasCustomRange) {
       return DateTime(
-        _customRange!.end.year,
-        _customRange!.end.month,
-        _customRange!.end.day + 1,
+        _rangeTo!.year,
+        _rangeTo!.month,
+        _rangeTo!.day + 1,
       );
     }
     switch (_trendGranularity) {
@@ -230,8 +242,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   }
 
   String get _selectedPeriodLabel {
-    if (_customRange != null) {
-      return '${DateFormat.yMMMd().format(_customRange!.start)} – ${DateFormat.yMMMd().format(_customRange!.end)}';
+    if (_hasCustomRange) {
+      return '${DateFormat.yMMMd().format(_rangeFrom!)} – ${DateFormat.yMMMd().format(_rangeTo!)}';
     }
     switch (_trendGranularity) {
       case AdminTrendGranularity.weekly:
@@ -470,9 +482,9 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   String get _exportDateRangeLabel => _selectedPeriodLabel;
 
   String _exportFilenameStem() {
-    if (_customRange != null) {
-      final s = DateFormat('yyyyMMdd').format(_customRange!.start);
-      final e = DateFormat('yyyyMMdd').format(_customRange!.end);
+    if (_hasCustomRange) {
+      final s = DateFormat('yyyyMMdd').format(_rangeFrom!);
+      final e = DateFormat('yyyyMMdd').format(_rangeTo!);
       return 'sales_report_${s}_$e';
     }
     return 'sales_report_${_granularityLabel}_${_selectedDate.year}_'
@@ -892,9 +904,11 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
             granularity: _trendGranularity,
             onGranularityChanged: (g) => setState(() => _trendGranularity = g),
             selectedLabel: _selectedPeriodLabel,
-            onPickDate: _pickSelectedPeriod,
-            onPickRange: _pickDateRange,
-            onClearRange: _customRange == null ? null : () => setState(() => _customRange = null),
+            rangeFromLabel: _rangeFrom == null ? 'From' : _formatRangeButtonDate(_rangeFrom!),
+            rangeToLabel: _rangeTo == null ? 'To' : _formatRangeButtonDate(_rangeTo!),
+            onPickRangeFrom: _pickRangeFrom,
+            onPickRangeTo: _pickRangeTo,
+            onClearRange: (_rangeFrom == null && _rangeTo == null) ? null : _clearDateRange,
             onExport: _exporting ? null : _exportExcelXlsx,
             onPrint: _exporting ? null : _printPdfReport,
             points: _activeTrendPoints,
@@ -1021,8 +1035,10 @@ class _SalesTrendSection extends StatelessWidget {
     required this.granularity,
     required this.onGranularityChanged,
     required this.selectedLabel,
-    required this.onPickDate,
-    required this.onPickRange,
+    required this.rangeFromLabel,
+    required this.rangeToLabel,
+    required this.onPickRangeFrom,
+    required this.onPickRangeTo,
     this.onClearRange,
     required this.onExport,
     required this.onPrint,
@@ -1033,8 +1049,10 @@ class _SalesTrendSection extends StatelessWidget {
   final AdminTrendGranularity granularity;
   final ValueChanged<AdminTrendGranularity> onGranularityChanged;
   final String selectedLabel;
-  final VoidCallback onPickDate;
-  final VoidCallback onPickRange;
+  final String rangeFromLabel;
+  final String rangeToLabel;
+  final VoidCallback onPickRangeFrom;
+  final VoidCallback onPickRangeTo;
   final VoidCallback? onClearRange;
   final VoidCallback? onExport;
   final VoidCallback? onPrint;
@@ -1071,14 +1089,14 @@ class _SalesTrendSection extends StatelessWidget {
                     alignment: WrapAlignment.end,
                     children: [
                       OutlinedButton.icon(
-                        onPressed: onPickDate,
-                        icon: const Icon(Icons.calendar_month_outlined, size: 18),
-                        label: Text(selectedLabel, overflow: TextOverflow.ellipsis),
+                        onPressed: onPickRangeFrom,
+                        icon: const Icon(Icons.event_outlined, size: 18),
+                        label: Text(rangeFromLabel, overflow: TextOverflow.ellipsis),
                       ),
                       OutlinedButton.icon(
-                        onPressed: onPickRange,
-                        icon: const Icon(Icons.date_range_outlined, size: 18),
-                        label: const Text('Date range'),
+                        onPressed: onPickRangeTo,
+                        icon: const Icon(Icons.event_available_outlined, size: 18),
+                        label: Text(rangeToLabel, overflow: TextOverflow.ellipsis),
                       ),
                       if (onClearRange != null)
                         OutlinedButton.icon(
@@ -1089,12 +1107,12 @@ class _SalesTrendSection extends StatelessWidget {
                       OutlinedButton.icon(
                         onPressed: onExport,
                         icon: const Icon(Icons.table_view_outlined, size: 18),
-                        label: const Text('Export Excel'),
+                        label: const Text('Excel'),
                       ),
                       OutlinedButton.icon(
                         onPressed: onPrint,
                         icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-                        label: const Text('Print PDF'),
+                        label: const Text('PDF'),
                       ),
                     ],
                   ),
@@ -1117,7 +1135,7 @@ class _SalesTrendSection extends StatelessWidget {
                       ? 'Revenue Trend (Monthly)'
                       : 'Revenue Trend (Yearly)',
               subtitle: granularity == AdminTrendGranularity.weekly
-                  ? 'Net revenue Mon–Sun for the week you picked on the calendar.'
+                  ? 'Net revenue Mon–Sun for the current week (or your custom date range).'
                   : granularity == AdminTrendGranularity.monthly
                       ? 'Net revenue for weeks 1–4 inside the selected month only.'
                       : 'Net revenue per month for the selected calendar year.',

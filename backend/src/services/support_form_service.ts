@@ -6,7 +6,25 @@ import {
   getSupportFormDefinition,
   SUPPORT_FORM_CATALOG,
 } from '../support/support_form_catalog';
-import { createSupportMessage, getOrCreateConversationForUser } from './support_chat_service';
+import { createSupportMessage, getOrCreateConversationForUser, getConversationById, updateConversationTags } from './support_chat_service';
+
+/** Auto-applied internal tags when staff sends a structured form. */
+const FORM_TYPE_TAG_MAP: Record<string, string> = {
+  custom_quote: 'Made-to-order inquiry',
+  order_issue: 'Order status',
+  delivery_change: 'Delivery issue',
+  damage_claim: 'Damage report',
+};
+
+const applyAutoTagForSentForm = async (conversationId: string, formType: string): Promise<void> => {
+  const tag = FORM_TYPE_TAG_MAP[formType];
+  if (!tag) return;
+  const conv = await getConversationById(conversationId);
+  if (!conv) return;
+  const existing = [...(conv.tags ?? [])];
+  if (existing.includes(tag)) return;
+  await updateConversationTags(conversationId, [...existing, tag]);
+};
 
 let _schemaEnsured = false;
 
@@ -139,7 +157,12 @@ export const sendSupportFormLinkAsAdmin = async (input: {
   userId: string;
   formType: string;
   adminId: string;
-}): Promise<{ request: SupportFormRequest; messageId: string }> => {
+}): Promise<{
+  request: SupportFormRequest;
+  messageId: string;
+  message: Awaited<ReturnType<typeof createSupportMessage>>;
+  conversation?: Awaited<ReturnType<typeof getConversationById>>;
+}> => {
   const def = getSupportFormDefinition(input.formType);
   if (!def) throw new Error('Unknown form type');
 
@@ -157,10 +180,8 @@ export const sendSupportFormLinkAsAdmin = async (input: {
   if (!request) throw new Error('Failed to create form request');
 
   const link = buildSupportFormLink(def.type, id);
-  const body =
-    `Please complete our ${def.title} form so we can help you faster.\n\n` +
-    `Tap to open: ${link}\n\n` +
-    `(You can also open it from Help Center → Support Forms.)`;
+  // Compact marker keeps chat readable; UI renders a form card instead of boilerplate.
+  const body = `[form-card]\n${link}`;
 
   const message = await createSupportMessage({
     conversationId: input.conversationId,
@@ -169,7 +190,10 @@ export const sendSupportFormLinkAsAdmin = async (input: {
     body,
   });
 
-  return { request, messageId: message.id };
+  await applyAutoTagForSentForm(input.conversationId, def.type);
+  const conversation = await getConversationById(input.conversationId);
+
+  return { request, messageId: message.id, message, conversation: conversation ?? undefined };
 };
 
 export const submitSupportFormRequest = async (input: {

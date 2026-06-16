@@ -4,7 +4,7 @@ import { generateId } from '../utils/id_generator';
 
 let _schemaEnsured = false;
 
-const ensureSchema = async (): Promise<void> => {
+export const ensureSchema = async (): Promise<void> => {
   if (_schemaEnsured) return;
   const pool = getPool();
   await pool.query(`

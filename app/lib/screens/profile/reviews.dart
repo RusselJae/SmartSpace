@@ -3,15 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../../config/api_config.dart';
 import '../../models/product.dart';
 import '../../models/review.dart';
 import '../../models/order_record.dart';
 import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
-import '../../widgets/toast.dart';
 import '../../utils/model_path_helper.dart';
+import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
 
 class ReviewsScreen extends StatefulWidget {
@@ -37,6 +39,12 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   String _starsText(int rating) {
     final safe = rating.clamp(0, 5);
     return List.generate(5, (i) => i < safe ? '★' : '☆').join();
+  }
+
+  String _reviewMediaUrl(String url) {
+    if (url.startsWith('http')) return url;
+    final base = ApiConfig.baseUrl.replaceAll(RegExp(r'/api$'), '');
+    return '$base${url.startsWith('/') ? '' : '/'}$url';
   }
 
   @override
@@ -236,6 +244,43 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  if (review.media.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 56,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: review.media.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 6),
+                        itemBuilder: (context, index) {
+                          final item = review.media[index];
+                          if (item.isVideo) {
+                            return Container(
+                              width: 56,
+                              decoration: BoxDecoration(
+                                color: Colors.black87,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                CupertinoIcons.play_circle,
+                                color: Colors.white,
+                                size: 24,
+                              ),
+                            );
+                          }
+                          return ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.network(
+                              _reviewMediaUrl(item.url),
+                              width: 56,
+                              height: 56,
+                              fit: BoxFit.cover,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -466,7 +511,11 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
   final FocusNode _focusNode = FocusNode();
   static const int _minReviewLength = 10;
   static const int _maxReviewLength = 500;
+  static const int _maxMediaCount = 6;
   static const Color _composerBrown = Color(0xFF8D6E63);
+  final ImagePicker _mediaPicker = ImagePicker();
+  final List<ReviewMediaItem> _media = [];
+  bool _uploadingMedia = false;
 
   @override
   void initState() {
@@ -547,6 +596,7 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
         userName: widget.user.fullName,
         rating: _rating,
         content: _controller.text.trim(),
+        media: _media,
       );
       if (!mounted) return;
       
@@ -635,6 +685,8 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
               const SizedBox(height: 32),
               // Review text area
               _buildReviewTextArea(),
+              const SizedBox(height: 20),
+              _buildMediaAttachmentsSection(),
               if (_error != null) ...[
                 const SizedBox(height: 16),
                 _buildErrorBanner(),
@@ -1046,6 +1098,98 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
           ),
         );
       },
+    );
+  }
+
+  Future<void> _pickReviewPhoto() async {
+    if (_media.length >= _maxMediaCount || _uploadingMedia) return;
+    final file = await _mediaPicker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    if (file == null) return;
+    await _uploadPickedFile(file.path, file.name);
+  }
+
+  Future<void> _pickReviewVideo() async {
+    if (_media.length >= _maxMediaCount || _uploadingMedia) return;
+    final file = await _mediaPicker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 45),
+    );
+    if (file == null) return;
+    await _uploadPickedFile(file.path, file.name);
+  }
+
+  Future<void> _uploadPickedFile(String path, String name) async {
+    setState(() => _uploadingMedia = true);
+    try {
+      final bytes = await XFile(path).readAsBytes();
+      final uploaded = await widget.db.uploadReviewMedia(bytes: bytes, fileName: name);
+      if (!mounted) return;
+      setState(() => _media.add(uploaded));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Failed to upload attachment: $e');
+    } finally {
+      if (mounted) setState(() => _uploadingMedia = false);
+    }
+  }
+
+  Widget _buildMediaAttachmentsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Photos & videos (optional)',
+          style: GoogleFonts.poppins(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.black,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              color: _composerBrown.withValues(alpha: 0.12),
+              onPressed: _uploadingMedia || _submitting ? null : _pickReviewPhoto,
+              child: Text(
+                'Add photo',
+                style: GoogleFonts.poppins(color: _composerBrown, fontSize: 13),
+              ),
+            ),
+            const SizedBox(width: 8),
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              color: _composerBrown.withValues(alpha: 0.12),
+              onPressed: _uploadingMedia || _submitting ? null : _pickReviewVideo,
+              child: Text(
+                'Add video',
+                style: GoogleFonts.poppins(color: _composerBrown, fontSize: 13),
+              ),
+            ),
+            if (_uploadingMedia) ...[
+              const SizedBox(width: 12),
+              const CupertinoActivityIndicator(),
+            ],
+          ],
+        ),
+        if (_media.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _media.asMap().entries.map((entry) {
+              final i = entry.key;
+              final item = entry.value;
+              return Chip(
+                label: Text(item.isVideo ? 'Video ${i + 1}' : 'Photo ${i + 1}'),
+                onDeleted: _submitting ? null : () => setState(() => _media.removeAt(i)),
+              );
+            }).toList(),
+          ),
+        ],
+      ],
     );
   }
 

@@ -3,6 +3,7 @@ import { getPool } from '../config/database';
 import { generateId } from '../utils/id_generator';
 import { EmailService } from './email_service';
 import { createNotificationForUser } from './user_notification_service';
+import { getSupportFormDefinition, parseSupportFormLink } from '../support/support_form_catalog';
 
 /** Result of mapping the app session user to a row in `users` (required for FK constraints). */
 export type SupportUserResolveResult =
@@ -153,6 +154,9 @@ const ensureSupportChatSchema = async (): Promise<void> => {
       `ALTER TABLE support_conversations ADD COLUMN status ENUM('open','closed') NOT NULL DEFAULT 'open'`,
     );
   }
+  if (!(await columnExists('support_conversations', 'tags_json'))) {
+    await pool.query(`ALTER TABLE support_conversations ADD COLUMN tags_json JSON NULL`);
+  }
 
   // Attachment columns for support messages.
   if (!(await columnExists('support_messages', 'attachment_url'))) {
@@ -184,6 +188,7 @@ type SupportConversationRow = RowDataPacket & {
   readonly last_message_at: Date | null;
   readonly last_message_preview: string | null;
   readonly last_message_sender_type: SupportConversationLastSenderType | null;
+  readonly tags_json: string | readonly string[] | null;
 };
 
 export type SupportConversation = {
@@ -195,6 +200,19 @@ export type SupportConversation = {
   readonly lastMessageAt?: Date;
   readonly lastMessagePreview?: string;
   readonly lastMessageSenderType?: SupportConversationLastSenderType;
+  readonly tags?: readonly string[];
+};
+
+const parseTagsJson = (raw: SupportConversationRow['tags_json']): readonly string[] => {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw.map((t) => String(t)).filter((t) => t.trim().length > 0);
+  try {
+    const parsed = JSON.parse(String(raw)) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((t) => String(t)).filter((t) => t.trim().length > 0);
+  } catch {
+    return [];
+  }
 };
 
 type SupportMessageRow = RowDataPacket & {
@@ -234,6 +252,7 @@ const mapConversation = (row: SupportConversationRow): SupportConversation => ({
   lastMessageAt: row.last_message_at ?? undefined,
   lastMessagePreview: row.last_message_preview ?? undefined,
   lastMessageSenderType: row.last_message_sender_type ?? undefined,
+  tags: parseTagsJson(row.tags_json),
 });
 
 const mapMessage = (row: SupportMessageRow): SupportMessage => ({
@@ -365,7 +384,16 @@ export const createSupportMessage = async (input: CreateSupportMessageInput): Pr
     throw new Error('Message body is required (or provide an attachment)');
   }
 
-  const preview = trimmedBody || input.attachmentFilename || '';
+  const preview = (() => {
+    if (trimmedBody.startsWith('[form-card]')) {
+      const link = parseSupportFormLink(trimmedBody);
+      if (link) {
+        const def = getSupportFormDefinition(link.formType);
+        return def ? `Form: ${def.title}` : 'Support form sent';
+      }
+    }
+    return trimmedBody || input.attachmentFilename || '';
+  })();
 
   await pool.query(
     `
@@ -469,3 +497,24 @@ export const setConversationStatus = async (
   return conv;
 };
 
+export const updateConversationTags = async (
+  conversationId: string,
+  tags: readonly string[],
+): Promise<SupportConversation> => {
+  await ensureSupportChatSchema();
+  const pool = getPool();
+  const cleaned = tags.map((t) => t.trim()).filter((t) => t.length > 0);
+  await pool.query(
+    `
+    UPDATE support_conversations
+    SET tags_json = ?, updated_at = NOW()
+    WHERE id = ?
+    `,
+    [JSON.stringify(cleaned), conversationId],
+  );
+  const conv = await getConversationById(conversationId);
+  if (!conv) {
+    throw new Error('Conversation not found');
+  }
+  return conv;
+};

@@ -7,6 +7,7 @@ class SupportConversation {
   final DateTime? lastMessageAt;
   final String? lastMessagePreview;
   final String? lastMessageSenderType; // 'user' | 'admin'
+  final List<String> tags;
 
   SupportConversation({
     required this.id,
@@ -17,9 +18,15 @@ class SupportConversation {
     this.lastMessageAt,
     this.lastMessagePreview,
     this.lastMessageSenderType,
+    this.tags = const [],
   });
 
   factory SupportConversation.fromJson(Map<String, dynamic> json) {
+    final tagsRaw = json['tags'];
+    final tags = tagsRaw is List
+        ? tagsRaw.map((t) => t.toString()).where((t) => t.trim().isNotEmpty).toList()
+        : <String>[];
+
     return SupportConversation(
       id: json['id'] as String,
       userId: json['userId'] as String,
@@ -31,6 +38,31 @@ class SupportConversation {
           : null,
       lastMessagePreview: json['lastMessagePreview'] as String?,
       lastMessageSenderType: json['lastMessageSenderType'] as String?,
+      tags: tags,
+    );
+  }
+
+  SupportConversation copyWith({
+    String? id,
+    String? userId,
+    String? status,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    DateTime? lastMessageAt,
+    String? lastMessagePreview,
+    String? lastMessageSenderType,
+    List<String>? tags,
+  }) {
+    return SupportConversation(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+      lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
+      lastMessageSenderType: lastMessageSenderType ?? this.lastMessageSenderType,
+      tags: tags ?? this.tags,
     );
   }
 }

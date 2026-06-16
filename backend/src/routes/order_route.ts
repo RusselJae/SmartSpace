@@ -283,12 +283,19 @@ orderRouter.post(
       userId: req.body.userId,
       userName: req.body.userName,
       productIds: req.body.productIds ?? [],
+      orderLines: req.body.orderLines,
       totalAmount: Number(req.body.totalAmount),
       shippingAddress: req.body.shippingAddress ?? {},
       status: req.body.status,
     };
-    if (!input.userId || !input.userName || !input.productIds || input.productIds.length === 0) {
-      return res.status(400).json({ success: false, message: 'userId, userName, and productIds are required' });
+    const hasLines =
+      (input.orderLines != null && input.orderLines.length > 0) ||
+      (input.productIds != null && input.productIds.length > 0);
+    if (!input.userId || !input.userName || !hasLines) {
+      return res.status(400).json({
+        success: false,
+        message: 'userId, userName, and productIds or orderLines are required',
+      });
     }
     const user = await findUserById(input.userId);
     const terms = await getLegalContent('terms');

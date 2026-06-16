@@ -15,7 +15,10 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.Choreographer
 import android.view.Gravity
+import android.widget.CompoundButton
+import android.widget.Switch
 import android.view.MotionEvent
 import android.view.PixelCopy
 import android.text.TextUtils
@@ -99,6 +102,13 @@ class ArEditorActivity : ComponentActivity() {
         private const val PLANE_HIDE_EVERY_N_FRAMES = 30
         /** Let ARCore depth stabilize before occlusion (avoids blank meshes on cold start). */
         private const val DEPTH_OCCLUSION_WARMUP_MS = 3_000L
+        private const val PREF_DEPTH_OCCLUSION = "pref_depth_occlusion_enabled"
+        private const val PREF_GROUND_SHADOWS = "pref_ground_shadows_enabled"
+        /** Target ~10 fps; one frame at a time after the GL draw completes. */
+        private const val VIDEO_FRAME_INTERVAL_MS = 100L
+        /** Auto-stop hold-to-record clips to keep MP4 size reasonable. */
+        private const val MAX_VIDEO_DURATION_MS = 30_000L
+        private const val MAX_VIDEO_DURATION_US = MAX_VIDEO_DURATION_MS * 1_000L
     }
 
     // Values passed in from Flutter via the starting Intent. We continue to
@@ -191,22 +201,24 @@ class ArEditorActivity : ComponentActivity() {
     private var captureProductNameLabel: TextView? = null
     private var placeModelButton: TextView? = null
     private var productThumbnailButton: ImageButton? = null
-    private var photoModeButton: TextView? = null
-    private var videoModeButton: TextView? = null
-    private var captureActionButton: ImageButton? = null
+    private var captureButton: ArCaptureButtonView? = null
     private var unlockButton: ImageButton? = null
     private var overlaysVisible: Boolean = true
     private var overlaysEyeButton: ImageButton? = null
+    private var arSettingsButton: ImageButton? = null
+    /** User prefs — toggled from AR settings (gear icon). */
+    private var userDepthOcclusionEnabled: Boolean = true
+    private var userGroundShadowsEnabled: Boolean = true
     private var tipsHintButton: ImageButton? = null
     /** True after the user taps Place Model — shows capture controls instead. */
     private var isCaptureMode: Boolean = false
-    /** Photo vs video capture while [isCaptureMode] is active. */
-    private enum class CaptureKind { PHOTO, VIDEO }
-    private var captureKind: CaptureKind = CaptureKind.PHOTO
     private var isVideoRecording: Boolean = false
-    private val videoFrameBitmaps: MutableList<Bitmap> = mutableListOf()
+    private val videoFrames: MutableList<ArMp4Recorder.TimedFrame> = mutableListOf()
     private var videoRecordHandler: Handler? = null
-    private var videoRecordRunnable: Runnable? = null
+    private var videoCaptureInFlight: Boolean = false
+    private var videoRecordingStartUs: Long = 0L
+    /** Depth occlusion was on before record — restore after stop if user pref allows. */
+    private var depthOcclusionBeforeVideo: Boolean = false
     /** Locks drag / pinch / rotate and sliders once the user confirms placement. */
     private var isModelTransformLocked: Boolean = false
     /** Custom floor drag: re-anchor to hit-test, not local model offset. */
@@ -237,6 +249,8 @@ class ArEditorActivity : ComponentActivity() {
         // real status / nav / gesture insets and can offset the chrome correctly.
         WindowCompat.setDecorFitsSystemWindows(window, false)
         prefs = getSharedPreferences("ar_editor_prefs", MODE_PRIVATE)
+        userDepthOcclusionEnabled = prefs.getBoolean(PREF_DEPTH_OCCLUSION, true)
+        userGroundShadowsEnabled = prefs.getBoolean(PREF_GROUND_SHADOWS, true)
 
         // --------------------------------------------------------------------
         // 1. Read parameters from the launching Intent.
@@ -390,6 +404,7 @@ class ArEditorActivity : ComponentActivity() {
         attachArTipsBanner(rootLayout)
         // Top-left hint icon to re-open usage instructions on demand.
         attachTipsHintButton(rootLayout)
+        attachArSettingsButton(rootLayout)
         // One-button toggle: hide/show BOTH overlays together.
         attachOverlaysEyeToggleButton(rootLayout)
 
@@ -446,8 +461,28 @@ class ArEditorActivity : ComponentActivity() {
         }
 
         enableArShadowRendering()
-        // Depth occlusion is enabled after warmup in [maybeEnableDepthOcclusion] when supported.
+        applyDepthOcclusionFromUserPref(force = false)
         hidePlaneVisualizationKeepShadows()
+    }
+
+    private fun applyDepthOcclusionFromUserPref(force: Boolean) {
+        try {
+            if (!userDepthOcclusionEnabled || sessionDepthMode == Config.DepthMode.DISABLED) {
+                arSceneView.cameraStream?.isDepthOcclusionEnabled = false
+                depthOcclusionActive = false
+                return
+            }
+            if (isVideoRecording) {
+                arSceneView.cameraStream?.isDepthOcclusionEnabled = false
+                return
+            }
+            if (depthOcclusionActive || force) {
+                arSceneView.cameraStream?.isDepthOcclusionEnabled = true
+                depthOcclusionActive = true
+            }
+        } catch (t: Throwable) {
+            Log.w("ArEditorActivity", "depth occlusion apply failed", t)
+        }
     }
 
     /**
@@ -456,6 +491,19 @@ class ArEditorActivity : ComponentActivity() {
      * soft shadows onto the detected floor.
      */
     private fun enableArShadowRendering() {
+        if (!userGroundShadowsEnabled) {
+            try {
+                arSceneView.view.setShadowingEnabled(false)
+                arSceneView.planeRenderer.isShadowReceiver = false
+            } catch (_: Throwable) {
+            }
+            modelNode?.let { node ->
+                node.isShadowCaster = false
+                node.setScreenSpaceContactShadows(false)
+            }
+            return
+        }
+
         try {
             arSceneView.view.setShadowingEnabled(true)
         } catch (t: Throwable) {
@@ -503,6 +551,8 @@ class ArEditorActivity : ComponentActivity() {
      */
     private fun maybeEnableDepthOcclusion(frame: Frame) {
         if (depthOcclusionActive) return
+        if (!userDepthOcclusionEnabled) return
+        if (isVideoRecording) return
         if (sessionDepthMode == Config.DepthMode.DISABLED) return
         if (frame.camera.trackingState != TrackingState.TRACKING) return
         if (arSessionReadyAtMs <= 0L) return
@@ -902,45 +952,33 @@ class ArEditorActivity : ComponentActivity() {
         captureProductNameLabel = createProductNameLabel()
         captureBlock.addView(captureProductNameLabel)
 
-        val modeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+        val hintLabel = TextView(this).apply {
+            text = "Tap photo · hold video (max 30 s)"
+            setTextColor(0x88FFFFFF.toInt())
+            textSize = 13f
+            gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, 0, 0, dpToPx(10))
         }
-        val photoBtn = TextView(this).apply {
-            text = "Photo"
-            textSize = 15f
-            setTextColor(0xFFFFFFFF.toInt())
-            setPadding(dpToPx(24), dpToPx(8), dpToPx(24), dpToPx(8))
-            setOnClickListener { selectCaptureKind(CaptureKind.PHOTO) }
-        }
-        photoModeButton = photoBtn
-        val videoBtn = TextView(this).apply {
-            text = "Video"
-            textSize = 15f
-            setTextColor(0x88FFFFFF.toInt())
-            setPadding(dpToPx(24), dpToPx(8), dpToPx(24), dpToPx(8))
-            setOnClickListener { selectCaptureKind(CaptureKind.VIDEO) }
-        }
-        videoModeButton = videoBtn
-        modeRow.addView(photoBtn)
-        modeRow.addView(videoBtn)
-        captureBlock.addView(modeRow)
+        captureBlock.addView(hintLabel)
 
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val actionRow = FrameLayout(this).apply {
+            setPadding(0, dpToPx(4), 0, 0)
         }
-        val captureBtnWrap = createIconPillButton(
-            R.drawable.ic_ar_camera,
-            "Capture photo"
-        ) { onCaptureActionTapped() }
-        captureActionButton = captureBtnWrap.getChildAt(0) as ImageButton
+        val shutter = ArCaptureButtonView(this).apply {
+            setListener(object : ArCaptureButtonView.Listener {
+                override fun onPhotoTap() = captureArScreenshot()
+                override fun onVideoRecordStart() = startVideoRecording()
+                override fun onVideoRecordStop() = stopVideoRecording()
+            })
+        }
+        captureButton = shutter
         actionRow.addView(
-            captureBtnWrap,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dpToPx(8)
-            }
+            shutter,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_HORIZONTAL,
+            ),
         )
         val unlockBtnWrap = createIconPillButton(
             R.drawable.ic_arrow_back,
@@ -949,12 +987,14 @@ class ArEditorActivity : ComponentActivity() {
         unlockButton = unlockBtnWrap.getChildAt(0) as ImageButton
         actionRow.addView(
             unlockBtnWrap,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.CENTER_VERTICAL,
+            ),
         )
         captureBlock.addView(actionRow)
         rootPanel.addView(captureBlock)
-
-        selectCaptureKind(CaptureKind.PHOTO)
         updateProductNameLabel()
 
         val layoutParams = FrameLayout.LayoutParams(
@@ -1049,35 +1089,6 @@ class ArEditorActivity : ComponentActivity() {
         captureControlsContainer?.visibility = View.GONE
         placementControlsContainer?.visibility = View.VISIBLE
         Toast.makeText(this, "You can move the model again", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun selectCaptureKind(kind: CaptureKind) {
-        captureKind = kind
-        val selected = 0xFFFFFFFF.toInt()
-        val muted = 0x88FFFFFF.toInt()
-        photoModeButton?.setTextColor(if (kind == CaptureKind.PHOTO) selected else muted)
-        videoModeButton?.setTextColor(if (kind == CaptureKind.VIDEO) selected else muted)
-        updateCaptureActionButtonUi()
-    }
-
-    private fun updateCaptureActionButtonUi() {
-        val btn = captureActionButton ?: return
-        btn.setImageResource(R.drawable.ic_ar_camera)
-        btn.contentDescription = when {
-            captureKind == CaptureKind.VIDEO && isVideoRecording -> "Stop recording"
-            captureKind == CaptureKind.VIDEO -> "Start recording"
-            else -> "Capture photo"
-        }
-        btn.alpha = if (captureKind == CaptureKind.VIDEO && isVideoRecording) 0.72f else 1f
-    }
-
-    private fun onCaptureActionTapped() {
-        when (captureKind) {
-            CaptureKind.PHOTO -> captureArScreenshot()
-            CaptureKind.VIDEO -> {
-                if (isVideoRecording) stopVideoRecording() else startVideoRecording()
-            }
-        }
     }
 
     private fun updateProductThumbnail() {
@@ -1273,37 +1284,87 @@ class ArEditorActivity : ComponentActivity() {
     private fun startVideoRecording() {
         if (isVideoRecording) return
         isVideoRecording = true
-        videoFrameBitmaps.clear()
-        updateCaptureActionButtonUi()
-        Toast.makeText(this, "Recording…", Toast.LENGTH_SHORT).show()
+        videoFrames.clear()
+        videoCaptureInFlight = false
+        videoRecordingStartUs = SystemClock.elapsedRealtimeNanos() / 1_000L
+        depthOcclusionBeforeVideo = depthOcclusionActive
+        // Depth + overlapping PixelCopy can make the model flicker or vanish while recording.
+        try {
+            arSceneView.cameraStream?.isDepthOcclusionEnabled = false
+        } catch (_: Throwable) {
+        }
+        captureButton?.setRecording(true, 0f)
         videoRecordHandler = Handler(Looper.getMainLooper())
-        videoRecordRunnable = object : Runnable {
-            override fun run() {
-                if (!isVideoRecording) return
-                captureArFrameBitmap { bitmap ->
-                    if (bitmap != null) videoFrameBitmaps.add(bitmap)
+        scheduleNextVideoFrameCapture()
+    }
+
+    private fun scheduleNextVideoFrameCapture() {
+        if (!isVideoRecording) return
+        if (videoCaptureInFlight) {
+            videoRecordHandler?.postDelayed({ scheduleNextVideoFrameCapture() }, VIDEO_FRAME_INTERVAL_MS)
+            return
+        }
+        videoCaptureInFlight = true
+        Choreographer.getInstance().postFrameCallback {
+            if (!isVideoRecording) {
+                videoCaptureInFlight = false
+                return@postFrameCallback
+            }
+            captureArFrameBitmap { bitmap ->
+                videoCaptureInFlight = false
+                if (!isVideoRecording) {
+                    bitmap?.recycle()
+                    return@captureArFrameBitmap
                 }
-                videoRecordHandler?.postDelayed(this, 125L)
+                if (bitmap != null) {
+                    val ptsUs = SystemClock.elapsedRealtimeNanos() / 1_000L - videoRecordingStartUs
+                    val scaled = ArCaptureScaler.scaleToMax720p(bitmap)
+                    if (scaled !== bitmap) bitmap.recycle()
+                    synchronized(videoFrames) {
+                        videoFrames.add(ArMp4Recorder.TimedFrame(scaled, ptsUs))
+                    }
+                    val progress = (ptsUs.toFloat() / MAX_VIDEO_DURATION_US).coerceIn(0f, 1f)
+                    captureButton?.setRecording(true, progress)
+                    if (ptsUs >= MAX_VIDEO_DURATION_US) {
+                        Toast.makeText(
+                            this@ArEditorActivity,
+                            "30 second limit reached",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        stopVideoRecording()
+                        return@captureArFrameBitmap
+                    }
+                }
+                if (isVideoRecording) {
+                    videoRecordHandler?.postDelayed(
+                        { scheduleNextVideoFrameCapture() },
+                        VIDEO_FRAME_INTERVAL_MS,
+                    )
+                }
             }
         }
-        videoRecordHandler?.post(videoRecordRunnable!!)
     }
 
     private fun stopVideoRecording() {
         if (!isVideoRecording) return
         isVideoRecording = false
-        videoRecordRunnable?.let { videoRecordHandler?.removeCallbacks(it) }
-        videoRecordRunnable = null
-        updateCaptureActionButtonUi()
-        val frames = videoFrameBitmaps.toList()
-        videoFrameBitmaps.clear()
+        videoCaptureInFlight = false
+        captureButton?.setRecording(false)
+        val frames = synchronized(videoFrames) { videoFrames.toList() }
+        videoFrames.clear()
+        if (depthOcclusionBeforeVideo && userDepthOcclusionEnabled) {
+            applyDepthOcclusionFromUserPref(force = true)
+        } else if (!userDepthOcclusionEnabled) {
+            applyDepthOcclusionFromUserPref(force = false)
+        }
         if (frames.isEmpty()) {
             Toast.makeText(this, "No frames captured", Toast.LENGTH_SHORT).show()
             return
         }
+        Toast.makeText(this, "Saving video…", Toast.LENGTH_SHORT).show()
         Thread {
-            val uri = ArMp4Recorder.saveFramesAsMp4(this, frames, fps = 8)
-            frames.forEach { it.recycle() }
+            val uri = ArMp4Recorder.saveFramesAsMp4(this, frames)
+            frames.forEach { it.bitmap.recycle() }
             runOnUiThread {
                 if (uri != null) {
                     Toast.makeText(this, "Video saved to gallery", Toast.LENGTH_SHORT).show()
@@ -1369,6 +1430,13 @@ class ArEditorActivity : ComponentActivity() {
             overlaysEyeButton?.let { v ->
                 (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
                     lp.topMargin = insetTop + dp(8)
+                    lp.marginEnd = insetEnd + navRailExtra + dp(16)
+                    v.layoutParams = lp
+                }
+            }
+            arSettingsButton?.let { v ->
+                (v.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                    lp.topMargin = insetTop + dp(52)
                     lp.marginEnd = insetEnd + navRailExtra + dp(16)
                     v.layoutParams = lp
                 }
@@ -1673,7 +1741,7 @@ class ArEditorActivity : ComponentActivity() {
             .setMessage(
                 "1) Point at the floor — the model appears automatically.\n\n" +
                     "2) Use the sliders to scale and rotate, or drag to reposition.\n\n" +
-                    "3) Tap Place Model when ready, then capture a photo or video.\n\n" +
+                    "3) Tap Place Model when ready, then tap for a photo or hold for video (max 30 s).\n\n" +
                     "4) Tap Unlock to move the model again."
             )
             .setPositiveButton("Got it", null)
@@ -1726,6 +1794,118 @@ class ArEditorActivity : ComponentActivity() {
         root.addView(toggleButton, layoutParams)
     }
 
+    /** Gear icon — depth occlusion + floor shadow toggles (persisted). */
+    private fun attachArSettingsButton(root: FrameLayout) {
+        val dpToPx = { dp: Int -> (dp * resources.displayMetrics.density).roundToInt() }
+        val button = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_ar_settings)
+            setBackgroundColor(0x00000000)
+            setPadding(dpToPx(12), dpToPx(12), dpToPx(12), dpToPx(12))
+            contentDescription = "AR settings"
+            setOnClickListener { showArSettingsDialog() }
+        }
+        arSettingsButton = button
+        val layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            marginEnd = dpToPx(16)
+            topMargin = dpToPx(64)
+        }
+        root.addView(button, layoutParams)
+    }
+
+    private fun showArSettingsDialog() {
+        val dpToPx = { dp: Int -> (dp * resources.displayMetrics.density).roundToInt() }
+        val depthSupported = sessionDepthMode != Config.DepthMode.DISABLED
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(20), dpToPx(12), dpToPx(20), dpToPx(4))
+        }
+
+        fun addSwitchRow(label: String, initial: Boolean, enabled: Boolean, onChanged: (Boolean) -> Unit): Switch {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dpToPx(8), 0, dpToPx(8))
+            }
+            val tv = TextView(this).apply {
+                text = label
+                setTextColor(0xFFEEEEEE.toInt())
+                textSize = 15f
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            val sw = Switch(this).apply {
+                isChecked = initial
+                isEnabled = enabled
+                setOnCheckedChangeListener { _: CompoundButton, checked: Boolean ->
+                    onChanged(checked)
+                }
+            }
+            row.addView(tv)
+            row.addView(sw)
+            panel.addView(row)
+            return sw
+        }
+
+        if (!depthSupported) {
+            panel.addView(
+                TextView(this).apply {
+                    text = "Depth API is not available on this device."
+                    setTextColor(0xFFAAAAAA.toInt())
+                    textSize = 13f
+                    setPadding(0, 0, 0, dpToPx(8))
+                }
+            )
+        }
+
+        addSwitchRow(
+            label = "Depth occlusion",
+            initial = userDepthOcclusionEnabled && depthSupported,
+            enabled = depthSupported,
+        ) { checked ->
+            userDepthOcclusionEnabled = checked
+            prefs.edit().putBoolean(PREF_DEPTH_OCCLUSION, checked).apply()
+            if (checked && depthSupported) {
+                applyDepthOcclusionFromUserPref(force = true)
+            } else {
+                depthOcclusionActive = false
+                applyDepthOcclusionFromUserPref(force = false)
+            }
+        }
+
+        addSwitchRow(
+            label = "Floor shadows",
+            initial = userGroundShadowsEnabled,
+            enabled = true,
+        ) { checked ->
+            userGroundShadowsEnabled = checked
+            prefs.edit().putBoolean(PREF_GROUND_SHADOWS, checked).apply()
+            enableArShadowRendering()
+        }
+
+        panel.addView(
+            TextView(this).apply {
+                text = if (depthSupported) {
+                    "Turn depth occlusion off if the model disappears. " +
+                        "Floor shadows need detected planes."
+                } else {
+                    "Floor shadows need detected planes."
+                }
+                setTextColor(0xFF888888.toInt())
+                textSize = 12f
+                setPadding(0, dpToPx(8), 0, 0)
+            }
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("AR settings")
+            .setView(panel)
+            .setPositiveButton("Done", null)
+            .show()
+    }
+
     private fun captureArScreenshot() {
         // Capture ONLY the AR camera surface (no overlay UI, no status bar text).
         val sourceView = arSceneView
@@ -1747,6 +1927,7 @@ class ArEditorActivity : ComponentActivity() {
 
         hide(bottomControlsPanel)
         hide(overlaysEyeButton)
+        hide(arSettingsButton)
         hide(arTipsBanner)
         hide(placementReticle)
         hide(tipsHintButton)

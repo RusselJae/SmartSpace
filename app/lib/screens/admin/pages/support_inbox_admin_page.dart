@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,15 +7,22 @@ import 'package:intl/intl.dart';
 
 import '../../../models/support_conversation.dart';
 import '../../../models/support_message.dart';
+import '../../../models/support_form_request.dart';
+import '../../../models/order_record.dart';
 import '../../../services/admin_auth_service.dart';
 import '../../../services/admin_support_inbox_navigation_service.dart';
 import '../../../utils/file_mime_utils.dart';
 import '../../../services/admin_notifications_service.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
-import '../support/support_quick_replies.dart';
-import '../../../support/support_form_catalog.dart';
+import '../support/support_form_helpers.dart';
+import '../support/support_form_submission_dialog.dart';
+import '../support/support_quick_actions_sheet.dart';
+import '../support/support_conversation_tags.dart';
+import '../widgets/admin_anchored_popover.dart';
+import '../../../support/support_form_link.dart';
 import '../../../widgets/support_message_body.dart';
+import '../../../widgets/support_form_card.dart';
 
 class SupportInboxAdminPage extends StatefulWidget {
   const SupportInboxAdminPage({super.key});
@@ -38,6 +47,13 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
   SupportConversation? _selected;
   List<SupportMessage> _messages = [];
   bool _loadingMessages = false;
+  Map<String, SupportFormRequest> _formRequestsById = {};
+  OrderRecord? _latestOrder;
+  Map<String, String> _productNames = {};
+  bool _loadingOrderContext = false;
+  bool _savingTags = false;
+  List<String> _activeTags = [];
+  Timer? _formPollTimer;
 
   SharedPreferences? _prefs;
   String? _adminId;
@@ -65,8 +81,36 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
 
   @override
   void dispose() {
+    _formPollTimer?.cancel();
     _conversationSearchController.dispose();
     super.dispose();
+  }
+
+  void _stopFormPolling() {
+    _formPollTimer?.cancel();
+    _formPollTimer = null;
+  }
+
+  void _startFormPolling() {
+    _stopFormPolling();
+    _formPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _refreshFormRequestsSilent();
+    });
+  }
+
+  /// Polls form request status so cards flip Pending → Completed without manual refresh.
+  Future<void> _refreshFormRequestsSilent() async {
+    final conv = _selected;
+    if (conv == null || _loadingMessages) return;
+    try {
+      final forms = await _db.listSupportFormRequestsForConversation(conversationId: conv.id);
+      if (!mounted) return;
+      setState(() {
+        _formRequestsById = {for (final f in forms) f.id: f};
+      });
+    } catch (_) {
+      // Silent — polling should not interrupt the admin.
+    }
   }
 
   Future<void> _loadConversations() async {
@@ -169,24 +213,111 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
     setState(() {
       _selected = conv;
       _loadingMessages = true;
+      _loadingOrderContext = true;
+      _activeTags = List<String>.from(conv.tags);
     });
     try {
-      final msgs = await _db.getSupportMessagesForAdmin(conversationId: conv.id, limit: 100);
+      final msgsFuture = _db.getSupportMessagesForAdmin(conversationId: conv.id, limit: 100);
+      final formsFuture = _db.listSupportFormRequestsForConversation(conversationId: conv.id);
+      final ordersFuture = _db.getAllOrders(forUserId: conv.userId);
+      final productsFuture = _db.getAllProducts();
+
+      final msgs = await msgsFuture;
+      final forms = await formsFuture;
+      final orders = await ordersFuture;
+      final products = await productsFuture;
+
+      orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final productNameMap = <String, String>{
+        for (final p in products) p.id: p.name,
+      };
+      final formMap = <String, SupportFormRequest>{
+        for (final f in forms) f.id: f,
+      };
+
       if (!mounted) return;
       setState(() {
         _messages = msgs;
+        _formRequestsById = formMap;
+        _latestOrder = orders.isNotEmpty ? orders.first : null;
+        _productNames = productNameMap;
         _loadingMessages = false;
+        _loadingOrderContext = false;
       });
+      _startFormPolling();
       // Mark as read for notification/badge purposes as soon as the admin opens it.
       await _notifications.markConversationRead(conv.id);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loadingMessages = false;
+        _loadingOrderContext = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load messages: $e')),
       );
+    }
+  }
+
+  Future<void> _saveConversationTags(List<String> tags) async {
+    final conv = _selected;
+    if (conv == null || _savingTags) return;
+    setState(() => _savingTags = true);
+    try {
+      final updated = await _db.updateSupportConversationTags(
+        conversationId: conv.id,
+        tags: tags,
+      );
+      if (!mounted) return;
+      setState(() {
+        _activeTags = List<String>.from(updated.tags);
+        _selected = updated;
+        final idx = _conversations.indexWhere((c) => c.id == updated.id);
+        if (idx >= 0) {
+          _conversations[idx] = updated;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save tags: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingTags = false);
+    }
+  }
+
+  void _toggleConversationTag(String tag) {
+    final next = List<String>.from(_activeTags);
+    if (next.contains(tag)) {
+      next.remove(tag);
+    } else {
+      next.add(tag);
+    }
+    _saveConversationTags(next);
+  }
+
+  String _paymentMethodLabel(String? raw) {
+    final pm = raw?.trim().toLowerCase() ?? '';
+    if (pm.isEmpty) return '—';
+    switch (pm) {
+      case 'paymongo':
+      case 'gcash':
+        return 'GCash';
+      case 'cod':
+        return 'COD';
+      default:
+        return raw!;
+    }
+  }
+
+  String _deliveryDateLabel(OrderRecord order) {
+    final raw = order.shippingAddress['estimatedDeliveryAt']?.toString();
+    if (raw == null || raw.trim().isEmpty) return '—';
+    try {
+      return DateFormat('MMM d, yyyy', 'en_US').format(DateTime.parse(raw).toLocal());
+    } catch (_) {
+      return raw;
     }
   }
 
@@ -197,22 +328,49 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
         _adminAuth.adminAccessToken!.isEmpty) {
       return;
     }
+    if (!isSupportFormAvailable(formType, _latestOrder)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This form does not apply to a cancelled order')),
+      );
+      return;
+    }
     try {
-      final msg = await _db.sendSupportFormLinkAsAdmin(
+      final result = await _db.sendSupportFormLinkAsAdmin(
         conversationId: conv.id,
         formType: formType,
       );
       if (!mounted) return;
-      setState(() => _messages = [..._messages, msg]);
+
+      // Sync auto-tag from backend (also merged locally as fallback).
+      final mergedTags = result.conversation != null
+          ? List<String>.from(result.conversation!.tags)
+          : mergeAutoTag(_activeTags, formType);
+
+      final forms = await _db.listSupportFormRequestsForConversation(conversationId: conv.id);
+      if (!mounted) return;
+      setState(() {
+        _messages = [..._messages, result.message];
+        _formRequestsById = {for (final f in forms) f.id: f};
+        _activeTags = mergedTags;
+        _selected = result.conversation ?? _selected?.copyWith(tags: mergedTags) ?? _selected;
+        final idx = _conversations.indexWhere((c) => c.id == conv.id);
+        if (idx >= 0 && _selected != null) {
+          _conversations[idx] = _selected!;
+        }
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Form link sent to customer')),
+        const SnackBar(content: Text('Form sent — tag applied automatically')),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send form link: $e')),
+        SnackBar(content: Text('Failed to send form: $e')),
       );
     }
+  }
+
+  void _showFormSubmission(SupportFormRequest request) {
+    showSupportFormSubmissionDialog(context: context, request: request);
   }
 
   Future<void> _sendAdminMessage(String body, PlatformFile? attachment) async {
@@ -299,6 +457,114 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
                   : _buildConversationDetail(),
         ),
       ],
+    );
+  }
+
+  Widget _buildOrderContextSidebar() {
+    if (_loadingOrderContext) {
+      return const SizedBox(
+        width: 280,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    final order = _latestOrder;
+    final sidebar = buildSupportOrderSidebar(
+      order: order,
+      productNames: _productNames,
+      formRequests: _formRequestsById.values,
+      paymentMethodLabel: _paymentMethodLabel,
+      deliveryFromOrder: _deliveryDateLabel,
+    );
+
+    return Container(
+      width: 280,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        border: Border(left: BorderSide(color: Colors.grey.shade300)),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            'Latest order',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          if (isOrderCancelled(order)) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade100),
+              ),
+              child: Text(
+                'Order cancelled',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Colors.orange.shade900,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          if (order == null)
+            Text(
+              'No orders on file for this customer.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+            )
+          else ...[
+            _orderContextRow('Order ID', sidebar.orderId),
+            _orderContextRow('Status', sidebar.status),
+            _orderContextRow('Items', sidebar.items),
+            _orderContextRow(
+              'Delivery',
+              sidebar.delivery,
+              hint: sidebar.deliveryFromForm ? 'Updated from form' : null,
+            ),
+            if (sidebar.address != null)
+              _orderContextRow(
+                'Address',
+                sidebar.address!,
+                hint: sidebar.addressFromForm ? 'Updated from form' : null,
+              ),
+            _orderContextRow('Payment', sidebar.payment),
+            _orderContextRow('Total', sidebar.total),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _orderContextRow(String label, String value, {String? hint}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey[600]),
+              ),
+              if (hint != null) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: hint,
+                  child: Icon(Icons.edit_note, size: 14, color: Colors.green.shade700),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
     );
   }
 
@@ -477,140 +743,177 @@ class _SupportInboxAdminPageState extends State<SupportInboxAdminPage> {
       );
     }
 
-    return Column(
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          title: Row(
+        Expanded(
+          child: Column(
             children: [
-              _userAvatar(conv.userId, radius: 16),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  _displayNameForUserId(conv.userId),
-                  style: Theme.of(context).textTheme.titleMedium,
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                title: Row(
+                  children: [
+                    _userAvatar(conv.userId, radius: 16),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _displayNameForUserId(conv.userId),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    Tooltip(
+                      message: _userLikelyOnline(conv) ? 'Customer online' : 'Customer offline',
+                      child: Icon(
+                        Icons.circle,
+                        size: 12,
+                        color: _userLikelyOnline(conv) ? Colors.green[600] : Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadingMessages ? null : () => _loadMessages(conv),
+                  tooltip: 'Refresh conversation',
                 ),
               ),
-              Tooltip(
-                message: _userLikelyOnline(conv) ? 'Customer online' : 'Customer offline',
-                child: Icon(
-                  Icons.circle,
-                  size: 12,
-                  color: _userLikelyOnline(conv) ? Colors.green[600] : Colors.grey[500],
-                ),
+              _CompactConversationTagsRow(
+                activeTags: _activeTags,
+                saving: _savingTags,
+                onToggle: _toggleConversationTag,
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: _loadingMessages
+                    ? const Center(child: CircularProgressIndicator())
+                    : _messages.isEmpty
+                        ? const Center(child: Text('No messages yet'))
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            itemCount: _messages.length,
+                            itemBuilder: (context, index) {
+                              final msg = _messages[index];
+                              final isAdmin = msg.senderType == 'admin';
+                              final link = SupportFormLink.tryParseFromText(msg.body);
+                              final formRequest =
+                                  link != null ? _formRequestsById[link.requestId] : null;
+                              final isFormCard = SupportFormCard.isFormLinkMessage(msg.body);
+
+                              final bubble = Container(
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                padding: isFormCard
+                                    ? const EdgeInsets.all(4)
+                                    : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                constraints: const BoxConstraints(maxWidth: 420),
+                                decoration: BoxDecoration(
+                                  color: isAdmin ? const Color(0xFF8D6E63) : const Color(0xFFF2F2F7),
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      isAdmin ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (msg.attachmentUrl != null)
+                                      if (msg.attachmentType == 'image')
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: Image.network(
+                                            msg.attachmentUrl!,
+                                            width: 220,
+                                            height: 160,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (context, error, stackTrace) {
+                                              return Container(
+                                                width: 220,
+                                                height: 160,
+                                                color: Colors.black12,
+                                                alignment: Alignment.center,
+                                                child: const Icon(Icons.broken_image),
+                                              );
+                                            },
+                                          ),
+                                        )
+                                      else
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.attach_file, size: 18),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              msg.attachmentFilename ?? 'Attachment',
+                                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                    color: isAdmin ? Colors.white : Colors.black,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                    if (msg.body.trim().isNotEmpty) ...[
+                                      if (msg.attachmentUrl != null) const SizedBox(height: 8),
+                                      if (isFormCard)
+                                        SupportFormCard(
+                                          body: msg.body,
+                                          sentAt: msg.createdAt,
+                                          textColor: isAdmin ? Colors.white : Colors.black87,
+                                          backgroundColor: isAdmin
+                                              ? Colors.white.withValues(alpha: 0.08)
+                                              : Colors.white,
+                                          formRequest: formRequest,
+                                          isAdminView: true,
+                                          onAdminViewSubmission: formRequest != null &&
+                                                  formRequest.isSubmitted
+                                              ? () => _showFormSubmission(formRequest)
+                                              : null,
+                                        )
+                                      else
+                                        SupportMessageBody(
+                                          body: msg.body,
+                                          textColor: isAdmin ? Colors.white : Colors.black,
+                                        ),
+                                    ],
+                                  ],
+                                ),
+                              );
+
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 6),
+                                      child: Text(
+                                        _formatMessageTimestamp(msg.createdAt),
+                                        textAlign: TextAlign.center,
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                              color: Colors.grey[600],
+                                              fontSize: 11,
+                                            ),
+                                      ),
+                                    ),
+                                    Align(
+                                      alignment:
+                                          isAdmin ? Alignment.centerRight : Alignment.centerLeft,
+                                      child: bubble,
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+              ),
+              _AdminReplyComposer(
+                onSend: _sendAdminMessage,
+                onSendFormLink: _sendFormLink,
+                latestOrder: _latestOrder,
               ),
             ],
           ),
-          trailing: IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadingMessages ? null : () => _loadMessages(conv),
-            tooltip: 'Refresh conversation',
-          ),
         ),
-        const Divider(height: 1),
-        Expanded(
-          child: _loadingMessages
-              ? const Center(child: CircularProgressIndicator())
-              : _messages.isEmpty
-                  ? const Center(child: Text('No messages yet'))
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      itemCount: _messages.length,
-                      itemBuilder: (context, index) {
-                        final msg = _messages[index];
-                        final isAdmin = msg.senderType == 'admin';
-                        final bubble = Container(
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          constraints: const BoxConstraints(maxWidth: 420),
-                          decoration: BoxDecoration(
-                            color: isAdmin ? const Color(0xFF8D6E63) : const Color(0xFFF2F2F7),
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: Column(
-                            crossAxisAlignment:
-                                isAdmin ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (msg.attachmentUrl != null)
-                                if (msg.attachmentType == 'image')
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: Image.network(
-                                      msg.attachmentUrl!,
-                                      width: 220,
-                                      height: 160,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (context, error, stackTrace) {
-                                        return Container(
-                                          width: 220,
-                                          height: 160,
-                                          color: Colors.black12,
-                                          alignment: Alignment.center,
-                                          child: const Icon(Icons.broken_image),
-                                        );
-                                      },
-                                    ),
-                                  )
-                                else
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(Icons.attach_file, size: 18),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        msg.attachmentFilename ?? 'Attachment',
-                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                              color: isAdmin ? Colors.white : Colors.black,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
-                                  ),
-                              if (msg.body.trim().isNotEmpty) ...[
-                                if (msg.attachmentUrl != null) const SizedBox(height: 8),
-                                SupportMessageBody(
-                                  body: msg.body,
-                                  textColor: isAdmin ? Colors.white : Colors.black,
-                                ),
-                              ],
-                            ],
-                          ),
-                        );
-
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: Text(
-                                  _formatMessageTimestamp(msg.createdAt),
-                                  textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: Colors.grey[600],
-                                        fontSize: 11,
-                                      ),
-                                ),
-                              ),
-                              Align(
-                                alignment:
-                                    isAdmin ? Alignment.centerRight : Alignment.centerLeft,
-                                child: bubble,
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-        ),
-        _AdminReplyComposer(
-          onSend: _sendAdminMessage,
-          onSendFormLink: _sendFormLink,
-        ),
+        if (MediaQuery.of(context).size.width > 1100) _buildOrderContextSidebar(),
       ],
     );
   }
@@ -620,10 +923,12 @@ class _AdminReplyComposer extends StatefulWidget {
   const _AdminReplyComposer({
     required this.onSend,
     required this.onSendFormLink,
+    required this.latestOrder,
   });
 
   final Future<void> Function(String body, PlatformFile? attachment) onSend;
   final Future<void> Function(String formType) onSendFormLink;
+  final OrderRecord? latestOrder;
 
   @override
   State<_AdminReplyComposer> createState() => _AdminReplyComposerState();
@@ -711,79 +1016,6 @@ class _AdminReplyComposerState extends State<_AdminReplyComposer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
-                child: Text(
-                  'Quick forms',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-              ),
-            ),
-            SizedBox(
-              height: 36,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: kSupportQuickReplies.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 6),
-                itemBuilder: (context, index) {
-                  final reply = kSupportQuickReplies[index];
-                  return ActionChip(
-                    label: Text(reply.label),
-                    onPressed: _sending
-                        ? null
-                        : () {
-                            _controller.text = reply.body;
-                            _controller.selection = TextSelection.collapsed(
-                              offset: _controller.text.length,
-                            );
-                          },
-                  );
-                },
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 10, 4, 6),
-                child: Text(
-                  'Send form link',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-              ),
-            ),
-            SizedBox(
-              height: 36,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: kSupportFormCatalog.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 6),
-                itemBuilder: (context, index) {
-                  final def = kSupportFormCatalog[index];
-                  return ActionChip(
-                    label: Text(def.title),
-                    onPressed: (_sending || _sendingForm)
-                        ? null
-                        : () async {
-                            setState(() => _sendingForm = true);
-                            try {
-                              await widget.onSendFormLink(def.type);
-                            } finally {
-                              if (mounted) setState(() => _sendingForm = false);
-                            }
-                          },
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
             if (_attachment != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
@@ -811,7 +1043,35 @@ class _AdminReplyComposerState extends State<_AdminReplyComposer> {
                 ),
               ),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                IconButton(
+                  onPressed: (_sending || _sendingForm)
+                      ? null
+                      : () {
+                          showSupportQuickActionsSheet(
+                            context: context,
+                            latestOrder: widget.latestOrder,
+                            onQuickReply: (body) {
+                              _controller.text = body;
+                              _controller.selection = TextSelection.collapsed(
+                                offset: _controller.text.length,
+                              );
+                            },
+                            onSendForm: (type) async {
+                              setState(() => _sendingForm = true);
+                              try {
+                                await widget.onSendFormLink(type);
+                              } finally {
+                                if (mounted) setState(() => _sendingForm = false);
+                              }
+                            },
+                          );
+                        },
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'Quick actions',
+                  color: const Color(0xFF8D6E63),
+                ),
                 Expanded(
                   child: TextField(
                     controller: _controller,
@@ -830,7 +1090,7 @@ class _AdminReplyComposerState extends State<_AdminReplyComposer> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
                 IconButton(
                   onPressed: _pickAttachment,
                   icon: const Icon(Icons.attach_file),
@@ -861,6 +1121,172 @@ class _AdminReplyComposerState extends State<_AdminReplyComposer> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Shows only applied tags plus a "+" popover for the full tag list.
+class _CompactConversationTagsRow extends StatefulWidget {
+  const _CompactConversationTagsRow({
+    required this.activeTags,
+    required this.saving,
+    required this.onToggle,
+  });
+
+  final List<String> activeTags;
+  final bool saving;
+  final void Function(String tag) onToggle;
+
+  @override
+  State<_CompactConversationTagsRow> createState() => _CompactConversationTagsRowState();
+}
+
+class _CompactConversationTagsRowState extends State<_CompactConversationTagsRow> {
+  final GlobalKey _addTagAnchorKey = GlobalKey();
+
+  Future<void> _openTagPicker() async {
+    await AdminAnchoredPopover.show<void>(
+      context: context,
+      anchorKey: _addTagAnchorKey,
+      width: 280,
+      height: 320,
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: _TagPickerPanel(
+          initialTags: widget.activeTags,
+          saving: widget.saving,
+          onToggle: widget.onToggle,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            'Tags',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                ...widget.activeTags.map((tag) {
+                  return InputChip(
+                    label: Text(tag, style: const TextStyle(fontSize: 12)),
+                    avatar: const Icon(Icons.check, size: 16, color: Colors.white),
+                    backgroundColor: const Color(0xFF8D6E63),
+                    labelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                    deleteIcon: const Icon(Icons.close, size: 16, color: Colors.white70),
+                    onDeleted: widget.saving ? null : () => widget.onToggle(tag),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  );
+                }),
+                if (widget.activeTags.isEmpty)
+                  Text(
+                    'None',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[500]),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            key: _addTagAnchorKey,
+            icon: const Icon(Icons.add, size: 20),
+            tooltip: 'Manage tags',
+            onPressed: widget.saving ? null : _openTagPicker,
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.grey.shade100,
+              foregroundColor: const Color(0xFF8D6E63),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TagPickerPanel extends StatefulWidget {
+  const _TagPickerPanel({
+    required this.initialTags,
+    required this.saving,
+    required this.onToggle,
+  });
+
+  final List<String> initialTags;
+  final bool saving;
+  final void Function(String tag) onToggle;
+
+  @override
+  State<_TagPickerPanel> createState() => _TagPickerPanelState();
+}
+
+class _TagPickerPanelState extends State<_TagPickerPanel> {
+  late List<String> _tags;
+
+  @override
+  void initState() {
+    super.initState();
+    _tags = List<String>.from(widget.initialTags);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+          child: Text(
+            'Add or remove tags',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+            children: kSupportConversationTags.map((tag) {
+              final selected = _tags.contains(tag);
+              return ListTile(
+                dense: true,
+                leading: Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  color: selected ? const Color(0xFF8D6E63) : Colors.grey,
+                  size: 20,
+                ),
+                title: Text(tag, style: const TextStyle(fontSize: 13)),
+                tileColor: selected ? const Color(0xFF8D6E63).withValues(alpha: 0.08) : null,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                onTap: widget.saving
+                    ? null
+                    : () {
+                        setState(() {
+                          if (selected) {
+                            _tags.remove(tag);
+                          } else {
+                            _tags.add(tag);
+                          }
+                        });
+                        widget.onToggle(tag);
+                      },
+              );
+            }).toList(),
+          ),
+        ),
+      ],
     );
   }
 }

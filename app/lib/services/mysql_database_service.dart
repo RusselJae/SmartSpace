@@ -2151,12 +2151,12 @@ class MySQLDatabaseService {
     return SupportFormRequest.fromJson(_asMap(data, 'support form request'));
   }
 
-  /// Staff sends a form link into the conversation (creates request + chat message).
-  Future<SupportMessage> sendSupportFormLinkAsAdmin({
+  /// Staff sends a form link into the conversation (creates request + chat message + auto-tag).
+  Future<({SupportMessage message, SupportConversation? conversation})> sendSupportFormLinkAsAdmin({
     required String conversationId,
     required String formType,
   }) async {
-    await _sendRequest(
+    final data = await _sendRequest(
       method: 'POST',
       path: '/support/forms/admin/send-link',
       body: {
@@ -2164,11 +2164,50 @@ class MySQLDatabaseService {
         'formType': formType,
       },
     );
-    final msgs = await getSupportMessagesForAdmin(conversationId: conversationId, limit: 20);
-    if (msgs.isEmpty) {
-      throw Exception('Form link sent but message not found');
+    final map = _asMap(data, 'send form link');
+    SupportMessage? message;
+    final rawMessage = map['message'];
+    if (rawMessage is Map) {
+      message = SupportMessage.fromJson(Map<String, dynamic>.from(rawMessage));
     }
-    return msgs.last;
+    if (message == null) {
+      final msgs = await getSupportMessagesForAdmin(conversationId: conversationId, limit: 20);
+      if (msgs.isEmpty) {
+        throw Exception('Form link sent but message not found');
+      }
+      message = msgs.last;
+    }
+    SupportConversation? conversation;
+    final rawConv = map['conversation'];
+    if (rawConv is Map) {
+      conversation = SupportConversation.fromJson(Map<String, dynamic>.from(rawConv));
+    }
+    return (message: message, conversation: conversation);
+  }
+
+  /// Lists form requests linked to a support conversation (admin).
+  Future<List<SupportFormRequest>> listSupportFormRequestsForConversation({
+    required String conversationId,
+  }) async {
+    final data = await _sendRequest(
+      method: 'GET',
+      path: '/support/forms/admin/conversation/$conversationId/requests',
+    );
+    final list = _asMapList(data, 'support form requests');
+    return list.map(SupportFormRequest.fromJson).toList();
+  }
+
+  /// Updates internal conversation tags (admin-only, not visible to customers).
+  Future<SupportConversation> updateSupportConversationTags({
+    required String conversationId,
+    required List<String> tags,
+  }) async {
+    final data = await _sendRequest(
+      method: 'PATCH',
+      path: '/support/admin/conversation/$conversationId/tags',
+      body: {'tags': tags},
+    );
+    return SupportConversation.fromJson(_asMap(data, 'support conversation'));
   }
 
   // ---------------------------------------------------------------------------

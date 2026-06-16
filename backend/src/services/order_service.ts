@@ -6,6 +6,13 @@ import { parseJsonRecord, parseStringArray } from '../utils/parser';
 import { EmailService } from './email_service';
 import { ensureInvoiceTables } from './order_invoice_service';
 import { createNotificationForUser } from './user_notification_service';
+import {
+  deductMaterialsForOrder,
+  restoreMaterialsForOrder,
+  shouldRestoreMaterials,
+  validateMaterialStockForOrder,
+} from './material_inventory_service';
+import { ensureProductVariantSchema } from './product_variant_service';
 
 type OrderRow = RowDataPacket & {
   readonly id: string;
@@ -531,6 +538,49 @@ const restoreInventoryForOrder = async (executor: Pool | Connection, orderId: st
       [productId],
     );
   }
+};
+
+const resolveDefaultVariantId = async (
+  conn: Connection,
+  productId: string,
+): Promise<string | null> => {
+  await ensureProductVariantSchema();
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT id FROM product_variants WHERE product_id = ? AND is_default = 1 LIMIT 1`,
+    [productId],
+  );
+  return (rows?.[0]?.id as string | undefined) ?? null;
+};
+
+const insertOrderItem = async (
+  conn: Connection,
+  params: {
+    orderId: string;
+    productId: string;
+    variantId: string | null;
+    productName: string;
+    quantity: number;
+    unitPrice: number;
+    lineTotal: number;
+  },
+): Promise<void> => {
+  const { generateId: generateItemId } = await import('../utils/id_generator');
+  const itemId = generateItemId('oi');
+  await ensureProductVariantSchema();
+  await conn.query(
+    `INSERT INTO order_items (id, order_id, product_id, variant_id, product_name, quantity, unit_price, line_total)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      itemId,
+      params.orderId,
+      params.productId,
+      params.variantId,
+      params.productName,
+      params.quantity,
+      params.unitPrice,
+      params.lineTotal,
+    ],
+  );
 };
 
 const approxEqualPesos = (a: number, b: number): boolean => Math.abs(a - b) < 1.0;
@@ -1126,6 +1176,13 @@ export interface CreateOrderInput {
     readonly quantity: number;
     readonly unitPrice: number;
     readonly lineTotal: number;
+    readonly variantId?: string;
+  }>;
+  /** Catalog lines with optional variant (preferred over productIds). */
+  readonly orderLines?: ReadonlyArray<{
+    readonly productId: string;
+    readonly variantId?: string;
+    readonly quantity: number;
   }>;
   /** Custom / MTO lines are not tied to catalog SKUs — skip inventory reservation. */
   readonly skipInventoryReservation?: boolean;
@@ -1455,16 +1512,42 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
     }
   }
 
-  // Insert order items — either explicit lines (MTO) or catalog products.
-  const { generateId: generateItemId } = await import('../utils/id_generator');
+  // Insert order items — explicit lines (MTO), orderLines, or legacy productIds.
   if (input.lineItemsOverride != null && input.lineItemsOverride.length > 0) {
     for (const line of input.lineItemsOverride) {
-      const itemId = generateItemId('oi');
-      await conn.query(
-        `INSERT INTO order_items (id, order_id, product_id, product_name, quantity, unit_price, line_total)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [itemId, id, line.productId, line.productName, line.quantity, line.unitPrice, line.lineTotal],
+      await insertOrderItem(conn, {
+        orderId: id,
+        productId: line.productId,
+        variantId: line.variantId ?? null,
+        productName: line.productName,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineTotal: line.lineTotal,
+      });
+    }
+  } else if (input.orderLines != null && input.orderLines.length > 0) {
+    for (const line of input.orderLines) {
+      const [productRows] = await conn.query<RowDataPacket[]>(
+        'SELECT name, price FROM products WHERE id = ? LIMIT 1',
+        [line.productId],
       );
+      if (productRows.length === 0) {
+        throw new Error(`Product not found: ${line.productId}`);
+      }
+      const productName = productRows[0].name as string;
+      const unitPrice = Number(productRows[0].price);
+      const quantity = Math.max(1, Number(line.quantity) || 1);
+      const variantId =
+        line.variantId ?? (await resolveDefaultVariantId(conn, line.productId));
+      await insertOrderItem(conn, {
+        orderId: id,
+        productId: line.productId,
+        variantId,
+        productName,
+        quantity,
+        unitPrice,
+        lineTotal: unitPrice * quantity,
+      });
     }
   } else {
     for (const productId of input.productIds) {
@@ -1478,14 +1561,17 @@ export const createOrder = async (input: CreateOrderInput): Promise<OrderRecord>
       const productName = productRows[0].name as string;
       const unitPrice = Number(productRows[0].price);
       const quantity = 1;
-      const lineTotal = unitPrice * quantity;
+      const variantId = await resolveDefaultVariantId(conn, productId);
 
-      const itemId = generateItemId('oi');
-      await conn.query(
-        `INSERT INTO order_items (id, order_id, product_id, product_name, quantity, unit_price, line_total)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [itemId, id, productId, productName, quantity, unitPrice, lineTotal],
-      );
+      await insertOrderItem(conn, {
+        orderId: id,
+        productId,
+        variantId,
+        productName,
+        quantity,
+        unitPrice,
+        lineTotal: unitPrice * quantity,
+      });
     }
   }
 
@@ -1616,26 +1702,47 @@ export const updateOrderStatus = async (
       throw new Error('Full-payment orders must be fully paid before confirmation.');
     }
 
+    await validateMaterialStockForOrder(pool, orderId);
+
     const shouldSetEta = isHulugan || (isLayaway && paymentCompleted);
-    if (shouldSetEta) {
-      try {
-        await pool.query(
-          `UPDATE orders SET status = ?,
-             estimated_delivery_at = COALESCE(estimated_delivery_at, DATE_ADD(NOW(), INTERVAL ? DAY)),
-             updated_at = NOW()
-           WHERE id = ?`,
-          [status, deliveryOffsetDays(), orderId],
-        );
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes('estimated_delivery_at') || msg.includes('Unknown column')) {
-          await pool.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [status, orderId]);
-        } else {
-          throw e;
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      if (shouldSetEta) {
+        try {
+          await conn.query(
+            `UPDATE orders SET status = ?,
+               estimated_delivery_at = COALESCE(estimated_delivery_at, DATE_ADD(NOW(), INTERVAL ? DAY)),
+               updated_at = NOW()
+             WHERE id = ?`,
+            [status, deliveryOffsetDays(), orderId],
+          );
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('estimated_delivery_at') || msg.includes('Unknown column')) {
+            await conn.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [
+              status,
+              orderId,
+            ]);
+          } else {
+            throw e;
+          }
         }
+      } else {
+        await conn.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [
+          status,
+          orderId,
+        ]);
       }
-    } else {
-      await pool.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [status, orderId]);
+
+      await deductMaterialsForOrder(conn, orderId);
+      await conn.commit();
+    } catch (txnErr) {
+      await conn.rollback();
+      throw txnErr;
+    } finally {
+      conn.release();
     }
   } else if (
     status === 'cancelled' &&
@@ -1660,6 +1767,14 @@ export const updateOrderStatus = async (
       await restoreInventoryForOrder(pool, orderId);
     } catch (invErr) {
       console.error(`restoreInventoryForOrder failed for ${orderId}:`, invErr);
+    }
+  }
+
+  if (shouldRestoreMaterials(previousStatus, status)) {
+    try {
+      await restoreMaterialsForOrder(pool, orderId);
+    } catch (matErr) {
+      console.error(`restoreMaterialsForOrder failed for ${orderId}:`, matErr);
     }
   }
 

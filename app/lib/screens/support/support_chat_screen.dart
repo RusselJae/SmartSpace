@@ -14,6 +14,7 @@ import '../../services/mysql_database_service.dart';
 import '../../services/support_notifications_service.dart';
 import '../../utils/file_mime_utils.dart';
 import '../../widgets/support_message_body.dart';
+import '../../widgets/support_form_card.dart';
 
 class SupportChatScreen extends StatefulWidget {
   const SupportChatScreen({super.key});
@@ -473,10 +474,20 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
                                   if (msg.body.trim().isNotEmpty) ...[
                                     if (msg.attachmentUrl != null)
                                       const SizedBox(height: 8),
-                                    SupportMessageBody(
-                                      body: msg.body,
-                                      textColor: bubbleTextColor,
-                                    ),
+                                    if (SupportFormCard.isFormLinkMessage(msg.body))
+                                      SupportFormCard(
+                                        body: msg.body,
+                                        sentAt: msg.createdAt,
+                                        textColor: bubbleTextColor,
+                                        backgroundColor: isMe
+                                            ? Colors.white.withValues(alpha: 0.12)
+                                            : Colors.white,
+                                      )
+                                    else
+                                      SupportMessageBody(
+                                        body: msg.body,
+                                        textColor: bubbleTextColor,
+                                      ),
                                   ],
                                 ],
                               ),

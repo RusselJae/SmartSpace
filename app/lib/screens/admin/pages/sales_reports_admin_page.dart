@@ -1064,36 +1064,40 @@ class _SalesTrendSection extends StatelessWidget {
                   },
                 ),
                 const Spacer(),
-                IconButton.outlined(
-                  onPressed: onPickDate,
-                  tooltip: selectedLabel,
-                  icon: const Icon(Icons.calendar_month_outlined),
-                ),
-                const SizedBox(width: 8),
-                IconButton.outlined(
-                  onPressed: onPickRange,
-                  tooltip: 'Pick date range',
-                  icon: const Icon(Icons.date_range_outlined),
-                ),
-                if (onClearRange != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton.outlined(
-                    onPressed: onClearRange,
-                    tooltip: 'Clear date range',
-                    icon: const Icon(Icons.clear_outlined),
+                Flexible(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: onPickDate,
+                        icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                        label: Text(selectedLabel, overflow: TextOverflow.ellipsis),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: onPickRange,
+                        icon: const Icon(Icons.date_range_outlined, size: 18),
+                        label: const Text('Date range'),
+                      ),
+                      if (onClearRange != null)
+                        OutlinedButton.icon(
+                          onPressed: onClearRange,
+                          icon: const Icon(Icons.clear_outlined, size: 18),
+                          label: const Text('Clear range'),
+                        ),
+                      OutlinedButton.icon(
+                        onPressed: onExport,
+                        icon: const Icon(Icons.table_view_outlined, size: 18),
+                        label: const Text('Export Excel'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: onPrint,
+                        icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                        label: const Text('Print PDF'),
+                      ),
+                    ],
                   ),
-                ],
-                const SizedBox(width: 8),
-                IconButton.outlined(
-                  onPressed: onExport,
-                  tooltip: 'Export XLSX',
-                  icon: const Icon(Icons.table_view_outlined),
-                ),
-                const SizedBox(width: 8),
-                IconButton.outlined(
-                  onPressed: onPrint,
-                  tooltip: 'Print PDF',
-                  icon: const Icon(Icons.picture_as_pdf_outlined),
                 ),
               ],
             ),

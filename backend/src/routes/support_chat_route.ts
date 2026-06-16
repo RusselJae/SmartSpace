@@ -9,6 +9,7 @@ import {
   listConversationsForAdmin,
   listMessagesForConversation,
   setConversationStatus,
+  updateConversationTags,
   getOrCreateConversationForUser,
   getConversationById,
   resolveCanonicalUserIdForSupport,
@@ -373,6 +374,27 @@ supportChatRouter.patch(
     }
 
     const conversation = await setConversationStatus(id, status);
+    res.json({ success: true, data: conversation });
+  }),
+);
+
+supportChatRouter.patch(
+  '/admin/conversation/:id/tags',
+  requireAdminAuth,
+  requireAdminPermission(ADMIN_PERMISSIONS.supportWrite),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { tags } = req.body as { tags?: unknown };
+
+    if (!Array.isArray(tags)) {
+      return res.status(400).json({
+        success: false,
+        message: 'tags must be an array of strings',
+      });
+    }
+
+    const cleaned = tags.map((t) => String(t).trim()).filter((t) => t.length > 0);
+    const conversation = await updateConversationTags(id, cleaned);
     res.json({ success: true, data: conversation });
   }),
 );

@@ -11,6 +11,7 @@ import { asyncHandler } from '../utils/async_handler';
 import { logAdminActivity } from '../services/admin_activity_log_service';
 import { requireAdminAuth, requireAdminPermission } from '../middleware/admin_auth_middleware';
 import { ADMIN_PERMISSIONS } from '../auth/admin_role';
+import { productVariantRouter } from './product_variant_route';
 
 const productComponentSchema = z.object({
   name: z.string().min(1),
@@ -50,6 +51,8 @@ const parseProductInput = (payload: unknown): ProductInput => {
 };
 
 export const productRouter = Router();
+
+productRouter.use('/:productId/variants', productVariantRouter);
 
 productRouter.get(
   '/',

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../models/review.dart';
+import '../../../config/api_config.dart';
 import '../../../services/mysql_database_service.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
@@ -652,8 +653,41 @@ class _ReviewDetailsDialog extends StatelessWidget {
               label: 'Review Content',
               value: review.content.isEmpty ? '(No comment provided)' : review.content,
               fontSize: _detailFontSize,
-              showDivider: false,
+              showDivider: review.media.isNotEmpty,
             ),
+            if (review.media.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Attachments (${review.media.length})',
+                style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: review.media.map((item) {
+                  final url = item.url.startsWith('http')
+                      ? item.url
+                      : '${ApiConfig.baseUrl.replaceAll(RegExp(r'/api$'), '')}${item.url.startsWith('/') ? '' : '/'}${item.url}';
+                  if (item.isVideo) {
+                    return Container(
+                      width: 88,
+                      height: 88,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.play_circle_outline, color: Colors.white, size: 32),
+                    );
+                  }
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(url, width: 88, height: 88, fit: BoxFit.cover),
+                  );
+                }).toList(),
+              ),
+            ],
           ],
         ),
       ),

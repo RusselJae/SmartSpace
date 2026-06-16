@@ -75,8 +75,6 @@ class AdminNotificationsService {
   static final AdminNotificationsService instance =
       AdminNotificationsService._internal();
 
-  static const int lowStockThreshold = 3;
-
   final ValueNotifier<AdminNotificationSnapshot> snapshot =
       ValueNotifier<AdminNotificationSnapshot>(
         AdminNotificationSnapshot.empty(),

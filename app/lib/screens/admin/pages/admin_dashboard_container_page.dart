@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'admin_dashboard_page.dart';
 import 'admin_user_behavior_page.dart';
-import 'sales_reports_admin_page.dart';
 import '../widgets/admin_analytics_components.dart';
 
-/// Parent **Dashboard** area with sub-tabs: Overview, Sales Reports, User Growth.
-/// Matches Apple HIG: clear hierarchy, segmented navigation, calm spacing.
+/// Parent **Dashboard** area with sub-tabs: Overview, User Growth.
+/// Sales Reports lives in the main sidebar between Dashboard and Products.
 class AdminDashboardContainerPage extends StatefulWidget {
   const AdminDashboardContainerPage({
     super.key,
@@ -16,7 +15,7 @@ class AdminDashboardContainerPage extends StatefulWidget {
     this.onDashboardSubTabChanged,
   });
 
-  /// 0 Overview, 1 Sales Reports, 2 User Growth
+  /// 0 Overview, 1 User Growth
   final int initialSubTab;
   final VoidCallback onOpenOrders;
   final VoidCallback onOpenReviews;
@@ -34,8 +33,8 @@ class _AdminDashboardContainerPageState extends State<AdminDashboardContainerPag
   @override
   void initState() {
     super.initState();
-    final initial = widget.initialSubTab.clamp(0, 2);
-    _tabController = TabController(length: 3, vsync: this, initialIndex: initial);
+    final initial = widget.initialSubTab.clamp(0, 1);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: initial);
     _tabController.addListener(_onDashboardTabTick);
     // First frame: shell header subtitle should match the initial route (e.g. /admin/user-behavior).
     WidgetsBinding.instance.addPostFrameCallback((_) => _emitDashboardSubTab(_tabController.index));
@@ -50,7 +49,7 @@ class _AdminDashboardContainerPageState extends State<AdminDashboardContainerPag
   }
 
   void _emitDashboardSubTab(int rawIndex) {
-    final i = rawIndex.clamp(0, 2);
+    final i = rawIndex.clamp(0, 1);
     widget.onDashboardSubTabChanged?.call(i);
   }
 
@@ -58,7 +57,7 @@ class _AdminDashboardContainerPageState extends State<AdminDashboardContainerPag
   void didUpdateWidget(covariant AdminDashboardContainerPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialSubTab != widget.initialSubTab) {
-      final next = widget.initialSubTab.clamp(0, 2);
+      final next = widget.initialSubTab.clamp(0, 1);
       if (_tabController.index != next) {
         _tabController.animateTo(next);
       }
@@ -88,7 +87,6 @@ class _AdminDashboardContainerPageState extends State<AdminDashboardContainerPag
             labelStyle: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
             tabs: const [
               Tab(text: 'Overview'),
-              Tab(text: 'Sales Reports'),
               Tab(text: 'User Growth'),
             ],
           ),
@@ -99,7 +97,6 @@ class _AdminDashboardContainerPageState extends State<AdminDashboardContainerPag
             controller: _tabController,
             children: [
               AdminDashboardPage(onOpenOrders: widget.onOpenOrders),
-              const SalesReportsAdminPage(),
               AdminUserBehaviorPage(onOpenReviews: widget.onOpenReviews),
             ],
           ),

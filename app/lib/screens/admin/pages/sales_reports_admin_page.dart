@@ -42,6 +42,9 @@ String _salesTrendXLabel(AdminTrendGranularity g, DateTime x) {
   }
 }
 
+/// Which date endpoint the admin is currently editing (drives button focus styling).
+enum _SalesRangeField { none, from, to }
+
 class SalesReportsAdminPage extends StatefulWidget {
   const SalesReportsAdminPage({super.key});
 
@@ -60,6 +63,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   /// Custom report window — both ends must be set before filtering overrides granularity.
   DateTime? _rangeFrom;
   DateTime? _rangeTo;
+  _SalesRangeField _activeRangeField = _SalesRangeField.none;
   List<OrderRecord> _orders = const [];
   List<Product> _products = const [];
   List<Review> _reviews = const [];
@@ -159,6 +163,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   /// Opens a compact modal so the admin can pick the range **start** date.
   Future<void> _pickRangeFrom() async {
     final now = DateTime.now();
+    setState(() => _activeRangeField = _SalesRangeField.from);
     final picked = await showDatePicker(
       context: context,
       initialDate: _rangeFrom ?? _rangeTo ?? now,
@@ -167,6 +172,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
       helpText: 'Select range start date',
       builder: _salesReportDatePickerBuilder,
     );
+    if (!mounted) return;
+    setState(() => _activeRangeField = _SalesRangeField.none);
     if (picked == null) return;
     setState(() {
       _rangeFrom = DateTime(picked.year, picked.month, picked.day);
@@ -180,6 +187,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
   /// Opens a compact modal so the admin can pick the range **end** date.
   Future<void> _pickRangeTo() async {
     final now = DateTime.now();
+    setState(() => _activeRangeField = _SalesRangeField.to);
     final picked = await showDatePicker(
       context: context,
       initialDate: _rangeTo ?? _rangeFrom ?? now,
@@ -188,6 +196,8 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
       helpText: 'Select range end date',
       builder: _salesReportDatePickerBuilder,
     );
+    if (!mounted) return;
+    setState(() => _activeRangeField = _SalesRangeField.none);
     if (picked == null) return;
     setState(() {
       _rangeTo = DateTime(picked.year, picked.month, picked.day);
@@ -202,6 +212,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     setState(() {
       _rangeFrom = null;
       _rangeTo = null;
+      _activeRangeField = _SalesRangeField.none;
     });
   }
 
@@ -904,11 +915,13 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
             granularity: _trendGranularity,
             onGranularityChanged: (g) => setState(() => _trendGranularity = g),
             selectedLabel: _selectedPeriodLabel,
-            rangeFromLabel: _rangeFrom == null ? 'From' : _formatRangeButtonDate(_rangeFrom!),
-            rangeToLabel: _rangeTo == null ? 'To' : _formatRangeButtonDate(_rangeTo!),
+            rangeFrom: _rangeFrom,
+            rangeTo: _rangeTo,
+            activeRangeField: _activeRangeField,
+            formatRangeDate: _formatRangeButtonDate,
             onPickRangeFrom: _pickRangeFrom,
             onPickRangeTo: _pickRangeTo,
-            onClearRange: (_rangeFrom == null && _rangeTo == null) ? null : _clearDateRange,
+            onClearRange: _hasCustomRange ? _clearDateRange : null,
             onExport: _exporting ? null : _exportExcelXlsx,
             onPrint: _exporting ? null : _printPdfReport,
             points: _activeTrendPoints,
@@ -1030,13 +1043,96 @@ class _ReportKpiStrip extends StatelessWidget {
   }
 }
 
+class _SalesRangeDateButton extends StatelessWidget {
+  const _SalesRangeDateButton({
+    required this.caption,
+    required this.dateLabel,
+    required this.isActive,
+    required this.hasValue,
+    required this.onPressed,
+  });
+
+  final String caption;
+  final String dateLabel;
+  final bool isActive;
+  final bool hasValue;
+  final VoidCallback onPressed;
+
+  static const Color _walnut = Color(0xFF5D4037);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          constraints: const BoxConstraints(minWidth: 128),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: isActive
+                ? _walnut.withValues(alpha: 0.14)
+                : hasValue
+                    ? const Color(0xFFF9F5F2)
+                    : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isActive ? _walnut : const Color(0xFFD7CCC8),
+              width: isActive ? 2 : 1,
+            ),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: _walnut.withValues(alpha: 0.12),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                caption,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: isActive ? _walnut : const Color(0xFF8D6E63),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                dateLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: hasValue ? FontWeight.w600 : FontWeight.w500,
+                  color: hasValue ? const Color(0xFF3E2723) : const Color(0xFF9E9E9E),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SalesTrendSection extends StatelessWidget {
   const _SalesTrendSection({
     required this.granularity,
     required this.onGranularityChanged,
     required this.selectedLabel,
-    required this.rangeFromLabel,
-    required this.rangeToLabel,
+    required this.rangeFrom,
+    required this.rangeTo,
+    required this.activeRangeField,
+    required this.formatRangeDate,
     required this.onPickRangeFrom,
     required this.onPickRangeTo,
     this.onClearRange,
@@ -1049,8 +1145,10 @@ class _SalesTrendSection extends StatelessWidget {
   final AdminTrendGranularity granularity;
   final ValueChanged<AdminTrendGranularity> onGranularityChanged;
   final String selectedLabel;
-  final String rangeFromLabel;
-  final String rangeToLabel;
+  final DateTime? rangeFrom;
+  final DateTime? rangeTo;
+  final _SalesRangeField activeRangeField;
+  final String Function(DateTime date) formatRangeDate;
   final VoidCallback onPickRangeFrom;
   final VoidCallback onPickRangeTo;
   final VoidCallback? onClearRange;
@@ -1061,6 +1159,8 @@ class _SalesTrendSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const rangeSeparatorColor = Color(0xFF8D6E63);
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1068,6 +1168,7 @@ class _SalesTrendSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SegmentedButton<AdminTrendGranularity>(
                   segments: const [
@@ -1082,39 +1183,102 @@ class _SalesTrendSection extends StatelessWidget {
                   },
                 ),
                 const Spacer(),
+                // Inputs (date range) stay grouped; export actions live behind the ellipsis menu.
                 Flexible(
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    alignment: WrapAlignment.end,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: onPickRangeFrom,
-                        icon: const Icon(Icons.event_outlined, size: 18),
-                        label: Text(rangeFromLabel, overflow: TextOverflow.ellipsis),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: onPickRangeTo,
-                        icon: const Icon(Icons.event_available_outlined, size: 18),
-                        label: Text(rangeToLabel, overflow: TextOverflow.ellipsis),
-                      ),
-                      if (onClearRange != null)
-                        OutlinedButton.icon(
-                          onPressed: onClearRange,
-                          icon: const Icon(Icons.clear_outlined, size: 18),
-                          label: const Text('Clear range'),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _SalesRangeDateButton(
+                          caption: 'From',
+                          dateLabel: rangeFrom == null ? 'Select date' : formatRangeDate(rangeFrom!),
+                          isActive: activeRangeField == _SalesRangeField.from,
+                          hasValue: rangeFrom != null,
+                          onPressed: onPickRangeFrom,
                         ),
-                      OutlinedButton.icon(
-                        onPressed: onExport,
-                        icon: const Icon(Icons.table_view_outlined, size: 18),
-                        label: const Text('Excel'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: onPrint,
-                        icon: const Icon(Icons.picture_as_pdf_outlined, size: 18),
-                        label: const Text('PDF'),
-                      ),
-                    ],
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 18,
+                            color: rangeSeparatorColor.withValues(alpha: 0.85),
+                          ),
+                        ),
+                        _SalesRangeDateButton(
+                          caption: 'To',
+                          dateLabel: rangeTo == null ? 'Select date' : formatRangeDate(rangeTo!),
+                          isActive: activeRangeField == _SalesRangeField.to,
+                          hasValue: rangeTo != null,
+                          onPressed: onPickRangeTo,
+                        ),
+                        if (onClearRange != null) ...[
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            onPressed: onClearRange,
+                            icon: const Icon(Icons.clear_outlined, size: 18),
+                            label: const Text('Clear range'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF8D6E63),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            ),
+                          ),
+                        ],
+                        Container(
+                          width: 1,
+                          height: 44,
+                          margin: const EdgeInsets.symmetric(horizontal: 10),
+                          color: const Color(0xFFE0E0E0),
+                        ),
+                        PopupMenuButton<String>(
+                          tooltip: 'Report actions',
+                          enabled: onExport != null || onPrint != null,
+                          offset: const Offset(0, 44),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          itemBuilder: (context) => [
+                            if (onExport != null)
+                              const PopupMenuItem(
+                                value: 'excel',
+                                child: ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.table_view_outlined, size: 20),
+                                  title: Text('Excel'),
+                                ),
+                              ),
+                            if (onPrint != null)
+                              const PopupMenuItem(
+                                value: 'pdf',
+                                child: ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.picture_as_pdf_outlined, size: 20),
+                                  title: Text('PDF'),
+                                ),
+                              ),
+                          ],
+                          onSelected: (value) {
+                            switch (value) {
+                              case 'excel':
+                                onExport?.call();
+                              case 'pdf':
+                                onPrint?.call();
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFD7CCC8)),
+                              color: Colors.white,
+                            ),
+                            child: const Icon(Icons.more_horiz, size: 22, color: Color(0xFF5D4037)),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

@@ -7,6 +7,7 @@ import 'pages/admins_admin_page.dart';
 import 'pages/admin_profile_page.dart';
 import 'pages/orders_admin_page.dart';
 import 'pages/products_admin_page.dart';
+import 'pages/sales_reports_admin_page.dart';
 import 'pages/inventory_materials_admin_page.dart';
 import 'pages/reviews_admin_page.dart';
 import 'pages/faqs_admin_page.dart';
@@ -30,8 +31,8 @@ Map<String, WidgetBuilder> buildAdminShellRoutes() {
     AdminRoutes.legacyShell: (_) => shell(0, dashboardTab: 0),
     AdminRoutes.dashboard: (_) => shell(0, dashboardTab: 0),
     AdminRoutes.overview: (_) => shell(0, dashboardTab: 0),
-    AdminRoutes.salesReports: (_) => shell(0, dashboardTab: 1),
-    AdminRoutes.userBehavior: (_) => shell(0, dashboardTab: 2),
+    AdminRoutes.salesReports: (_) => shell(1),
+    AdminRoutes.userBehavior: (_) => shell(0, dashboardTab: 1),
     for (var i = 1; i < AdminRoutes.tabCount; i++)
       AdminRoutes.pathsByIndex[i]: (_) => shell(i, dashboardTab: 0),
   };
@@ -75,7 +76,6 @@ class _AdminShellState extends State<AdminShell> {
   /// Labels for Dashboard sub-tabs (header subtitle when shell index is Dashboard).
   static const List<String> _dashboardSubTabLabels = <String>[
     'Overview',
-    'Sales Reports',
     'User Growth',
   ];
 
@@ -251,6 +251,11 @@ class _AdminShellState extends State<AdminShell> {
       builder: (_, __) => const SizedBox.shrink(),
     ),
     _AdminDestination(
+      label: 'Sales Reports',
+      icon: Icons.assessment_outlined,
+      builder: (_, __) => const SalesReportsAdminPage(),
+    ),
+    _AdminDestination(
       label: 'Products',
       icon: Icons.chair_alt_outlined,
       builder: (_, __) => const ProductsAdminPage(),
@@ -334,7 +339,7 @@ class _AdminShellState extends State<AdminShell> {
   void initState() {
     super.initState();
     _dashboardSubTabIndex = widget.initialIndex == 0
-        ? widget.initialDashboardTab.clamp(0, 2)
+        ? widget.initialDashboardTab.clamp(0, 1)
         : 0;
     _verifyAdminSession();
   }
@@ -351,7 +356,7 @@ class _AdminShellState extends State<AdminShell> {
       setState(() {
         _index = v >= 0 ? v : 0;
         _dashboardSubTabIndex = nextFull == 0
-            ? widget.initialDashboardTab.clamp(0, 2)
+            ? widget.initialDashboardTab.clamp(0, 1)
             : 0;
       });
       return;
@@ -359,7 +364,7 @@ class _AdminShellState extends State<AdminShell> {
 
     if (nextFull == 0 &&
         oldWidget.initialDashboardTab != widget.initialDashboardTab) {
-      final nextSub = widget.initialDashboardTab.clamp(0, 2);
+      final nextSub = widget.initialDashboardTab.clamp(0, 1);
       if (_dashboardSubTabIndex != nextSub) {
         setState(() => _dashboardSubTabIndex = nextSub);
       }
@@ -398,19 +403,19 @@ class _AdminShellState extends State<AdminShell> {
     final bool wide = MediaQuery.of(context).size.width >= 1100;
     final Widget currentPage = _onDashboard
         ? AdminDashboardContainerPage(
-            initialSubTab: widget.initialDashboardTab.clamp(0, 2),
-            onOpenOrders: () => _selectTabByFullIndex(2),
-            onOpenReviews: () => _selectTabByFullIndex(3),
+            initialSubTab: widget.initialDashboardTab.clamp(0, 1),
+            onOpenOrders: () => _selectTabByFullIndex(4),
+            onOpenReviews: () => _selectTabByFullIndex(5),
             onDashboardSubTabChanged: (i) {
-              final next = i.clamp(0, 2);
+              final next = i.clamp(0, 1);
               if (_dashboardSubTabIndex != next) {
                 setState(() => _dashboardSubTabIndex = next);
               }
             },
           )
         : _visibleDestinations[_index].builder(
-            () => _selectTabByFullIndex(3),
-            () => _selectTabByFullIndex(2),
+            () => _selectTabByFullIndex(5),
+            () => _selectTabByFullIndex(4),
           );
 
     return Theme(
@@ -451,7 +456,7 @@ class _AdminShellState extends State<AdminShell> {
                       subtitle: _onDashboard
                           ? _dashboardSubTabLabels[_dashboardSubTabIndex.clamp(
                               0,
-                              2,
+                              1,
                             )]
                           : null,
                       notifications: _notifications,
@@ -489,7 +494,7 @@ class _AdminShellState extends State<AdminShell> {
             _AdminHeader(
               title: _visibleDestinations[_index].label,
               subtitle: _onDashboard
-                  ? _dashboardSubTabLabels[_dashboardSubTabIndex.clamp(0, 2)]
+                  ? _dashboardSubTabLabels[_dashboardSubTabIndex.clamp(0, 1)]
                   : null,
               notifications: _notifications,
               onOpenSupport: _openSupportInboxFromHeader,

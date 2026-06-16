@@ -4,7 +4,7 @@ class AdminRoutes {
 
   static const String legacyShell = '/admin';
 
-  /// Primary dashboard URL (Overview + Sales Reports + User Growth).
+  /// Primary dashboard URL (Overview + User Growth).
   static const String dashboard = '/admin/dashboard';
 
   /// Legacy / bookmark-friendly aliases for the same shell tab.
@@ -28,6 +28,7 @@ class AdminRoutes {
   /// Order matches [_AdminShellState] `_destinations` indices.
   static const List<String> pathsByIndex = <String>[
     dashboard,
+    salesReports,
     products,
     inventory,
     orders,
@@ -62,21 +63,20 @@ class AdminRoutes {
     if (p == legacyShell ||
         p == overview ||
         p == dashboard ||
-        p == salesReports ||
         p == userBehavior) {
       return 0;
     }
-    if (p == admins) return 6;
+    if (p == salesReports) return 1;
+    if (p == admins) return 7;
     final i = pathsByIndex.indexOf(p);
     return i < 0 ? 0 : i;
   }
 
   /// Sub-tab inside [AdminDashboardContainerPage] when shell index is `0`.
-  /// 0 Overview, 1 Sales Reports, 2 User Growth.
+  /// 0 Overview, 1 User Growth.
   static int dashboardTabForRouteName(String? name) {
     final p = normalizePath(name ?? '');
-    if (p == salesReports) return 1;
-    if (p == userBehavior) return 2;
+    if (p == userBehavior) return 1;
     return 0;
   }
 

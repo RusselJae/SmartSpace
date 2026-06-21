@@ -43,6 +43,8 @@ class PaymentConfirmationScreen extends StatefulWidget {
 }
 
 class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
+  static const Duration _paymentHoldDuration = Duration(hours: 24);
+
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final AuthService _auth = AuthService();
   final ImagePicker _imagePicker = ImagePicker();
@@ -67,31 +69,30 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
     _loadSettings();
   }
   
-  /// Load application settings for payment confirmation
+  /// Load application settings for payment confirmation (GCash QR, etc.)
   Future<void> _loadSettings() async {
+    void applyDeadline() {
+      final startTime = widget.resetTimer ? DateTime.now() : widget.orderCreatedAt;
+      _deadline = startTime.add(_paymentHoldDuration);
+      _remainingSeconds = _calculateRemainingSeconds();
+    }
+
     try {
       final settings = await _settingsService.loadSettings();
       if (mounted) {
         setState(() {
           _settings = settings;
-          final timerMinutes = settings.paymentConfirmationTimeMinutes;
-          _remainingSeconds = timerMinutes * 60;
-          // If resetTimer is true (restarting payment attempt), use current time instead of orderCreatedAt
-          final startTime = widget.resetTimer ? DateTime.now() : widget.orderCreatedAt;
-          _deadline = startTime.add(Duration(minutes: timerMinutes));
+          applyDeadline();
         });
         _startTimers();
         _startStatusPolling();
         _checkPaymentStatus();
       }
     } catch (e) {
-      // If settings fail to load, use defaults
       if (mounted) {
         setState(() {
           _settings = const AppSettings();
-          _remainingSeconds = 24 * 60 * 60;
-          final startTime = widget.resetTimer ? DateTime.now() : widget.orderCreatedAt;
-          _deadline = startTime.add(const Duration(hours: 24));
+          applyDeadline();
         });
         _startTimers();
         _startStatusPolling();
@@ -142,7 +143,8 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
           widget.orderId,
           'cancelled',
           customerUserId: uid,
-          cancellationComment: 'Payment not completed within 24 hours',
+          cancellationComment:
+              'Payment not completed within 24 hours (automatic cancellation)',
         );
       }
       if (mounted) {
@@ -602,7 +604,7 @@ class _PaymentConfirmationScreenState extends State<PaymentConfirmationScreen> {
                         Text(
                           _remainingSeconds < 300
                               ? '⚠️ ${_formatTime(_remainingSeconds)} left — order cancels soon!'
-                              : 'Complete payment within ${_formatTime(_remainingSeconds)} (24h limit)',
+                              : 'Complete payment within ${_formatTime(_remainingSeconds)}',
                           style: GoogleFonts.poppins(
                             fontSize: 12,
                             fontWeight: FontWeight.normal,

@@ -2157,7 +2157,10 @@ export const autoCancelUnpaidOrders = async (): Promise<number> => {
   for (const row of cancelRows) {
     const oid = row.id as string;
     try {
-      await updateOrderStatus(oid, 'cancelled');
+      await updateOrderStatus(oid, 'cancelled', {
+        cancellationComment:
+          'Payment not completed within 24 hours (automatic cancellation)',
+      });
       await pool.query(`UPDATE orders SET payment_status = 'failed', updated_at = NOW() WHERE id = ?`, [oid]);
       cancelled += 1;
     } catch (e) {

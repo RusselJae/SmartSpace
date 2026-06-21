@@ -248,7 +248,7 @@ class _MtoQuoteCheckoutScreenState extends State<MtoQuoteCheckoutScreen> {
       Toast.success(context, 'Order created — complete GCash payment');
 
       if (!mounted) return;
-      await Navigator.of(context).push(
+      await Navigator.of(context, rootNavigator: true).push(
         CupertinoPageRoute(
           builder: (_) => PaymentConfirmationScreen(
             orderId: order.id,

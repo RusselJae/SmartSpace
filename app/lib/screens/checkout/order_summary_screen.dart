@@ -1005,7 +1005,7 @@ class _OrderSummaryScreenState extends State<OrderSummaryScreen> {
       Toast.success(context, 'Order created — complete GCash payment below');
 
       if (!mounted) return;
-      await Navigator.of(context).push(
+      await Navigator.of(context, rootNavigator: true).push(
         CupertinoPageRoute(
           builder: (_) => PaymentConfirmationScreen(
             orderId: order.id,

@@ -1109,7 +1109,13 @@ orderRouter.patch(
       const comment =
         typeof payload.cancellationComment === 'string'
           ? payload.cancellationComment.trim()
-          : undefined;
+          : '';
+      if (comment.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cancellation reason is required',
+        });
+      }
       await updateOrderStatus(req.params.id, payload.status, {
         cancellationComment: comment,
       });

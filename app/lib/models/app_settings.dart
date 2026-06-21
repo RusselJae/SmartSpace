@@ -178,7 +178,7 @@ class AppSettings {
       gcashAccountName: json['gcashAccountName'] as String? ?? 'Rosalie M. Enon',
       qrCodeImagePath: json['qrCodeImagePath'] as String? ?? 'assets/images/qrcode.jpg',
       codDownpaymentPercentage: (json['codDownpaymentPercentage'] as num?)?.toDouble() ?? 20.0,
-      paymentConfirmationTimeMinutes: json['paymentConfirmationTimeMinutes'] as int? ?? 15,
+      paymentConfirmationTimeMinutes: json['paymentConfirmationTimeMinutes'] as int? ?? 1440,
       freeShippingProductCount: json['freeShippingProductCount'] as int? ?? 3,
       freeShippingCities: (json['freeShippingCities'] as List?)?.cast<String>() ?? const ['dasmariñas', 'dasmarinas'],
       specialShippingCities: (json['specialShippingCities'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num).toDouble())) ?? const {'bacoor': 1800.0},

@@ -104,7 +104,7 @@ class _PendingPaymentOrdersScreenState extends State<PendingPaymentOrdersScreen>
   /// Opens in-app GCash QR + payment proof screen (legacy paymongo orders treated as gcash).
   Future<void> _openPaymentForOrder(OrderRecord order) async {
     if (!mounted) return;
-    await Navigator.of(context).push(
+    await Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(
         builder: (_) => PaymentConfirmationScreen(
           orderId: order.id,

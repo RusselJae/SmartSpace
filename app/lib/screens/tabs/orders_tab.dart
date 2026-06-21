@@ -284,7 +284,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
   /// Opens in-app GCash QR + payment proof flow.
   Future<void> _navigateToPayment(OrderRecord order) async {
     if (!mounted) return;
-    await Navigator.of(context).push(
+    await Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(
         builder: (_) => PaymentConfirmationScreen(
           orderId: order.id,
@@ -298,8 +298,8 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     await _loadOrders();
   }
 
-  /// Confirms cancellation — **no refunds** (including after a down payment),
-  /// and requires a customer comment for audit/support context.
+  /// Confirms cancellation — **no refunds** (including after a down payment).
+  /// A cancellation reason is required.
   Future<void> _confirmCancelOrder(OrderRecord order) async {
     final commentController = TextEditingController();
     final go = await showCupertinoDialog<bool>(
@@ -320,7 +320,7 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
             CupertinoTextField(
               controller: commentController,
               maxLines: 3,
-              placeholder: 'Add cancellation comment',
+              placeholder: 'Add a reason for cancellation (required)',
             ),
           ],
         ),
@@ -340,7 +340,8 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
     if (go == true && mounted) {
       final comment = commentController.text.trim();
       if (comment.isEmpty) {
-        Toast.warning(context, 'Please add a cancellation comment');
+        Toast.warning(context, 'Please add a reason for cancellation');
+        commentController.dispose();
         return;
       }
       await _cancelExpiredOrder(order, cancellationComment: comment);
@@ -1683,7 +1684,7 @@ class _OrderPaymentScreenState extends State<_OrderPaymentScreen> {
     setState(() => _submitting = true);
     try {
       if (!mounted) return;
-      await Navigator.of(context).push(
+      await Navigator.of(context, rootNavigator: true).push(
         CupertinoPageRoute(
           builder: (_) => PaymentConfirmationScreen(
             orderId: widget.order.id,

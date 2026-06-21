@@ -1,4 +1,5 @@
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { Pool } from 'mysql2/promise';
 import { getPool } from '../config/database';
 import { generateId } from '../utils/id_generator';
 import {
@@ -9,6 +10,70 @@ import {
 import { ensureSchema as ensureInventoryMaterialsSchema } from './inventory_material_service';
 
 let _schemaEnsured = false;
+
+const isDuplicateColumnError = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes('Duplicate column') || msg.toLowerCase().includes('duplicate column name');
+};
+
+const isDuplicateKeyError = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes('Duplicate key name') || msg.toLowerCase().includes('duplicate key');
+};
+
+const columnExists = async (
+  pool: Pool,
+  tableName: string,
+  columnName: string,
+): Promise<boolean> => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT 1 AS ok
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [tableName, columnName],
+  );
+  return rows.length > 0;
+};
+
+const ensureOrderItemsVariantIdColumn = async (pool: Pool): Promise<void> => {
+  if (await columnExists(pool, 'order_items', 'variant_id')) return;
+
+  try {
+    await pool.query(`
+      ALTER TABLE order_items
+      ADD COLUMN variant_id VARCHAR(50) NULL DEFAULT NULL AFTER product_id
+    `);
+  } catch (error) {
+    if (!isDuplicateColumnError(error)) throw error;
+  }
+
+  if (!(await columnExists(pool, 'order_items', 'variant_id'))) {
+    throw new Error('Failed to add order_items.variant_id column');
+  }
+
+  try {
+    await pool.query(`ALTER TABLE order_items ADD KEY idx_order_items_variant (variant_id)`);
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) throw error;
+  }
+};
+
+const ensureOrdersMaterialsDeductedColumn = async (pool: Pool): Promise<void> => {
+  if (await columnExists(pool, 'orders', 'materials_deducted_at')) return;
+
+  try {
+    await pool.query(`
+      ALTER TABLE orders
+      ADD COLUMN materials_deducted_at TIMESTAMP NULL DEFAULT NULL
+      COMMENT 'When raw materials were deducted for this order'
+    `);
+  } catch (error) {
+    if (!isDuplicateColumnError(error)) throw error;
+  }
+};
 
 export const ensureProductVariantSchema = async (): Promise<void> => {
   if (_schemaEnsured) return;
@@ -46,31 +111,8 @@ export const ensureProductVariantSchema = async (): Promise<void> => {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
-  try {
-    await pool.query(`
-      ALTER TABLE order_items
-      ADD COLUMN variant_id VARCHAR(50) NULL DEFAULT NULL AFTER product_id,
-      ADD KEY idx_order_items_variant (variant_id)
-    `);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.includes('Duplicate column') && !msg.toLowerCase().includes('duplicate column name')) {
-      console.warn('ensureProductVariantSchema order_items.variant_id:', msg);
-    }
-  }
-
-  try {
-    await pool.query(`
-      ALTER TABLE orders
-      ADD COLUMN materials_deducted_at TIMESTAMP NULL DEFAULT NULL
-      COMMENT 'When raw materials were deducted for this order'
-    `);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.includes('Duplicate column') && !msg.toLowerCase().includes('duplicate column name')) {
-      console.warn('ensureProductVariantSchema orders.materials_deducted_at:', msg);
-    }
-  }
+  await ensureOrderItemsVariantIdColumn(pool);
+  await ensureOrdersMaterialsDeductedColumn(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS order_material_deductions (

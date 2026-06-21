@@ -484,7 +484,8 @@ class ProductVariantFormSection extends StatelessWidget {
                       ),
                       IconButton(
                         onPressed: () {
-                          draft.bomLines.removeAt(rowIndex);
+                          final removed = draft.bomLines.removeAt(rowIndex);
+                          removed.dispose();
                           if (draft.bomLines.isEmpty) {
                             draft.bomLines.add(BomLineDraft());
                           }

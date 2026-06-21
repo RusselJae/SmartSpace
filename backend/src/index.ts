@@ -68,6 +68,15 @@ const initialize = async (): Promise<void> => {
     } catch (error) {
       console.warn('⚠️ Could not archive MTO placeholder product:', error);
     }
+
+    try {
+      const { ensureProductVariantSchema } = await import('./services/product_variant_service');
+      await ensureProductVariantSchema();
+      console.log('✅ Product variant / order_items schema verified');
+    } catch (error) {
+      console.error('❌ Failed to ensure product variant schema:', error);
+      process.exit(1);
+    }
     
     // Check email configuration before starting server
     checkEmailConfiguration();

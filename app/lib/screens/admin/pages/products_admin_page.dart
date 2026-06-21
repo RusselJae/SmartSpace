@@ -949,6 +949,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
     if (product != null) {
       _variantDrafts = [VariantDraft.fromProduct(product)];
+      _loadingVariants = true;
     } else {
       _variantDrafts = [
         VariantDraft(variantName: 'Standard', isDefault: true),
@@ -973,11 +974,14 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         final variants = await widget.db.getProductVariants(product.id);
         if (!mounted) return;
         if (variants.isNotEmpty) {
-          for (final old in _variantDrafts) {
-            old.dispose();
-          }
+          final oldDrafts = List<VariantDraft>.from(_variantDrafts);
           setState(() {
             _variantDrafts = variants.map(VariantDraft.fromVariant).toList();
+          });
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            for (final old in oldDrafts) {
+              old.dispose();
+            }
           });
         }
       }
@@ -1000,6 +1004,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
           (variant.bomLines.length == 1 &&
               variant.bomLines.first.inventoryMaterialId == null &&
               variant.bomLines.first.quantity.text.trim().isEmpty)) {
+        for (final row in variant.bomLines) {
+          row.dispose();
+        }
         variant.bomLines = [BomLineDraft(inventoryMaterialId: match.id, quantity: '1')];
       }
     }
@@ -1019,13 +1026,17 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   void _removeVariantDraft(int index) {
     if (_variantDrafts.length <= 1) return;
+    VariantDraft? removed;
     setState(() {
-      final removed = _variantDrafts.removeAt(index);
-      removed.dispose();
+      removed = _variantDrafts.removeAt(index);
       if (!_variantDrafts.any((v) => v.isDefault)) {
         _variantDrafts.first.isDefault = true;
       }
     });
+    final draft = removed;
+    if (draft != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => draft.dispose());
+    }
   }
 
   void _setDefaultVariant(int index) {

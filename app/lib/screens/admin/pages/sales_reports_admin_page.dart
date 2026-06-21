@@ -268,6 +268,65 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
+  static const String _storeBrandName = 'Wood Home Furniture Trading';
+
+  List<OrderRecord> get _periodAllOrders => _orders
+      .where(
+        (o) =>
+            !o.createdAt.isBefore(_periodStart) && o.createdAt.isBefore(_periodEnd),
+      )
+      .toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+  int get _completedOrdersCount => _periodAllOrders
+      .where((o) => o.status.toLowerCase() != 'cancelled')
+      .length;
+
+  int get _grossOrdersCount => _periodAllOrders.length;
+
+  Map<String, int> get _productGrossOrderCounts {
+    final counts = <String, int>{};
+    for (final order in _periodAllOrders) {
+      for (final productId in order.productIds) {
+        counts[productId] = (counts[productId] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  /// One row per calendar day inside the active report window.
+  List<_DailyRevenueTrendRow> get _dailyRevenueTrendRows {
+    final rows = <_DailyRevenueTrendRow>[];
+    var day = DateTime(_periodStart.year, _periodStart.month, _periodStart.day);
+    final endDay = _periodEnd.subtract(const Duration(days: 1));
+    while (!day.isAfter(endDay)) {
+      final next = day.add(const Duration(days: 1));
+      final dayOrders = _orders.where((o) {
+        final status = o.status.toLowerCase();
+        final isCancelled = status == 'cancelled';
+        final includeCancelledForRevenue = _isPaymentDefaultCancelled(o);
+        return (!isCancelled || includeCancelledForRevenue) &&
+            !o.createdAt.isBefore(day) &&
+            o.createdAt.isBefore(next);
+      }).toList();
+      final revenue = dayOrders.fold<double>(
+        0,
+        (sum, o) => sum + _orderRevenueForSalesReports(o),
+      );
+      final orderCount = dayOrders.length;
+      rows.add(
+        _DailyRevenueTrendRow(
+          date: day,
+          orders: orderCount,
+          revenue: revenue,
+          avgOrderValue: orderCount == 0 ? 0 : revenue / orderCount,
+        ),
+      );
+      day = next;
+    }
+    return rows;
+  }
+
   bool _isPaymentDefaultCancelled(OrderRecord o) {
     final status = o.status.toLowerCase();
     if (status != 'cancelled') return false;
@@ -503,28 +562,6 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
         '${_selectedDate.day.toString().padLeft(2, '0')}';
   }
 
-  String _trendXAxisLabel(DateTime date) => _salesTrendXLabel(_trendGranularity, date);
-
-  void _setXlsxCell(
-    excel.Sheet sheet,
-    String coord,
-    excel.CellValue value, {
-    excel.CellStyle? style,
-  }) {
-    final cell = sheet.cell(excel.CellIndex.indexByString(coord));
-    cell.value = value;
-    if (style != null) cell.cellStyle = style;
-  }
-
-  void _appendXlsxHeaderRow(excel.Sheet sheet, List<String> headers, excel.CellStyle style) {
-    final row = sheet.maxRows;
-    for (var col = 0; col < headers.length; col++) {
-      final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
-      cell.value = excel.TextCellValue(headers[col]);
-      cell.cellStyle = style;
-    }
-  }
-
   Future<void> _exportExcelXlsx() async {
     if (_exporting) return;
     setState(() => _exporting = true);
@@ -562,170 +599,17 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     }
   }
 
-  Uint8List _buildXlsxForGranularity() {
-    final workbook = excel.Excel.createExcel();
-    workbook.delete('Sheet1');
-
-    const walnut = '#5D4037';
-    const walnutSoft = '#EFE8E3';
-
-    final brandBanner = excel.CellStyle(
-      bold: true,
-      fontSize: 16,
-      fontColorHex: excel.ExcelColor.white,
-      backgroundColorHex: excel.ExcelColor.fromHexString(walnut),
-      horizontalAlign: excel.HorizontalAlign.Center,
-      verticalAlign: excel.VerticalAlign.Center,
-    );
-    final metaLabel = excel.CellStyle(
-      bold: true,
-      backgroundColorHex: excel.ExcelColor.fromHexString(walnutSoft),
-    );
-    final tableHeader = excel.CellStyle(
-      bold: true,
-      fontColorHex: excel.ExcelColor.white,
-      backgroundColorHex: excel.ExcelColor.fromHexString(walnut),
-      horizontalAlign: excel.HorizontalAlign.Center,
-    );
-    final sectionTitle = excel.CellStyle(
-      bold: true,
-      fontSize: 12,
-      fontColorHex: excel.ExcelColor.fromHexString(walnut),
-    );
-    final currencyFormat = excel.NumFormat.standard_2;
-
-    final generatedAt = AdminFormatters.dateYmdHm(DateTime.now());
-    final trend = _activeTrendPoints;
-    final summaryRows = _summaryRows();
-    final topSelling = _bestSellingInMonth;
-    final topRated = _topRatedInMonth;
-    final mostCancelled = _mostCancelledInMonth;
-
-    final overview = workbook['Overview'];
-    overview.setColumnWidth(0, 34);
-    overview.setColumnWidth(1, 32);
-    overview.setRowHeight(0, 36);
-
-    _setXlsxCell(overview, 'A1', excel.TextCellValue('Wood Home Furniture Trading'), style: brandBanner);
-    _setXlsxCell(overview, 'B1', excel.TextCellValue(''), style: brandBanner);
-    _setXlsxCell(
-      overview,
-      'A2',
-      excel.TextCellValue('Sales Report (${_granularityLabel.toUpperCase()})'),
-      style: sectionTitle,
-    );
-    _setXlsxCell(overview, 'A3', excel.TextCellValue('Date Range'), style: metaLabel);
-    _setXlsxCell(overview, 'B3', excel.TextCellValue(_exportDateRangeLabel));
-    _setXlsxCell(overview, 'A4', excel.TextCellValue('Generated At'), style: metaLabel);
-    _setXlsxCell(overview, 'B4', excel.TextCellValue(generatedAt));
-    overview.appendRow([excel.TextCellValue(''), excel.TextCellValue('')]);
-    _appendXlsxHeaderRow(overview, ['Summary', 'Value'], tableHeader);
-    for (final row in summaryRows) {
-      overview.appendRow([excel.TextCellValue(row.$1), excel.TextCellValue(row.$2)]);
-    }
-
-    final trendSheet = workbook['Revenue Trend'];
-    trendSheet.setColumnWidth(0, 22);
-    trendSheet.setColumnWidth(1, 18);
-    _setXlsxCell(
-      trendSheet,
-      'A1',
-      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
-      style: sectionTitle,
-    );
-    _appendXlsxHeaderRow(trendSheet, [_granularityLabel.toUpperCase(), 'Amount'], tableHeader);
-    for (final p in trend) {
-      final row = trendSheet.maxRows;
-      trendSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
-          excel.TextCellValue(_trendXAxisLabel(p.x));
-      final amountCell =
-          trendSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: row));
-      amountCell.value = excel.DoubleCellValue(p.y);
-      amountCell.cellStyle = excel.CellStyle(numberFormat: currencyFormat);
-    }
-
-    final sellingSheet = workbook['Top Selling'];
-    sellingSheet.setColumnWidth(0, 30);
-    sellingSheet.setColumnWidth(1, 14);
-    sellingSheet.setColumnWidth(2, 18);
-    _setXlsxCell(
-      sellingSheet,
-      'A1',
-      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
-      style: sectionTitle,
-    );
-    _appendXlsxHeaderRow(
-      sellingSheet,
-      ['Product', 'Units Sold', 'Estimated Revenue'],
-      tableHeader,
-    );
-    for (final item in topSelling) {
-      final row = sellingSheet.maxRows;
-      sellingSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
-          excel.TextCellValue(item.name);
-      sellingSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: row)).value =
-          excel.DoubleCellValue(item.value);
-      final revCell =
-          sellingSheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: row));
-      revCell.value = excel.DoubleCellValue(item.secondaryValue);
-      revCell.cellStyle = excel.CellStyle(numberFormat: currencyFormat);
-    }
-
-    final ratedSheet = workbook['Top Rated'];
-    ratedSheet.setColumnWidth(0, 30);
-    ratedSheet.setColumnWidth(1, 14);
-    ratedSheet.setColumnWidth(2, 14);
-    _setXlsxCell(
-      ratedSheet,
-      'A1',
-      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
-      style: sectionTitle,
-    );
-    _appendXlsxHeaderRow(
-      ratedSheet,
-      ['Product', 'Average Rating', 'Review Count'],
-      tableHeader,
-    );
-    for (final item in topRated) {
-      ratedSheet.appendRow([
-        excel.TextCellValue(item.name),
-        excel.DoubleCellValue(item.value),
-        excel.DoubleCellValue(item.secondaryValue),
-      ]);
-    }
-
-    final cancelledSheet = workbook['Most Cancelled'];
-    cancelledSheet.setColumnWidth(0, 30);
-    cancelledSheet.setColumnWidth(1, 20);
-    _setXlsxCell(
-      cancelledSheet,
-      'A1',
-      excel.TextCellValue('Date Range: $_exportDateRangeLabel'),
-      style: sectionTitle,
-    );
-    _appendXlsxHeaderRow(cancelledSheet, ['Product', 'Cancelled Orders'], tableHeader);
-    for (final item in mostCancelled) {
-      cancelledSheet.appendRow([
-        excel.TextCellValue(item.name),
-        excel.DoubleCellValue(item.value),
-      ]);
-    }
-
-    final encoded = workbook.encode();
-    if (encoded == null || encoded.isEmpty) {
-      throw StateError('Failed to encode XLSX workbook.');
-    }
-    return Uint8List.fromList(encoded);
-  }
-
   List<(String, String)> _summaryRows() {
-    final avgOrderValue = _monthOrders.isEmpty ? 0.0 : _monthSales / _monthOrders.length;
+    final avgOrderValue =
+        _monthOrders.isEmpty ? 0.0 : _monthSales / _monthOrders.length;
     final topBestSeller = _bestSellingInMonth.isEmpty ? '-' : _bestSellingInMonth.first.name;
     final topRated = _topRatedInMonth.isEmpty ? '-' : _topRatedInMonth.first.name;
-    final topCancelled = _mostCancelledInMonth.isEmpty ? '-' : _mostCancelledInMonth.first.name;
+    final topCancelled =
+        _mostCancelledInMonth.isEmpty ? '-' : _mostCancelledInMonth.first.name;
     return <(String, String)>[
       ('Total Sales', AdminFormatters.currency(_monthSales)),
-      ('Total Orders', AdminFormatters.count(_monthOrders.length)),
+      ('Gross Orders', AdminFormatters.count(_grossOrdersCount)),
+      ('Completed Orders', AdminFormatters.count(_completedOrdersCount)),
       ('Cancelled Orders', AdminFormatters.count(_monthCancelledOrders.length)),
       ('Average Order Value', AdminFormatters.currency(avgOrderValue)),
       ('Best Selling Product', topBestSeller),
@@ -734,8 +618,360 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
     ];
   }
 
+  excel.CellStyle _xlsxBorderedStyle({
+    required String backgroundHex,
+    bool bold = false,
+    excel.HorizontalAlign align = excel.HorizontalAlign.Left,
+    excel.NumFormat? numberFormat,
+  }) {
+    const borderColor = '#D7CCC8';
+    final border = excel.Border(
+      borderStyle: excel.BorderStyle.Thin,
+      borderColorHex: excel.ExcelColor.fromHexString(borderColor),
+    );
+    return excel.CellStyle(
+      bold: bold,
+      backgroundColorHex: excel.ExcelColor.fromHexString(backgroundHex),
+      horizontalAlign: align,
+      verticalAlign: excel.VerticalAlign.Center,
+      leftBorder: border,
+      rightBorder: border,
+      topBorder: border,
+      bottomBorder: border,
+      numberFormat: numberFormat ?? excel.NumFormat.standard_2,
+    );
+  }
+
+  void _writeXlsxRow(
+    excel.Sheet sheet,
+    int rowIndex,
+    List<excel.CellValue> values, {
+    required excel.CellStyle style,
+    int startColumn = 0,
+  }) {
+    for (var col = 0; col < values.length; col++) {
+      final cell = sheet.cell(
+        excel.CellIndex.indexByColumnRow(columnIndex: startColumn + col, rowIndex: rowIndex),
+      );
+      cell.value = values[col];
+      cell.cellStyle = style;
+    }
+  }
+
+  void _autoFitXlsxColumns(excel.Sheet sheet, int columnCount) {
+    for (var col = 0; col < columnCount; col++) {
+      var maxLen = 12.0;
+      final limit = sheet.maxRows.clamp(0, 500);
+      for (var row = 0; row < limit; row++) {
+        final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
+        final String text = switch (cell.value) {
+          excel.TextCellValue v => v.value.toString(),
+          excel.DoubleCellValue v => v.value.toString(),
+          excel.IntCellValue v => v.value.toString(),
+          _ => '',
+        };
+        final len = text.length;
+        if (len > maxLen) maxLen = len.toDouble();
+      }
+      sheet.setColumnWidth(col, (maxLen + 4).clamp(14, 48));
+    }
+  }
+
+  Uint8List _buildXlsxForGranularity() {
+    const walnut = '#5D4037';
+    const walnutSoft = '#EFE8E3';
+    const beigeAlt = '#F9F5F2';
+
+    final workbook = excel.Excel.createExcel();
+    workbook.delete('Sheet1');
+    final sheet = workbook['Sales Report'];
+
+    final brandBanner = excel.CellStyle(
+      bold: true,
+      fontSize: 16,
+      fontColorHex: excel.ExcelColor.white,
+      backgroundColorHex: excel.ExcelColor.fromHexString(walnut),
+      horizontalAlign: excel.HorizontalAlign.Left,
+      verticalAlign: excel.VerticalAlign.Center,
+    );
+    final metaLabel = excel.CellStyle(
+      bold: true,
+      backgroundColorHex: excel.ExcelColor.fromHexString(walnutSoft),
+    );
+    final sectionTitle = excel.CellStyle(
+      bold: true,
+      fontSize: 12,
+      fontColorHex: excel.ExcelColor.fromHexString(walnut),
+    );
+    final tableHeader = excel.CellStyle(
+      bold: true,
+      fontColorHex: excel.ExcelColor.white,
+      backgroundColorHex: excel.ExcelColor.fromHexString(walnut),
+      horizontalAlign: excel.HorizontalAlign.Center,
+      verticalAlign: excel.VerticalAlign.Center,
+      leftBorder: excel.Border(
+        borderStyle: excel.BorderStyle.Thin,
+        borderColorHex: excel.ExcelColor.fromHexString('#D7CCC8'),
+      ),
+      rightBorder: excel.Border(
+        borderStyle: excel.BorderStyle.Thin,
+        borderColorHex: excel.ExcelColor.fromHexString('#D7CCC8'),
+      ),
+      topBorder: excel.Border(
+        borderStyle: excel.BorderStyle.Thin,
+        borderColorHex: excel.ExcelColor.fromHexString('#D7CCC8'),
+      ),
+      bottomBorder: excel.Border(
+        borderStyle: excel.BorderStyle.Thin,
+        borderColorHex: excel.ExcelColor.fromHexString('#D7CCC8'),
+      ),
+    );
+
+    final generatedAt = AdminFormatters.dateYmdHm(DateTime.now());
+    final summaryRows = _summaryRows();
+    final trendRows = _dailyRevenueTrendRows;
+    final topSelling = _bestSellingInMonth;
+    final topRated = _topRatedInMonth;
+    final mostCancelled = _mostCancelledInMonth;
+    final grossByProduct = _productGrossOrderCounts;
+
+    var row = 0;
+
+    // -------------------------------------------------------------------------
+    // Header / branding (single sheet, stacked sections)
+    // -------------------------------------------------------------------------
+    sheet.setRowHeight(row, 34);
+    _writeXlsxRow(
+      sheet,
+      row,
+      List<excel.CellValue>.generate(4, (_) => excel.TextCellValue('')),
+      style: brandBanner,
+    );
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+        excel.TextCellValue(_storeBrandName);
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).cellStyle =
+        brandBanner;
+    row++;
+
+    _writeXlsxRow(
+      sheet,
+      row,
+      [excel.TextCellValue('Report Type'), excel.TextCellValue('Sales Report (${_granularityLabel.toUpperCase()})')],
+      style: metaLabel,
+    );
+    row++;
+    _writeXlsxRow(
+      sheet,
+      row,
+      [excel.TextCellValue('Date Range'), excel.TextCellValue(_exportDateRangeLabel)],
+      style: metaLabel,
+    );
+    row++;
+    _writeXlsxRow(
+      sheet,
+      row,
+      [excel.TextCellValue('Generated At'), excel.TextCellValue(generatedAt)],
+      style: metaLabel,
+    );
+    row += 2;
+
+    // -------------------------------------------------------------------------
+    // Summary
+    // -------------------------------------------------------------------------
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+        excel.TextCellValue('Summary');
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).cellStyle =
+        sectionTitle;
+    row++;
+    _writeXlsxRow(
+      sheet,
+      row,
+      [excel.TextCellValue('Metric'), excel.TextCellValue('Value')],
+      style: tableHeader,
+    );
+    row++;
+    for (var i = 0; i < summaryRows.length; i++) {
+      final entry = summaryRows[i];
+      final bg = i.isEven ? beigeAlt : '#FFFFFF';
+      _writeXlsxRow(
+        sheet,
+        row,
+        [excel.TextCellValue(entry.$1), excel.TextCellValue(entry.$2)],
+        style: _xlsxBorderedStyle(backgroundHex: bg),
+      );
+      row++;
+    }
+    row++;
+
+    // -------------------------------------------------------------------------
+    // Revenue trend (daily)
+    // -------------------------------------------------------------------------
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+        excel.TextCellValue('Revenue Trend');
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).cellStyle =
+        sectionTitle;
+    row++;
+    _writeXlsxRow(
+      sheet,
+      row,
+      [
+        excel.TextCellValue('Date'),
+        excel.TextCellValue('Orders'),
+        excel.TextCellValue('Revenue'),
+        excel.TextCellValue('Avg Order Value'),
+      ],
+      style: tableHeader,
+    );
+    row++;
+    for (var i = 0; i < trendRows.length; i++) {
+      final entry = trendRows[i];
+      final bg = i.isEven ? beigeAlt : '#FFFFFF';
+      _writeXlsxRow(
+        sheet,
+        row,
+        [
+          excel.TextCellValue(DateFormat.yMMMd().format(entry.date)),
+          excel.IntCellValue(entry.orders),
+          excel.TextCellValue(AdminFormatters.currency(entry.revenue)),
+          excel.TextCellValue(AdminFormatters.currency(entry.avgOrderValue)),
+        ],
+        style: _xlsxBorderedStyle(backgroundHex: bg, align: excel.HorizontalAlign.Center),
+      );
+      row++;
+    }
+    row++;
+
+    // -------------------------------------------------------------------------
+    // Top selling products
+    // -------------------------------------------------------------------------
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+        excel.TextCellValue('Top Selling Products');
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).cellStyle =
+        sectionTitle;
+    row++;
+    _writeXlsxRow(
+      sheet,
+      row,
+      [
+        excel.TextCellValue('Rank'),
+        excel.TextCellValue('Product Name'),
+        excel.TextCellValue('Units Sold'),
+        excel.TextCellValue('Revenue'),
+      ],
+      style: tableHeader,
+    );
+    row++;
+    for (var i = 0; i < topSelling.length; i++) {
+      final item = topSelling[i];
+      final bg = i.isEven ? beigeAlt : '#FFFFFF';
+      _writeXlsxRow(
+        sheet,
+        row,
+        [
+          excel.IntCellValue(i + 1),
+          excel.TextCellValue(item.name),
+          excel.IntCellValue(item.value.round()),
+          excel.TextCellValue(AdminFormatters.currency(item.secondaryValue)),
+        ],
+        style: _xlsxBorderedStyle(backgroundHex: bg),
+      );
+      row++;
+    }
+    row++;
+
+    // -------------------------------------------------------------------------
+    // Top rated products
+    // -------------------------------------------------------------------------
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+        excel.TextCellValue('Top Rated Products');
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).cellStyle =
+        sectionTitle;
+    row++;
+    _writeXlsxRow(
+      sheet,
+      row,
+      [
+        excel.TextCellValue('Rank'),
+        excel.TextCellValue('Product Name'),
+        excel.TextCellValue('Avg Rating'),
+        excel.TextCellValue('No. of Reviews'),
+      ],
+      style: tableHeader,
+    );
+    row++;
+    for (var i = 0; i < topRated.length; i++) {
+      final item = topRated[i];
+      final bg = i.isEven ? beigeAlt : '#FFFFFF';
+      _writeXlsxRow(
+        sheet,
+        row,
+        [
+          excel.IntCellValue(i + 1),
+          excel.TextCellValue(item.name),
+          excel.TextCellValue(AdminFormatters.decimal(item.value)),
+          excel.IntCellValue(item.secondaryValue.round()),
+        ],
+        style: _xlsxBorderedStyle(backgroundHex: bg),
+      );
+      row++;
+    }
+    row++;
+
+    // -------------------------------------------------------------------------
+    // Most cancelled products
+    // -------------------------------------------------------------------------
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value =
+        excel.TextCellValue('Most Cancelled Products');
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).cellStyle =
+        sectionTitle;
+    row++;
+    _writeXlsxRow(
+      sheet,
+      row,
+      [
+        excel.TextCellValue('Rank'),
+        excel.TextCellValue('Product Name'),
+        excel.TextCellValue('Cancellations'),
+        excel.TextCellValue('Cancellation Rate %'),
+      ],
+      style: tableHeader,
+    );
+    row++;
+    for (var i = 0; i < mostCancelled.length; i++) {
+      final item = mostCancelled[i];
+      final gross = grossByProduct[item.productId] ?? 0;
+      final rate = gross == 0 ? 0.0 : (item.value / gross) * 100;
+      final bg = i.isEven ? beigeAlt : '#FFFFFF';
+      _writeXlsxRow(
+        sheet,
+        row,
+        [
+          excel.IntCellValue(i + 1),
+          excel.TextCellValue(item.name),
+          excel.IntCellValue(item.value.round()),
+          excel.TextCellValue(AdminFormatters.decimal(rate)),
+        ],
+        style: _xlsxBorderedStyle(backgroundHex: bg),
+      );
+      row++;
+    }
+
+    _autoFitXlsxColumns(sheet, 4);
+
+    final encoded = workbook.encode();
+    if (encoded == null || encoded.isEmpty) {
+      throw StateError('Failed to encode XLSX workbook.');
+    }
+    return Uint8List.fromList(encoded);
+  }
+
   Future<pw.Document> _buildPdfDocumentForGranularity() async {
-    final doc = pw.Document();
+    final baseFont = await PdfGoogleFonts.notoSansRegular();
+    final boldFont = await PdfGoogleFonts.notoSansBold();
+    final doc = pw.Document(
+      theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont),
+    );
+
     pw.MemoryImage? logo;
     try {
       final bytes = (await rootBundle.load('assets/images/logo.jpg')).buffer.asUint8List();
@@ -744,32 +980,54 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
       logo = null;
     }
 
+    const walnut = PdfColor.fromInt(0xFF5D4037);
+    final headerDecoration = const pw.BoxDecoration(color: walnut);
+    final headerStyle = pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white);
+
     final summary = _summaryRows();
-    final trendRows = _activeTrendPoints
+    final trendRows = _dailyRevenueTrendRows
         .map(
           (e) => <String>[
-            _trendXAxisLabel(e.x),
-            AdminFormatters.currency(e.y),
+            DateFormat.yMMMd().format(e.date),
+            AdminFormatters.count(e.orders),
+            AdminFormatters.currency(e.revenue),
+            AdminFormatters.currency(e.avgOrderValue),
           ],
         )
         .toList();
-    final bestRows = _bestSellingInMonth
-        .map((e) => <String>[
-              e.name,
-              AdminFormatters.decimal(e.value, digits: 0),
-              AdminFormatters.currency(e.secondaryValue),
-            ])
-        .toList();
-    final ratedRows = _topRatedInMonth
-        .map((e) => <String>[
-              e.name,
-              AdminFormatters.decimal(e.value),
-              AdminFormatters.decimal(e.secondaryValue, digits: 0),
-            ])
-        .toList();
-    final cancelledRows = _mostCancelledInMonth
-        .map((e) => <String>[e.name, AdminFormatters.decimal(e.value, digits: 0)])
-        .toList();
+    final grossByProduct = _productGrossOrderCounts;
+    final bestRows = <List<String>>[];
+    for (var i = 0; i < _bestSellingInMonth.length; i++) {
+      final e = _bestSellingInMonth[i];
+      bestRows.add([
+        '${i + 1}',
+        e.name,
+        AdminFormatters.decimal(e.value, digits: 0),
+        AdminFormatters.currency(e.secondaryValue),
+      ]);
+    }
+    final ratedRows = <List<String>>[];
+    for (var i = 0; i < _topRatedInMonth.length; i++) {
+      final e = _topRatedInMonth[i];
+      ratedRows.add([
+        '${i + 1}',
+        e.name,
+        AdminFormatters.decimal(e.value),
+        AdminFormatters.decimal(e.secondaryValue, digits: 0),
+      ]);
+    }
+    final cancelledRows = <List<String>>[];
+    for (var i = 0; i < _mostCancelledInMonth.length; i++) {
+      final e = _mostCancelledInMonth[i];
+      final gross = grossByProduct[e.productId] ?? 0;
+      final rate = gross == 0 ? 0.0 : (e.value / gross) * 100;
+      cancelledRows.add([
+        '${i + 1}',
+        e.name,
+        AdminFormatters.decimal(e.value, digits: 0),
+        AdminFormatters.decimal(rate),
+      ]);
+    }
 
     doc.addPage(
       pw.MultiPage(
@@ -797,7 +1055,7 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
                     pw.Text(
-                      'Wood Home Furniture Trading',
+                      _storeBrandName,
                       style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
                     ),
                     pw.SizedBox(height: 2),
@@ -830,54 +1088,70 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
           pw.TableHelper.fromTextArray(
             headers: const <String>['Metric', 'Value'],
             data: summary.map((e) => <String>[e.$1, e.$2]).toList(),
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.blueGrey700),
+            headerStyle: headerStyle,
+            headerDecoration: headerDecoration,
             cellAlignment: pw.Alignment.centerLeft,
             cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+          ),
+          pw.SizedBox(height: 16),
+          pw.Text('Revenue Trend', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 8),
+          pw.TableHelper.fromTextArray(
+            headers: const <String>['Date', 'Orders', 'Revenue', 'Avg Order Value'],
+            data: trendRows,
+            headerStyle: headerStyle,
+            headerDecoration: headerDecoration,
+            cellAlignment: pw.Alignment.centerLeft,
+            cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           ),
           pw.SizedBox(height: 16),
           pw.Text(
-            '${_granularityLabel[0].toUpperCase()}${_granularityLabel.substring(1)} Revenue Report',
+            'Top Selling Products',
             style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
           ),
           pw.SizedBox(height: 8),
           pw.TableHelper.fromTextArray(
-            headers: <String>[_granularityLabel.toUpperCase(), 'Amount'],
-            data: trendRows,
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey700),
-            cellAlignment: pw.Alignment.centerLeft,
-            cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          ),
-          pw.SizedBox(height: 16),
-          pw.Text('Best Selling Products', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
-          pw.SizedBox(height: 8),
-          pw.TableHelper.fromTextArray(
-            headers: const <String>['Product', 'Units Sold', 'Estimated Revenue'],
+            headers: const <String>['Rank', 'Product Name', 'Units Sold', 'Revenue'],
             data: bestRows,
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.brown700),
+            headerStyle: headerStyle,
+            headerDecoration: headerDecoration,
             cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           ),
           pw.SizedBox(height: 16),
-          pw.Text('Top Rated Products', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+          pw.Text(
+            'Top Rated Products',
+            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+          ),
           pw.SizedBox(height: 8),
           pw.TableHelper.fromTextArray(
-            headers: const <String>['Product', 'Avg Rating', 'Review Count'],
+            headers: const <String>['Rank', 'Product Name', 'Avg Rating', 'No. of Reviews'],
             data: ratedRows,
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.teal700),
+            headerStyle: headerStyle,
+            headerDecoration: headerDecoration,
             cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           ),
           pw.SizedBox(height: 16),
-          pw.Text('Most Cancelled Products', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+          pw.Text(
+            'Most Cancelled Products',
+            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+          ),
           pw.SizedBox(height: 8),
           pw.TableHelper.fromTextArray(
-            headers: const <String>['Product', 'Cancelled Orders'],
+            headers: const <String>[
+              'Rank',
+              'Product Name',
+              'Cancellations',
+              'Cancellation Rate %',
+            ],
             data: cancelledRows,
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.red700),
+            headerStyle: headerStyle,
+            headerDecoration: headerDecoration,
             cellPadding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           ),
         ],
       ),
@@ -999,6 +1273,20 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
         )
         .toList(growable: false);
   }
+}
+
+class _DailyRevenueTrendRow {
+  const _DailyRevenueTrendRow({
+    required this.date,
+    required this.orders,
+    required this.revenue,
+    required this.avgOrderValue,
+  });
+
+  final DateTime date;
+  final int orders;
+  final double revenue;
+  final double avgOrderValue;
 }
 
 class _SalesProductStat {
@@ -1183,7 +1471,7 @@ class _SalesTrendSection extends StatelessWidget {
                   },
                 ),
                 const Spacer(),
-                // Inputs (date range) stay grouped; export actions live behind the ellipsis menu.
+                // Date inputs scroll when crowded; ellipsis stays pinned on the right.
                 Flexible(
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -1217,68 +1505,68 @@ class _SalesTrendSection extends StatelessWidget {
                           TextButton.icon(
                             onPressed: onClearRange,
                             icon: const Icon(Icons.clear_outlined, size: 18),
-                            label: const Text('Clear range'),
+                            label: const Text('Clear'),
                             style: TextButton.styleFrom(
                               foregroundColor: const Color(0xFF8D6E63),
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                             ),
                           ),
                         ],
-                        Container(
-                          width: 1,
-                          height: 44,
-                          margin: const EdgeInsets.symmetric(horizontal: 10),
-                          color: const Color(0xFFE0E0E0),
-                        ),
-                        PopupMenuButton<String>(
-                          tooltip: 'Report actions',
-                          enabled: onExport != null || onPrint != null,
-                          offset: const Offset(0, 44),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          itemBuilder: (context) => [
-                            if (onExport != null)
-                              const PopupMenuItem(
-                                value: 'excel',
-                                child: ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.table_view_outlined, size: 20),
-                                  title: Text('Excel'),
-                                ),
-                              ),
-                            if (onPrint != null)
-                              const PopupMenuItem(
-                                value: 'pdf',
-                                child: ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.picture_as_pdf_outlined, size: 20),
-                                  title: Text('PDF'),
-                                ),
-                              ),
-                          ],
-                          onSelected: (value) {
-                            switch (value) {
-                              case 'excel':
-                                onExport?.call();
-                              case 'pdf':
-                                onPrint?.call();
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: const Color(0xFFD7CCC8)),
-                              color: Colors.white,
-                            ),
-                            child: const Icon(Icons.more_horiz, size: 22, color: Color(0xFF5D4037)),
-                          ),
-                        ),
                       ],
                     ),
+                  ),
+                ),
+                Container(
+                  width: 1,
+                  height: 44,
+                  margin: const EdgeInsets.symmetric(horizontal: 10),
+                  color: const Color(0xFFE0E0E0),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Report actions',
+                  enabled: onExport != null || onPrint != null,
+                  offset: const Offset(0, 44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  itemBuilder: (context) => [
+                    if (onExport != null)
+                      const PopupMenuItem(
+                        value: 'excel',
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.table_view_outlined, size: 20),
+                          title: Text('Export Excel'),
+                        ),
+                      ),
+                    if (onPrint != null)
+                      const PopupMenuItem(
+                        value: 'pdf',
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.picture_as_pdf_outlined, size: 20),
+                          title: Text('Print PDF'),
+                        ),
+                      ),
+                  ],
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'excel':
+                        onExport?.call();
+                      case 'pdf':
+                        onPrint?.call();
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFD7CCC8)),
+                      color: Colors.white,
+                    ),
+                    child: const Icon(Icons.more_horiz, size: 22, color: Color(0xFF5D4037)),
                   ),
                 ),
               ],

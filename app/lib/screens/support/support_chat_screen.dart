@@ -310,7 +310,6 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    const lightBrown = Color(0xFFF4E6D4);
     const mediumBrown = Color(0xFF8D6E63);
 
     if (_loading) {
@@ -323,7 +322,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
       return CupertinoPageScaffold(
         backgroundColor: const Color(0xFFF7F7F7),
         navigationBar: CupertinoNavigationBar(
-          backgroundColor: lightBrown,
+          backgroundColor: Colors.white,
           border: Border(
             bottom: BorderSide(
               color: mediumBrown.withValues(alpha: 0.2),
@@ -360,7 +359,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     return CupertinoPageScaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       navigationBar: CupertinoNavigationBar(
-        backgroundColor: lightBrown,
+        backgroundColor: Colors.white,
         border: Border(
           bottom: BorderSide(
             color: mediumBrown.withValues(alpha: 0.2),

@@ -10,7 +10,10 @@ import '../../services/mysql_database_service.dart';
 import '../../services/cart_service.dart';
 import '../../services/wishlist_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/recently_viewed_service.dart';
+import '../../services/product_suggestion_service.dart';
 import '../../models/product.dart';
+import '../../widgets/suggested_for_you_section.dart';
 import '../../widgets/toast.dart';
 import '../../utils/model_path_helper.dart';
 import '../../services/native_ar_editor_service.dart';
@@ -37,6 +40,8 @@ class _CatalogHomeState extends State<CatalogHome> {
   List<Product> _newArrivals = [];
   List<Product> _topRatedProducts = [];
   List<Product> _bestSellerProducts = [];
+  List<ProductSuggestion> _suggestions = const [];
+  String? _suggestionTopCategory;
   bool _loading = true;
   String? _error;
 
@@ -81,6 +86,9 @@ class _CatalogHomeState extends State<CatalogHome> {
   static const Color _kBrown = Color(0xFF8D6E63); // Primary brown
   static const Color _kOrange = Color(0xFFFF9800); // Primary orange
   static const Color _kLight = Color(0xFFF4E6D4);
+  static const int _homeCarouselLimit = 10;
+
+  final ProductSuggestionService _suggestionService = ProductSuggestionService();
 
   @override
   void initState() {
@@ -123,6 +131,38 @@ class _CatalogHomeState extends State<CatalogHome> {
         _bestSellerProducts = (results[3] as List<Product>).where((p) => !p.isArchived).toList();
         developer.log('✅ Loaded ${_allProducts.length} products from database');
       });
+
+      if (_auth.isAuthenticated && _auth.currentUser != null) {
+        final userId = _auth.currentUser!.id;
+        final recentIds = await RecentlyViewedService.instance.getRecentIds();
+        final orders = await _db.getAllOrders(forUserId: userId);
+        final purchasedIds = orders.expand((o) => o.productIds).toList();
+        final wishlist = WishlistService().items;
+        final suggestions = _suggestionService.buildSuggestions(
+          allProducts: _allProducts,
+          recentIds: recentIds,
+          wishlistProducts: wishlist,
+          purchasedIds: purchasedIds,
+          trendingProducts: _bestSellerProducts,
+        );
+        final byId = {for (final p in _allProducts) p.id: p};
+        final topCategory = _suggestionService.topCategoryLabel(
+          recentIds: recentIds,
+          purchasedIds: purchasedIds,
+          byId: byId,
+        );
+        if (mounted) {
+          setState(() {
+            _suggestions = suggestions;
+            _suggestionTopCategory = topCategory;
+          });
+        }
+      } else if (mounted) {
+        setState(() {
+          _suggestions = const [];
+          _suggestionTopCategory = null;
+        });
+      }
     } catch (e) {
       developer.log('❌ Failed to load products: $e');
       if (!mounted) return;
@@ -137,10 +177,126 @@ class _CatalogHomeState extends State<CatalogHome> {
   }
 
   void _openProduct(BuildContext context, Product product) {
+    RecentlyViewedService.instance.recordView(product.id);
     // Use rootNavigator to hide tab bar when navigating to product detail
     Navigator.of(context, rootNavigator: true).push(
       CupertinoPageRoute(builder: (_) => ProductDetailScreen(product: product)),
     );
+  }
+
+  Widget _buildSectionHeader(String title, VoidCallback onSeeAll) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.poppins(
+            fontSize: 16,
+            fontWeight: FontWeight.normal,
+            color: Colors.black,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        CupertinoButton(
+          padding: EdgeInsets.zero,
+          minSize: 0,
+          onPressed: onSeeAll,
+          child: Text(
+            'See All',
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: _kBrown,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _openProductList(String title, List<Product> products) {
+    Navigator.of(context, rootNavigator: true).push(
+      CupertinoPageRoute(
+        builder: (_) => ProductListScreen(title: title, products: products),
+      ),
+    );
+  }
+
+  Widget _buildHomeProductCarousel({
+    required List<Product> items,
+    required List<Product> seeAllProducts,
+    required String seeAllTitle,
+  }) {
+    if (items.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Text(
+            'No products found',
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              color: _kTextPrimary.withValues(alpha: 0.6),
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final hasMore = items.length > _homeCarouselLimit;
+    final visibleCount = _carouselCount(items.length);
+    final itemCount = hasMore ? visibleCount + 1 : visibleCount;
+    final listForSeeAll = seeAllProducts.isNotEmpty ? seeAllProducts : items;
+
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      scrollDirection: Axis.horizontal,
+      itemCount: itemCount,
+      separatorBuilder: (_, __) => const SizedBox(width: 12),
+      itemBuilder: (context, index) {
+        if (hasMore && index == visibleCount) {
+          return _SeeMoreCarouselTile(
+            onTap: () => _openProductList(seeAllTitle, listForSeeAll),
+          );
+        }
+        final product = items[index];
+        return _HorizontalProductCard(
+          product: product,
+          onTap: () => _openProduct(context, product),
+        );
+      },
+    );
+  }
+
+  Widget _buildSectionCarousel({
+    required List<Product> sectionProducts,
+    required List<Product> filteredProducts,
+    required String seeAllTitle,
+  }) {
+    if (_hasActiveFilters) {
+      return _buildHomeProductCarousel(
+        items: filteredProducts,
+        seeAllProducts: sectionProducts,
+        seeAllTitle: seeAllTitle,
+      );
+    }
+    if (sectionProducts.isNotEmpty) {
+      return _buildHomeProductCarousel(
+        items: sectionProducts,
+        seeAllProducts: sectionProducts,
+        seeAllTitle: seeAllTitle,
+      );
+    }
+    return _buildHomeProductCarousel(
+      items: _allProducts,
+      seeAllProducts: sectionProducts,
+      seeAllTitle: seeAllTitle,
+    );
+  }
+
+  int _carouselCount(int length) {
+    if (length <= 0) return 0;
+    return length > _homeCarouselLimit ? _homeCarouselLimit : length;
   }
 
   /// Opens the filters sheet and applies the returned filter data
@@ -575,93 +731,44 @@ class _CatalogHomeState extends State<CatalogHome> {
                 ),
               ),
             ),
+            if (_auth.isAuthenticated && _suggestions.isNotEmpty)
+              SliverToBoxAdapter(
+                child: SuggestedForYouSection(
+                  suggestions: _suggestions,
+                  topCategory: _suggestionTopCategory,
+                  onProductTap: (product) => _openProduct(context, product),
+                  onSeeAll: () {
+                    Navigator.of(context, rootNavigator: true).push(
+                      CupertinoPageRoute(
+                        builder: (_) => ProductListScreen(
+                          title: 'Suggested for You',
+                          products: _suggestions.map((s) => s.product).toList(),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
             // New Arrival section (search does not hide or filter this section)
             ...[
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'New Arrival',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.black,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: () {
-                          // Use rootNavigator to hide tab bar when navigating to product list
-                          Navigator.of(context, rootNavigator: true).push(
-                            CupertinoPageRoute(
-                              builder: (_) => ProductListScreen(title: 'New Arrival Products', products: _newArrivals),
-                            ),
-                          );
-                        },
-                        child: Text(
-                          'See all',
-                          style: GoogleFonts.poppins(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: _kBrown,
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: _buildSectionHeader(
+                    'New Arrival',
+                    () => _openProductList('New Arrival Products', _newArrivals),
                   ),
                 ),
               ),
               SliverToBoxAdapter(
                 child: SizedBox(
                   height: 220,
-                  child: _hasActiveFilters
-                      ? _filteredNewArrivals.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24.0),
-                                child: Text(
-                                  'No products found',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 16,
-                                    color: _kTextPrimary.withValues(alpha: 0.6),
-                                    decoration: TextDecoration.none,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              scrollDirection: Axis.horizontal,
-                              itemBuilder: (context, index) {
-                                final product = _filteredNewArrivals[index];
-                                return _HorizontalProductCard(
-                                  product: product,
-                                  onTap: () => _openProduct(context, product),
-                                );
-                              },
-                              separatorBuilder: (_, __) => const SizedBox(width: 12),
-                              itemCount: _filteredNewArrivals.length,
-                            )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          scrollDirection: Axis.horizontal,
-                          itemBuilder: (context, index) {
-                            final product = index < _newArrivals.length 
-                                ? _newArrivals[index] 
-                                : _allProducts[index % _allProducts.length];
-                            return _HorizontalProductCard(
-                              product: product,
-                              onTap: () => _openProduct(context, product),
-                            );
-                          },
-                          separatorBuilder: (_, __) => const SizedBox(width: 12),
-                          itemCount: _newArrivals.isNotEmpty ? _newArrivals.length : _allProducts.length,
-                        ),
+                  child: _buildSectionCarousel(
+                    sectionProducts: _newArrivals,
+                    filteredProducts: _filteredNewArrivals,
+                    seeAllTitle: 'New Arrival Products',
+                  ),
                 ),
               ),
             ],
@@ -671,87 +778,20 @@ class _CatalogHomeState extends State<CatalogHome> {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Top Rated',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.black,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: () {
-                          // Use rootNavigator to hide tab bar when navigating to product list
-                          Navigator.of(context, rootNavigator: true).push(
-                            CupertinoPageRoute(
-                              builder: (_) => ProductListScreen(title: 'Top Rated Products', products: _topRatedProducts),
-                            ),
-                          );
-                        },
-                        child: Text(
-                          'See all',
-                          style: GoogleFonts.poppins(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: _kBrown,
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: _buildSectionHeader(
+                    'Top Rated',
+                    () => _openProductList('Top Rated Products', _topRatedProducts),
                   ),
                 ),
               ),
               SliverToBoxAdapter(
                 child: SizedBox(
                   height: 220,
-                  child: _hasActiveFilters
-                      ? _filteredTopRatedProducts.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24.0),
-                                child: Text(
-                                  'No products found',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 16,
-                                    color: _kTextPrimary.withValues(alpha: 0.6),
-                                    decoration: TextDecoration.none,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              scrollDirection: Axis.horizontal,
-                              itemBuilder: (context, index) {
-                                final product = _filteredTopRatedProducts[index];
-                                return _HorizontalProductCard(
-                                  product: product,
-                                  onTap: () => _openProduct(context, product),
-                                );
-                              },
-                              separatorBuilder: (_, __) => const SizedBox(width: 12),
-                              itemCount: _filteredTopRatedProducts.length,
-                            )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          scrollDirection: Axis.horizontal,
-                          itemBuilder: (context, index) {
-                            final product = index < _topRatedProducts.length 
-                                ? _topRatedProducts[index] 
-                                : _allProducts[index % _allProducts.length];
-                            return _HorizontalProductCard(
-                              product: product,
-                              onTap: () => _openProduct(context, product),
-                            );
-                          },
-                          separatorBuilder: (_, __) => const SizedBox(width: 12),
-                          itemCount: _topRatedProducts.isNotEmpty ? _topRatedProducts.length : _allProducts.length,
-                        ),
+                  child: _buildSectionCarousel(
+                    sectionProducts: _topRatedProducts,
+                    filteredProducts: _filteredTopRatedProducts,
+                    seeAllTitle: 'Top Rated Products',
+                  ),
                 ),
               ),
             ],
@@ -761,87 +801,20 @@ class _CatalogHomeState extends State<CatalogHome> {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Best Seller',
-                        style: GoogleFonts.poppins(
-                          fontSize: 16,
-                          fontWeight: FontWeight.normal,
-                          color: Colors.black,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        onPressed: () {
-                          // Use rootNavigator to hide tab bar when navigating to product list
-                          Navigator.of(context, rootNavigator: true).push(
-                            CupertinoPageRoute(
-                              builder: (_) => ProductListScreen(title: 'Best Seller Products', products: _bestSellerProducts),
-                            ),
-                          );
-                        },
-                        child: Text(
-                          'See all',
-                          style: GoogleFonts.poppins(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: _kBrown,
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: _buildSectionHeader(
+                    'Best Seller',
+                    () => _openProductList('Best Seller Products', _bestSellerProducts),
                   ),
                 ),
               ),
               SliverToBoxAdapter(
                 child: SizedBox(
                   height: 220,
-                  child: _hasActiveFilters
-                      ? _filteredBestSellerProducts.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24.0),
-                                child: Text(
-                                  'No products found',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 16,
-                                    color: _kTextPrimary.withValues(alpha: 0.6),
-                                    decoration: TextDecoration.none,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              scrollDirection: Axis.horizontal,
-                              itemBuilder: (context, index) {
-                                final product = _filteredBestSellerProducts[index];
-                                return _HorizontalProductCard(
-                                  product: product,
-                                  onTap: () => _openProduct(context, product),
-                                );
-                              },
-                              separatorBuilder: (_, __) => const SizedBox(width: 12),
-                              itemCount: _filteredBestSellerProducts.length,
-                            )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          scrollDirection: Axis.horizontal,
-                          itemBuilder: (context, index) {
-                            final product = index < _bestSellerProducts.length 
-                                ? _bestSellerProducts[index] 
-                                : _allProducts[index % _allProducts.length];
-                            return _HorizontalProductCard(
-                              product: product,
-                              onTap: () => _openProduct(context, product),
-                            );
-                          },
-                          separatorBuilder: (_, __) => const SizedBox(width: 12),
-                          itemCount: _bestSellerProducts.isNotEmpty ? _bestSellerProducts.length : _allProducts.length,
-                        ),
+                  child: _buildSectionCarousel(
+                    sectionProducts: _bestSellerProducts,
+                    filteredProducts: _filteredBestSellerProducts,
+                    seeAllTitle: 'Best Seller Products',
+                  ),
                 ),
               ),
             ],
@@ -1003,6 +976,58 @@ class _CatalogCardThumbnail extends StatelessWidget {
         Icons.chair_alt_rounded,
         size: 40,
         color: Color(0xFFBCAAA4),
+      ),
+    );
+  }
+}
+
+class _SeeMoreCarouselTile extends StatelessWidget {
+  const _SeeMoreCarouselTile({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoButton(
+      padding: EdgeInsets.zero,
+      onPressed: onTap,
+      child: Container(
+        width: 120,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: const Color(0xFFBCAAA4).withValues(alpha: 0.35),
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFF8D6E63).withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                CupertinoIcons.arrow_right,
+                color: Color(0xFF8D6E63),
+                size: 22,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'See more',
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF8D6E63),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

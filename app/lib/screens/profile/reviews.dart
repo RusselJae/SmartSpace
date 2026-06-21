@@ -13,6 +13,10 @@ import '../../models/user.dart';
 import '../../services/auth_service.dart';
 import '../../services/mysql_database_service.dart';
 import '../../utils/model_path_helper.dart';
+import '../../utils/video_duration_probe.dart';
+import '../../widgets/review_composer_media_grid.dart';
+import '../../widgets/review_photo_viewer_page.dart';
+import '../../widgets/review_video_player_page.dart';
 import '../../widgets/toast.dart';
 import '../views/sign_in.dart';
 
@@ -45,6 +49,48 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     if (url.startsWith('http')) return url;
     final base = ApiConfig.baseUrl.replaceAll(RegExp(r'/api$'), '');
     return '$base${url.startsWith('/') ? '' : '/'}$url';
+  }
+
+  /// Opens a review media item – images in a full-screen viewer, videos in an
+  /// in-app player (web + app).
+  Future<void> _openReviewMedia(Review review, ReviewMediaItem item) async {
+    final resolvedUrl = _reviewMediaUrl(item.url);
+    if (item.isVideo) {
+      if (!mounted) return;
+      await Navigator.of(context, rootNavigator: true).push(
+        CupertinoPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => ReviewVideoPlayerPage(
+            videoUrl: resolvedUrl,
+            reviewerName: review.userName,
+            rating: review.rating,
+          ),
+        ),
+      );
+      return;
+    }
+
+    await Navigator.of(context, rootNavigator: true).push(
+      CupertinoPageRoute(
+        fullscreenDialog: true,
+        builder: (_) {
+          final imageUrls = review.media
+              .where((m) => !m.isVideo)
+              .map((m) => _reviewMediaUrl(m.url))
+              .toList();
+          final initialIndex = review.media
+              .where((m) => !m.isVideo)
+              .toList()
+              .indexWhere((m) => m.url == item.url);
+          return ReviewPhotoViewerPage(
+            imageUrls: imageUrls,
+            initialIndex: initialIndex < 0 ? 0 : initialIndex,
+            reviewerName: review.userName,
+            rating: review.rating,
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -254,27 +300,34 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                         separatorBuilder: (_, __) => const SizedBox(width: 6),
                         itemBuilder: (context, index) {
                           final item = review.media[index];
+                          final url = _reviewMediaUrl(item.url);
                           if (item.isVideo) {
-                            return Container(
-                              width: 56,
-                              decoration: BoxDecoration(
-                                color: Colors.black87,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                CupertinoIcons.play_circle,
-                                color: Colors.white,
-                                size: 24,
+                            return GestureDetector(
+                              onTap: () => _openReviewMedia(review, item),
+                              child: Container(
+                                width: 56,
+                                decoration: BoxDecoration(
+                                  color: Colors.black87,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  CupertinoIcons.play_circle,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
                               ),
                             );
                           }
-                          return ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.network(
-                              _reviewMediaUrl(item.url),
-                              width: 56,
-                              height: 56,
-                              fit: BoxFit.cover,
+                          return GestureDetector(
+                            onTap: () => _openReviewMedia(review, item),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                url,
+                                width: 56,
+                                height: 56,
+                                fit: BoxFit.cover,
+                              ),
                             ),
                           );
                         },
@@ -513,8 +566,8 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
   static const int _maxReviewLength = 500;
   static const int _maxMediaCount = 6;
   static const Color _composerBrown = Color(0xFF8D6E63);
-  final ImagePicker _mediaPicker = ImagePicker();
   final List<ReviewMediaItem> _media = [];
+  final Map<String, Duration> _videoDurations = {};
   bool _uploadingMedia = false;
 
   @override
@@ -674,24 +727,24 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
           opacity: _fadeAnimation,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(16),
             children: [
               const SizedBox(height: 8),
               // Product selector with improved design
               _buildProductSelector(),
-              const SizedBox(height: 32),
+              const SizedBox(height: 20),
               // Rating section
               _buildRatingSection(),
-              const SizedBox(height: 32),
+              const SizedBox(height: 20),
               // Review text area
               _buildReviewTextArea(),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
               _buildMediaAttachmentsSection(),
               if (_error != null) ...[
                 const SizedBox(height: 16),
                 _buildErrorBanner(),
               ],
-              const SizedBox(height: 32),
+              const SizedBox(height: 20),
               // Submit button
               _buildSubmitButton(),
               const SizedBox(height: 20),
@@ -745,7 +798,7 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
                   ),
                 ),
                 const SizedBox(width: 10),
-                _buildProductThumb(_selectedProduct, size: 28),
+                _buildProductThumb(_selectedProduct, size: 40),
                 const SizedBox(width: 8),
                 const Icon(
                   CupertinoIcons.chevron_down,
@@ -774,59 +827,62 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
             decoration: TextDecoration.none,
           ),
         ),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(
-            5,
-            (index) => GestureDetector(
-              onTap: _submitting ? null : () => _updateRating(index + 1),
-              child: TweenAnimationBuilder<double>(
-                tween: Tween<double>(
-                  begin: 0.0,
-                  end: index < _rating ? 1.0 : 0.0,
-                ),
-                duration: Duration(milliseconds: 160 + (index * 40)),
-                curve: Curves.easeOutBack,
-                builder: (context, value, child) {
-                  return Transform.scale(
-                    scale: index < _rating ? 1.0 + (value * 0.1) : 1.0,
-                    child: Icon(
-                      index < _rating ? CupertinoIcons.star_fill : CupertinoIcons.star,
-                      size: 44,
-                      color: index < _rating 
-                          ? const Color(0xFFFFC107) 
-                          : Colors.black26,
+        const SizedBox(height: 8),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                5,
+                (index) => GestureDetector(
+                  onTap: _submitting ? null : () => _updateRating(index + 1),
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween<double>(
+                      begin: 0.0,
+                      end: index < _rating ? 1.0 : 0.0,
                     ),
-                  );
-                },
+                    duration: Duration(milliseconds: 160 + (index * 40)),
+                    curve: Curves.easeOutBack,
+                    builder: (context, value, child) {
+                      return Transform.scale(
+                        scale: index < _rating ? 1.0 + (value * 0.1) : 1.0,
+                        child: Icon(
+                          index < _rating ? CupertinoIcons.star_fill : CupertinoIcons.star,
+                          size: 44,
+                          color: index < _rating
+                              ? const Color(0xFFFFC107)
+                              : Colors.black26,
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Center(
-          child: Text(
-            _rating == 0 
-                ? 'Tap to rate'
-                : _rating == 5 
-                    ? 'Excellent! ⭐'
-                    : _rating == 4 
-                        ? 'Great! 👍'
-                        : _rating == 3 
-                            ? 'Good 👍'
-                            : _rating == 2 
-                                ? 'Fair'
-                                : 'Poor',
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: _rating == 0 
-                  ? Colors.black54 
-                  : const Color(0xFF8D6E63),
-              fontWeight: FontWeight.w500,
-              decoration: TextDecoration.none,
+            const SizedBox(height: 4),
+            Text(
+              _rating == 0
+                  ? 'Tap to rate'
+                  : _rating == 5
+                      ? 'Excellent! ⭐'
+                      : _rating == 4
+                          ? 'Great! 👍'
+                          : _rating == 3
+                              ? 'Good 👍'
+                              : _rating == 2
+                                  ? 'Fair'
+                                  : 'Poor',
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                color: _rating == 0
+                    ? Colors.black54
+                    : const Color(0xFF8D6E63),
+                fontWeight: FontWeight.w500,
+                decoration: TextDecoration.none,
+              ),
             ),
-          ),
+          ],
         ),
       ],
     );
@@ -1101,30 +1157,31 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
     );
   }
 
-  Future<void> _pickReviewPhoto() async {
+  Future<void> _handleMediaPicked(String path, String name, bool isVideo) async {
     if (_media.length >= _maxMediaCount || _uploadingMedia) return;
-    final file = await _mediaPicker.pickImage(source: ImageSource.gallery, imageQuality: 85);
-    if (file == null) return;
-    await _uploadPickedFile(file.path, file.name);
+    Duration? duration;
+    if (isVideo) {
+      duration = await probeVideoDuration(path);
+    }
+    await _uploadPickedFile(path, name, videoDuration: duration);
   }
 
-  Future<void> _pickReviewVideo() async {
-    if (_media.length >= _maxMediaCount || _uploadingMedia) return;
-    final file = await _mediaPicker.pickVideo(
-      source: ImageSource.gallery,
-      maxDuration: const Duration(seconds: 45),
-    );
-    if (file == null) return;
-    await _uploadPickedFile(file.path, file.name);
-  }
-
-  Future<void> _uploadPickedFile(String path, String name) async {
+  Future<void> _uploadPickedFile(
+    String path,
+    String name, {
+    Duration? videoDuration,
+  }) async {
     setState(() => _uploadingMedia = true);
     try {
       final bytes = await XFile(path).readAsBytes();
       final uploaded = await widget.db.uploadReviewMedia(bytes: bytes, fileName: name);
       if (!mounted) return;
-      setState(() => _media.add(uploaded));
+      setState(() {
+        _media.add(uploaded);
+        if (videoDuration != null && uploaded.isVideo) {
+          _videoDurations[uploaded.url] = videoDuration;
+        }
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = 'Failed to upload attachment: $e');
@@ -1133,138 +1190,67 @@ class _ReviewComposerPageState extends State<_ReviewComposerPage> with SingleTic
     }
   }
 
+  String _resolveMediaUrl(String url) {
+    if (url.startsWith('http')) return url;
+    final base = ApiConfig.baseUrl.replaceAll(RegExp(r'/api$'), '');
+    return '$base${url.startsWith('/') ? '' : '/'}$url';
+  }
+
   Widget _buildMediaAttachmentsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Photos & videos (optional)',
-          style: GoogleFonts.poppins(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: Colors.black,
-            decoration: TextDecoration.none,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            CupertinoButton(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              color: _composerBrown.withValues(alpha: 0.12),
-              onPressed: _uploadingMedia || _submitting ? null : _pickReviewPhoto,
-              child: Text(
-                'Add photo',
-                style: GoogleFonts.poppins(color: _composerBrown, fontSize: 13),
-              ),
-            ),
-            const SizedBox(width: 8),
-            CupertinoButton(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              color: _composerBrown.withValues(alpha: 0.12),
-              onPressed: _uploadingMedia || _submitting ? null : _pickReviewVideo,
-              child: Text(
-                'Add video',
-                style: GoogleFonts.poppins(color: _composerBrown, fontSize: 13),
-              ),
-            ),
-            if (_uploadingMedia) ...[
-              const SizedBox(width: 12),
-              const CupertinoActivityIndicator(),
-            ],
-          ],
-        ),
-        if (_media.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _media.asMap().entries.map((entry) {
-              final i = entry.key;
-              final item = entry.value;
-              return Chip(
-                label: Text(item.isVideo ? 'Video ${i + 1}' : 'Photo ${i + 1}'),
-                onDeleted: _submitting ? null : () => setState(() => _media.removeAt(i)),
-              );
-            }).toList(),
-          ),
-        ],
-      ],
+    return ReviewMediaAttachmentGrid(
+      media: _media,
+      maxCount: _maxMediaCount,
+      enabled: !_submitting,
+      uploading: _uploadingMedia,
+      videoDurations: _videoDurations,
+      resolveUrl: _resolveMediaUrl,
+      onRemove: (index) {
+        final removed = _media.removeAt(index);
+        _videoDurations.remove(removed.url);
+        setState(() {});
+      },
+      onMediaPicked: _handleMediaPicked,
     );
   }
 
   /// Build submit button with improved design
   Widget _buildSubmitButton() {
     final bool canSubmit = _isValid && !_submitting && _characterCount <= _maxReviewLength;
-    
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0.0, end: canSubmit ? 1.0 : 0.6),
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeInOut,
-      builder: (context, opacity, child) {
-        return Opacity(
-          opacity: opacity,
-          child: Container(
-            height: 56,
-            decoration: BoxDecoration(
-              gradient: canSubmit
-                  ? const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF8D6E63), Color(0xFFFF9800)],
-                    )
-                  : null,
-              color: canSubmit ? null : CupertinoColors.systemGrey4,
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: canSubmit
-                  ? [
-                      BoxShadow(
-                        color: const Color(0xFFFF9800).withValues(alpha: 0.4),
-                        blurRadius: 16,
-                        offset: const Offset(0, 8),
-                        spreadRadius: 0,
-                      ),
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.1),
-                        blurRadius: 8,
-                        offset: const Offset(0, 4),
-                      ),
-                    ]
-                  : [],
-            ),
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              onPressed: canSubmit ? _submit : null,
-              child: _submitting
-                  ? const CupertinoActivityIndicator(
+
+    return SizedBox(
+      height: 56,
+      child: CupertinoButton(
+        padding: EdgeInsets.zero,
+        color: canSubmit ? _composerBrown : CupertinoColors.systemGrey4,
+        borderRadius: BorderRadius.circular(28),
+        onPressed: canSubmit ? _submit : null,
+        child: _submitting
+            ? const CupertinoActivityIndicator(
+                color: Colors.white,
+                radius: 12,
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    CupertinoIcons.check_mark_circled_solid,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Submit review',
+                    style: GoogleFonts.poppins(
                       color: Colors.white,
-                      radius: 12,
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          CupertinoIcons.check_mark_circled_solid,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Submit Review',
-                          style: GoogleFonts.poppins(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                            letterSpacing: 0.5,
-                            decoration: TextDecoration.none,
-                          ),
-                        ),
-                      ],
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                      letterSpacing: 0.5,
+                      decoration: TextDecoration.none,
                     ),
-            ),
-          ),
-        );
-      },
+                  ),
+                ],
+              ),
+      ),
     );
   }
 }

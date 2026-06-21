@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../models/review.dart';
 import '../../../config/api_config.dart';
@@ -665,25 +666,106 @@ class _ReviewDetailsDialog extends StatelessWidget {
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: review.media.map((item) {
+                children: review.media.asMap().entries.map((entry) {
+                  final item = entry.value;
                   final url = item.url.startsWith('http')
                       ? item.url
-                      : '${ApiConfig.baseUrl.replaceAll(RegExp(r'/api$'), '')}${item.url.startsWith('/') ? '' : '/'}${item.url}';
+                      : '${ApiConfig.baseUrl.replaceAll(RegExp(r'/api$'), '')}'
+                          '${item.url.startsWith('/') ? '' : '/'}${item.url}';
+
                   if (item.isVideo) {
-                    return Container(
-                      width: 88,
-                      height: 88,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.black87,
-                        borderRadius: BorderRadius.circular(8),
+                    return GestureDetector(
+                      onTap: () async {
+                        // ------------------------------------------------------------------
+                        // Open review videos in the system player / browser so admins can
+                        // actually watch what the customer uploaded.
+                        // ------------------------------------------------------------------
+                        final uri = Uri.tryParse(url);
+                        if (uri == null) return;
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      },
+                      child: Container(
+                        width: 88,
+                        height: 88,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.play_circle_outline, color: Colors.white, size: 32),
                       ),
-                      child: const Icon(Icons.play_circle_outline, color: Colors.white, size: 32),
                     );
                   }
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(url, width: 88, height: 88, fit: BoxFit.cover),
+
+                  return GestureDetector(
+                    onTap: () {
+                      // ------------------------------------------------------------------
+                      // Lightweight full-screen image viewer for review photos.
+                      // Reuses the same InteractiveViewer pattern we use in orders admin.
+                      // ------------------------------------------------------------------
+                      showDialog<void>(
+                        context: context,
+                        builder: (dialogContext) => Dialog(
+                          backgroundColor: Colors.transparent,
+                          insetPadding: const EdgeInsets.all(20),
+                          child: Stack(
+                            children: [
+                              Center(
+                                child: InteractiveViewer(
+                                  minScale: 0.5,
+                                  maxScale: 4.0,
+                                  child: Image.network(
+                                    url,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Container(
+                                        padding: const EdgeInsets.all(40),
+                                        color: Colors.black54,
+                                        child: const Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.error_outline,
+                                              color: Colors.white,
+                                              size: 48,
+                                            ),
+                                            SizedBox(height: 12),
+                                            Text(
+                                              'Failed to load image',
+                                              style: TextStyle(color: Colors.white),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: IconButton(
+                                  icon: const Icon(Icons.close, color: Colors.white),
+                                  onPressed: () => Navigator.of(dialogContext).pop(),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: Colors.black54,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        url,
+                        width: 88,
+                        height: 88,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
                   );
                 }).toList(),
               ),

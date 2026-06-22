@@ -213,13 +213,17 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       
       switch (_selectedFilter) {
         case 'to_pay':
-          // Orders that need payment.
-          if (status == 'cancelled') return false;
-          if (status == 'confirmed' && 
-              (paymentStatus == 'completed' || paymentStatus == 'downpayment_received')) {
+          if (status == 'cancelled' || status == 'expired') return false;
+          if (status == 'confirmed' || status == 'shipped' || status == 'delivered') {
             return false;
           }
-          return true;
+          if (status == 'reserved' || status == 'in_progress') {
+            return canOpenPaymentProofScreen(order) || status == 'pending_payment_verification';
+          }
+          if (paymentStatus == 'completed') return false;
+          return status == 'pending' ||
+              status == 'pending_payment_verification' ||
+              canOpenPaymentProofScreen(order);
           
         case 'to_ship':
           // Only admin can move orders into fulfillment stages.
@@ -1045,6 +1049,12 @@ class _OrdersTabState extends State<OrdersTab> with WidgetsBindingObserver {
       } else if (status == 'confirmed') {
         displayCategory = 'Confirmed';
         categoryColor = _getFilterColor('confirm');
+      } else if (status == 'reserved') {
+        displayCategory = customerOrderStatusLabel(order);
+        categoryColor = _getFilterColor('to_pay');
+      } else if (status == 'in_progress') {
+        displayCategory = customerOrderStatusLabel(order);
+        categoryColor = _getFilterColor('to_pay');
       } else if (status == 'pending' || status == 'pending_payment_verification') {
         displayCategory = 'Pay';
         categoryColor = _getFilterColor('to_pay');

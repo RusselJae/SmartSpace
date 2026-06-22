@@ -77,6 +77,16 @@ const initialize = async (): Promise<void> => {
       console.error('❌ Failed to ensure product variant schema:', error);
       process.exit(1);
     }
+
+    try {
+      const { ensureOrderFulfillmentSchema } = await import('./services/order_service');
+      const { getPool } = await import('./config/database');
+      await ensureOrderFulfillmentSchema(getPool());
+      console.log('✅ Order fulfillment schema verified');
+    } catch (error) {
+      console.error('❌ Failed to ensure order fulfillment schema:', error);
+      process.exit(1);
+    }
     
     // Check email configuration before starting server
     checkEmailConfiguration();

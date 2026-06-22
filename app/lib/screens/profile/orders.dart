@@ -259,6 +259,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
     switch (status.toLowerCase()) {
       case 'confirmed':
         return CupertinoColors.systemBlue;
+      case 'reserved':
+        return CupertinoColors.systemIndigo;
+      case 'in_progress':
+        return CupertinoColors.systemPurple;
       case 'shipped':
         return CupertinoColors.systemTeal;
       case 'delivered':
@@ -270,10 +274,23 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  String _statusLabel(String status) {
+    switch (status.toLowerCase()) {
+      case 'reserved':
+        return 'Reserved';
+      case 'in_progress':
+        return 'In progress';
+      case 'pending_payment_verification':
+        return 'Verifying payment';
+      default:
+        if (status.isEmpty) return 'Pending';
+        return status[0].toUpperCase() + status.substring(1);
+    }
+  }
+
   Widget _buildStatusChip(String status) {
     final color = _statusColor(status);
-    final safeStatus = status.isEmpty ? 'status' : status;
-    final label = safeStatus[0].toUpperCase() + safeStatus.substring(1);
+    final label = _statusLabel(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
@@ -298,7 +315,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   Widget _buildTimeline(String status) {
     final normalized = status.toLowerCase();
-    final currentIndex = _kStatusSteps.indexOf(normalized);
+    final mapped = normalized == 'reserved' ||
+            normalized == 'in_progress' ||
+            normalized == 'pending_payment_verification'
+        ? 'pending'
+        : normalized;
+    final currentIndex = _kStatusSteps.indexOf(mapped);
 
     return Row(
       children: List.generate(_kStatusSteps.length, (index) {

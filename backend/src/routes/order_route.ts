@@ -19,6 +19,7 @@ import {
   getOrderById,
   updateOrderValidIdProofUrl,
   CreateOrderInput,
+  ConfirmPaymentInput,
 } from '../services/order_service';
 import { createPaymongoCheckoutSession } from '../services/paymongo_service';
 import { config } from '../config/env';
@@ -1156,9 +1157,15 @@ orderRouter.patch(
   }),
 );
 
+const confirmPaymentSchema = z.object({
+  appliedAmount: z.number().finite().nonnegative().optional(),
+  remainingBalance: z.number().finite().nonnegative().optional(),
+  estimatedDeliveryAt: z.string().min(1).optional(),
+});
+
 /**
  * POST /api/orders/:id/confirm-payment
- * Admin endpoint to confirm payment proof and update order status
+ * Admin endpoint to confirm payment proof and update order balances.
  */
 orderRouter.post(
   '/:id/confirm-payment',
@@ -1167,8 +1174,17 @@ orderRouter.post(
   asyncHandler(async (req, res) => {
     const orderId = req.params.id;
     const adminId = req.adminAuth!.id;
+    const payload = confirmPaymentSchema.parse(req.body ?? {});
 
-    await confirmPayment(orderId, adminId);
+    const input: ConfirmPaymentInput = {
+      ...(payload.appliedAmount != null ? { appliedAmount: payload.appliedAmount } : {}),
+      ...(payload.remainingBalance != null ? { remainingBalance: payload.remainingBalance } : {}),
+      ...(payload.estimatedDeliveryAt != null
+        ? { estimatedDeliveryAt: payload.estimatedDeliveryAt }
+        : {}),
+    };
+
+    const order = await confirmPayment(orderId, adminId, input);
     await logAdminActivity({
       adminId,
       action: 'order_payment_confirmed',
@@ -1178,6 +1194,7 @@ orderRouter.post(
     res.json({
       success: true,
       message: 'Payment confirmed successfully',
+      data: { order },
     });
   }),
 );

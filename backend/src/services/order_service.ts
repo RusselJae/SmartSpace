@@ -56,6 +56,7 @@ type OrderRow = RowDataPacket & {
   /** Set when first PayMongo tranche (down payment) posts — 3-month policy window starts here */
   readonly first_installment_paid_at?: Date | string | null;
   readonly estimated_delivery_at?: Date | string | null;
+  readonly actual_delivery_at?: Date | string | null;
   readonly created_at: Date;
   readonly updated_at: Date;
 };
@@ -119,6 +120,14 @@ const mapOrder = async (row: OrderRow): Promise<OrderRecord> => {
     /** ISO — start of 3-month 0% window (first PayMongo payment) */
     ...(firstInstallmentIso !== undefined ? { firstInstallmentPaidAt: firstInstallmentIso } : {}),
     ...(estimatedDeliveryIso !== undefined ? { estimatedDeliveryAt: estimatedDeliveryIso } : {}),
+    ...(row.actual_delivery_at != null
+      ? {
+          actualDeliveryAt:
+            row.actual_delivery_at instanceof Date
+              ? row.actual_delivery_at.toISOString()
+              : new Date(row.actual_delivery_at as string).toISOString(),
+        }
+      : {}),
     /** Set when an order is automatically cancelled due to payment default. */
     cancellationReason: row.cancellation_reason ?? undefined,
     ...(row.payment_default_cancelled_at != null
@@ -394,6 +403,277 @@ const normalizeOrderOption = (raw: string | null | undefined): string =>
  */
 const randomDeliveryOffsetDays = (): number => 10 + Math.floor(Math.random() * 3);
 
+/** Hulugan unlock threshold — 40% of order total must be approved before confirmation. */
+const HULUGAN_CONFIRM_PERCENT = 40;
+
+/** Made-to-order manufacturing buffer after full payment. */
+const MTO_DELIVERY_DAYS = 42;
+
+let orderFulfillmentSchemaEnsured = false;
+
+/** Ensures reserved/in_progress statuses and actual_delivery_at exist (idempotent). */
+export const ensureOrderFulfillmentSchema = async (pool: Pool): Promise<void> => {
+  if (orderFulfillmentSchemaEnsured) return;
+  try {
+    await pool.query(
+      `ALTER TABLE orders
+       ADD COLUMN actual_delivery_at DATETIME NULL DEFAULT NULL
+       COMMENT 'Recorded when admin marks order delivered'`,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes('Duplicate column') && !msg.toLowerCase().includes('duplicate column name')) {
+      console.warn('ensureOrderFulfillmentSchema actual_delivery_at:', msg);
+    }
+  }
+  try {
+    await pool.query(
+      `ALTER TABLE orders
+       MODIFY COLUMN status ENUM(
+         'pending',
+         'pending_payment_verification',
+         'reserved',
+         'in_progress',
+         'confirmed',
+         'shipped',
+         'delivered',
+         'cancelled',
+         'refunded',
+         'expired'
+       ) DEFAULT 'pending'`,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('ensureOrderFulfillmentSchema status enum:', msg);
+  }
+  orderFulfillmentSchemaEnsured = true;
+};
+
+const totalPaidFromOrder = (orderTotal: number, remainingBalance: number): number =>
+  Math.max(0, Number((orderTotal - remainingBalance).toFixed(2)));
+
+const huluganConfirmThreshold = (orderTotal: number): number =>
+  Number(((orderTotal * HULUGAN_CONFIRM_PERCENT) / 100).toFixed(2));
+
+const parseOptionalDate = (raw: Date | string | null | undefined): Date | null => {
+  if (raw == null) return null;
+  const d = raw instanceof Date ? raw : new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+/** Detect MTO orders via custom line naming from createMadeToOrderOrderFromRequest. */
+const isMtoOrder = async (pool: Pool, orderId: string): Promise<boolean> => {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT product_name FROM order_items
+     WHERE order_id = ?
+       AND product_name LIKE 'Made-to-Order [%'
+     LIMIT 1`,
+    [orderId],
+  );
+  return rows.length > 0;
+};
+
+const logAdminPaymentEvent = async (
+  pool: Pool,
+  orderId: string,
+  amount: number,
+  adminId: string,
+): Promise<void> => {
+  try {
+    await ensureInvoiceTables();
+    const safePrefix = orderId.substring(0, 8);
+    const safeSuffix = adminId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+    const eventId = `pe_admin_${safePrefix}_${safeSuffix}_${Date.now()}`;
+    await pool.query(
+      `INSERT INTO order_payment_events (id, order_id, event_type, amount, paymongo_event_id)
+       VALUES (?, ?, 'admin_confirmed', ?, NULL)`,
+      [eventId, orderId, amount],
+    );
+  } catch (e) {
+    console.warn('logAdminPaymentEvent skipped:', e);
+  }
+};
+
+export type EvaluateFulfillmentOptions = {
+  readonly estimatedDeliveryAt?: string | Date | null;
+};
+
+/**
+ * Applies confirmed status, ETA, material deduction, and confirmation email.
+ * Shared by payment approval evaluator and manual admin confirm.
+ */
+const applyOrderConfirmed = async (
+  pool: Pool,
+  orderId: string,
+  row: OrderRow,
+  options?: EvaluateFulfillmentOptions,
+): Promise<void> => {
+  const previousStatus = row.status;
+  if (previousStatus === 'confirmed' || previousStatus === 'shipped' || previousStatus === 'delivered') {
+    return;
+  }
+
+  const userId = row.user_id;
+  const orderTotal = Number(row.total_amount);
+  const isMto = await isMtoOrder(pool, orderId);
+  const adminEta = parseOptionalDate(options?.estimatedDeliveryAt ?? null);
+
+  await validateMaterialStockForOrder(pool, orderId);
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    if (adminEta != null) {
+      await conn.query(
+        `UPDATE orders
+         SET status = 'confirmed',
+             estimated_delivery_at = ?,
+             updated_at = NOW()
+         WHERE id = ?`,
+        [adminEta, orderId],
+      );
+    } else if (isMto) {
+      await conn.query(
+        `UPDATE orders
+         SET status = 'confirmed',
+             estimated_delivery_at = COALESCE(estimated_delivery_at, DATE_ADD(NOW(), INTERVAL ? DAY)),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [MTO_DELIVERY_DAYS, orderId],
+      );
+    } else {
+      const days = randomDeliveryOffsetDays();
+      await conn.query(
+        `UPDATE orders
+         SET status = 'confirmed',
+             estimated_delivery_at = COALESCE(estimated_delivery_at, DATE_ADD(NOW(), INTERVAL ? DAY)),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [days, orderId],
+      );
+    }
+
+    await deductMaterialsForOrder(conn, orderId);
+    await conn.commit();
+  } catch (txnErr) {
+    await conn.rollback();
+    throw txnErr;
+  } finally {
+    conn.release();
+  }
+
+  EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
+    console.error('Failed to send confirmation email:', error);
+  });
+};
+
+/**
+ * After admin/PayMongo payment approval, evaluate plan rules and set order status + ETA.
+ */
+export const evaluateOrderAfterPaymentApproval = async (
+  orderId: string,
+  options?: EvaluateFulfillmentOptions,
+): Promise<{ status: string; confirmed: boolean }> => {
+  const pool = getPool();
+  await ensureOrderFulfillmentSchema(pool);
+
+  const [orderRows] = await pool.query<OrderRow[]>(
+    'SELECT * FROM orders WHERE id = ? LIMIT 1',
+    [orderId],
+  );
+  if (orderRows.length === 0) {
+    throw new Error('Order not found');
+  }
+
+  const row = orderRows[0];
+  const previousStatus = row.status;
+  const terminal = new Set(['confirmed', 'shipped', 'delivered', 'cancelled']);
+  if (terminal.has(previousStatus)) {
+    return { status: previousStatus, confirmed: previousStatus === 'confirmed' };
+  }
+
+  const orderTotal = Number(row.total_amount);
+  const remaining = Number(row.remaining_balance ?? orderTotal);
+  const totalPaid = totalPaidFromOrder(orderTotal, remaining);
+  const paymentPlan = (row.payment_plan ?? 'full').toString().toLowerCase();
+  const normalizedOption = normalizeOrderOption(row.order_option);
+  const isHulugan = normalizedOption === 'hulugan';
+  const isLayaway = normalizedOption === 'layaway';
+  const isMto = await isMtoOrder(pool, orderId);
+
+  let targetStatus = previousStatus;
+  let shouldConfirm = false;
+
+  if (paymentPlan === 'full') {
+    if (totalPaid >= orderTotal - 0.01) {
+      shouldConfirm = true;
+      targetStatus = 'confirmed';
+    } else {
+      targetStatus = 'pending';
+    }
+  } else if (isHulugan) {
+    const threshold = huluganConfirmThreshold(orderTotal);
+    if (totalPaid >= threshold - 0.01) {
+      shouldConfirm = true;
+      targetStatus = 'confirmed';
+    } else if (totalPaid > 0.01) {
+      targetStatus = 'pending';
+    } else {
+      targetStatus = 'pending';
+    }
+  } else if (isLayaway || isMto) {
+    if (totalPaid >= orderTotal - 0.01) {
+      shouldConfirm = true;
+      targetStatus = 'confirmed';
+    } else if (totalPaid > 0.01) {
+      targetStatus = isMto ? 'in_progress' : 'reserved';
+    } else {
+      targetStatus = 'pending';
+    }
+  } else if (paymentPlan === 'downpayment') {
+    if (totalPaid >= orderTotal - 0.01) {
+      shouldConfirm = true;
+      targetStatus = 'confirmed';
+    } else if (totalPaid > 0.01) {
+      targetStatus = 'reserved';
+    } else {
+      targetStatus = 'pending';
+    }
+  }
+
+  if (shouldConfirm) {
+    await applyOrderConfirmed(pool, orderId, row, options);
+    notifyUserOrderStatusChanged({
+      userId: row.user_id,
+      orderId,
+      previousStatus,
+      nextStatus: 'confirmed',
+    }).catch((error) => {
+      console.error('Failed to send order status push notification:', error);
+    });
+    return { status: 'confirmed', confirmed: true };
+  }
+
+  await pool.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [
+    targetStatus,
+    orderId,
+  ]);
+
+  if (previousStatus !== targetStatus) {
+    notifyUserOrderStatusChanged({
+      userId: row.user_id,
+      orderId,
+      previousStatus,
+      nextStatus: targetStatus,
+    }).catch((error) => {
+      console.error('Failed to send order status push notification:', error);
+    });
+  }
+
+  return { status: targetStatus, confirmed: false };
+};
+
 const isMissingEstimatedDeliveryColumn = (msg: string): boolean =>
   msg.includes('estimated_delivery_at') || msg.includes('order_option') || msg.includes('Unknown column');
 
@@ -614,18 +894,15 @@ const ensureLastPaymongoEventIdColumn = async (pool: Pool): Promise<boolean> => 
 const trySetDownpaymentReceived = async (pool: Pool, orderId: string): Promise<void> => {
   const withAnchor = `UPDATE orders SET
     payment_status = 'downpayment_received',
-    status = 'pending',
     first_installment_paid_at = COALESCE(first_installment_paid_at, NOW()),
     updated_at = NOW()
   WHERE id = ?`;
   const withoutAnchor = `UPDATE orders SET
     payment_status = 'downpayment_received',
-    status = 'pending',
     updated_at = NOW()
   WHERE id = ?`;
   const fallbackPending = `UPDATE orders SET
     payment_status = 'pending',
-    status = 'pending',
     updated_at = NOW()
   WHERE id = ?`;
 
@@ -690,16 +967,14 @@ export const markOrderPaidViaPaymongo = async (
   const previousStatus = row.status;
   const previousStatusNormalized = String(previousStatus).trim().toLowerCase();
   const dp = Number(row.downpayment_amount ?? 0);
-  // Keep fulfillment status controlled by admins only:
-  // - Payment settlement should not auto-confirm or auto-advance orders.
-  // - For pre-fulfillment states, we normalize back to `pending`.
-  // - For terminal/fulfillment states (cancelled/shipped/delivered), we preserve status.
-  const statusForPaidUpdate =
-    previousStatusNormalized === 'cancelled' ||
-    previousStatusNormalized === 'shipped' ||
-    previousStatusNormalized === 'delivered'
-      ? previousStatus
-      : 'pending';
+
+  const runPaymongoFulfillmentEvaluation = async (): Promise<void> => {
+    try {
+      await evaluateOrderAfterPaymentApproval(orderId);
+    } catch (e) {
+      console.error(`evaluateOrderAfterPaymentApproval after PayMongo for ${orderId}:`, e);
+    }
+  };
 
   const plan = row.payment_plan ?? null;
   const paidAmount = options?.amountPesos ?? null;
@@ -759,14 +1034,13 @@ export const markOrderPaidViaPaymongo = async (
     await pool.query(
       `UPDATE orders
        SET payment_status = 'completed',
-           status = ?,
            remaining_balance = 0,
+           downpayment_amount = ?,
            updated_at = NOW()
        WHERE id = ?`,
-      [statusForPaidUpdate, orderId],
+      [orderTotal, orderId],
     );
-    // Lay-away / one-shot full pay: ETA starts at full settlement (Hulugan one-shot included).
-    await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+    await runPaymongoFulfillmentEvaluation();
     await notifyAdminsOrderFullyPaid({
       orderId,
       paidAmount: paidAmount ?? orderTotal,
@@ -800,10 +1074,7 @@ export const markOrderPaidViaPaymongo = async (
   if (paidAmount != null) {
     if (row.payment_status === 'pending' && approxEqualPesos(paidAmount, dp)) {
       await trySetDownpaymentReceived(pool, orderId);
-      // Hulugan: required DP clears production/shipping clock (10–12d from first tranche).
-      if (normalizeOrderOption(row.order_option) === 'hulugan') {
-        await trySetHuluganEstimatedDeliveryAfterDownPayment(pool, orderId);
-      }
+      await runPaymongoFulfillmentEvaluation();
       await persistWebhookEventId();
       console.log(`✅ PayMongo down payment recorded for order ${orderId} (balance still due)`);
 
@@ -847,14 +1118,13 @@ export const markOrderPaidViaPaymongo = async (
         await pool.query(
           `UPDATE orders
            SET payment_status = 'completed',
-               status = ?,
                remaining_balance = 0,
                updated_at = NOW()
            WHERE id = ?`,
-          [statusForPaidUpdate, orderId],
+          [orderId],
         );
         await persistEventId();
-        await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        await runPaymongoFulfillmentEvaluation();
         await notifyAdminsOrderFullyPaid({
           orderId,
           paidAmount,
@@ -892,13 +1162,12 @@ export const markOrderPaidViaPaymongo = async (
         `UPDATE orders
          SET payment_status = 'downpayment_received',
              remaining_balance = ?,
+             downpayment_amount = ?,
              updated_at = NOW()
          WHERE id = ?`,
-        [newRemaining, orderId],
+        [newRemaining, orderTotal - newRemaining, orderId],
       );
-      if (normalizeOrderOption(row.order_option) === 'hulugan') {
-        await trySetHuluganEstimatedDeliveryAfterDownPayment(pool, orderId);
-      }
+      await runPaymongoFulfillmentEvaluation();
       await persistEventId();
       await persistWebhookEventId();
       console.log(
@@ -909,13 +1178,13 @@ export const markOrderPaidViaPaymongo = async (
         await pool.query(
           `UPDATE orders
            SET payment_status = 'completed',
-               status = ?,
                remaining_balance = 0,
+               downpayment_amount = ?,
                updated_at = NOW()
            WHERE id = ?`,
-          [statusForPaidUpdate, orderId],
+          [orderTotal, orderId],
         );
-        await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        await runPaymongoFulfillmentEvaluation();
         await notifyAdminsOrderFullyPaid({
           orderId,
           paidAmount,
@@ -948,14 +1217,13 @@ export const markOrderPaidViaPaymongo = async (
       await pool.query(
         `UPDATE orders
          SET payment_status = 'completed',
-             status = ?,
              remaining_balance = 0,
+             downpayment_amount = ?,
              updated_at = NOW()
          WHERE id = ?`,
-        [statusForPaidUpdate, orderId],
+        [orderTotal, orderId],
       );
-      // Lay-away second tranche (or non-hulugan): ETA from final payment; hulugan keeps DP-based ETA.
-      await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+      await runPaymongoFulfillmentEvaluation();
       await notifyAdminsOrderFullyPaid({
         orderId,
         paidAmount,
@@ -994,25 +1262,24 @@ export const markOrderPaidViaPaymongo = async (
       await pool.query(
         `UPDATE orders
          SET remaining_balance = ?,
+             downpayment_amount = ?,
              payment_status = 'downpayment_received',
              updated_at = NOW()
          WHERE id = ?`,
-        [newRemaining, orderId],
+        [newRemaining, orderTotal - newRemaining, orderId],
       );
 
-      // If this partial payment actually completes the balance (due to rounding),
-      // settle as completed.
       if (newRemaining <= 0.01) {
         await pool.query(
           `UPDATE orders
            SET payment_status = 'completed',
-               status = ?,
                remaining_balance = 0,
+               downpayment_amount = ?,
                updated_at = NOW()
            WHERE id = ?`,
-          [statusForPaidUpdate, orderId],
+          [orderTotal, orderId],
         );
-        await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+        await runPaymongoFulfillmentEvaluation();
         await notifyAdminsOrderFullyPaid({
           orderId,
           paidAmount,
@@ -1038,6 +1305,7 @@ export const markOrderPaidViaPaymongo = async (
         await EmailService.sendUpdatedInvoiceEmail({ userId, orderId });
       }
 
+      await runPaymongoFulfillmentEvaluation();
       return;
     }
 
@@ -1050,13 +1318,13 @@ export const markOrderPaidViaPaymongo = async (
       await pool.query(
         `UPDATE orders
          SET payment_status = 'completed',
-           status = ?,
              remaining_balance = 0,
+             downpayment_amount = ?,
              updated_at = NOW()
          WHERE id = ?`,
-      [statusForPaidUpdate, orderId],
+        [orderTotal, orderId],
       );
-      await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+      await runPaymongoFulfillmentEvaluation();
       await notifyAdminsOrderFullyPaid({
         orderId,
         paidAmount,
@@ -1077,9 +1345,7 @@ export const markOrderPaidViaPaymongo = async (
   const isFirstInstallment = looksLikeInstallmentStructure;
   if (row.payment_status === 'pending' && isFirstInstallment) {
     await trySetDownpaymentReceived(pool, orderId);
-    if (normalizeOrderOption(row.order_option) === 'hulugan') {
-      await trySetHuluganEstimatedDeliveryAfterDownPayment(pool, orderId);
-    }
+    await runPaymongoFulfillmentEvaluation();
     await persistWebhookEventId();
     console.log(`✅ PayMongo down payment recorded for order ${orderId} (no amount in webhook — fallback)`);
     return;
@@ -1096,11 +1362,12 @@ export const markOrderPaidViaPaymongo = async (
     `UPDATE orders
      SET payment_status = 'completed',
          remaining_balance = 0,
+         downpayment_amount = ?,
          updated_at = NOW()
      WHERE id = ?`,
-    [orderId],
+    [orderTotal, orderId],
   );
-  await trySetEstimatedDeliveryAfterFullPaymentIfNeeded(pool, orderId);
+  await runPaymongoFulfillmentEvaluation();
   await notifyAdminsOrderFullyPaid({
     orderId,
     paidAmount: paidAmount ?? orderTotal,
@@ -1667,17 +1934,14 @@ export const updateOrderStatus = async (
   }
 
   /**
-   * **Confirmed** (admin):
-   * - Hulugan: set ETA when confirmed (typically right after down payment).
-   * - Lay-away: set ETA only when payment is fully completed; otherwise keep ETA empty.
-   *
-   * Migration: `estimated_delivery_at` — app/sql/add_order_option_estimated_delivery.sql
+   * **Confirmed** (admin): plan-specific gates enforced above; side effects in applyOrderConfirmed.
    */
-  const deliveryOffsetDays = (): number => randomDeliveryOffsetDays();
 
   if (status === 'confirmed' && previousStatus !== 'confirmed') {
     const paymentPlan = orderRows[0].payment_plan?.toString().toLowerCase() ?? 'full';
     const downpaymentAmount = Number(orderRows[0].downpayment_amount ?? 0);
+    const totalPaid = totalPaidFromOrder(orderTotal, remaining);
+    const isMto = await isMtoOrder(pool, orderId);
 
     if (paymentStatus === 'pending' || paymentStatus === 'failed') {
       throw new Error(
@@ -1685,10 +1949,15 @@ export const updateOrderStatus = async (
       );
     }
 
-    if (paymentPlan === 'downpayment') {
-      if (downpaymentAmount < MIN_DOWN_PAYMENT_PESOS) {
+    if (paymentPlan === 'full') {
+      if (!paymentCompleted) {
+        throw new Error('Full-payment orders must be fully paid before confirmation.');
+      }
+    } else if (isHulugan) {
+      const threshold = huluganConfirmThreshold(orderTotal);
+      if (totalPaid < threshold - 0.01) {
         throw new Error(
-          `Down payment must be at least ₱${MIN_DOWN_PAYMENT_PESOS.toLocaleString('en-PH')} before the order can be confirmed.`,
+          `Installment orders require at least ${HULUGAN_CONFIRM_PERCENT}% (₱${threshold.toLocaleString('en-PH')}) approved before confirmation.`,
         );
       }
       if (
@@ -1698,54 +1967,53 @@ export const updateOrderStatus = async (
       ) {
         throw new Error('Confirm the customer\'s down payment before processing this order.');
       }
+    } else if (isLayaway || isMto) {
+      if (remaining > 0.01) {
+        throw new Error(
+          isMto
+            ? 'Made-to-order items can only be confirmed after 100% payment is approved.'
+            : 'Lay-away orders can only be confirmed after 100% payment is approved.',
+        );
+      }
+      if (!paymentCompleted) {
+        throw new Error('Order must be fully paid before confirmation.');
+      }
+    } else if (paymentPlan === 'downpayment') {
+      if (downpaymentAmount < MIN_DOWN_PAYMENT_PESOS) {
+        throw new Error(
+          `Down payment must be at least ₱${MIN_DOWN_PAYMENT_PESOS.toLocaleString('en-PH')} before the order can be confirmed.`,
+        );
+      }
+      if (remaining > 0.01) {
+        throw new Error('Remaining balance must be zero before this order can be confirmed.');
+      }
     } else if (!paymentCompleted) {
       throw new Error('Full-payment orders must be fully paid before confirmation.');
     }
 
-    await validateMaterialStockForOrder(pool, orderId);
-
-    const shouldSetEta = isHulugan || (isLayaway && paymentCompleted);
-    const conn = await pool.getConnection();
+    await applyOrderConfirmed(pool, orderId, orderRows[0]);
+  } else if (status === 'delivered') {
     try {
-      await conn.beginTransaction();
-
-      if (shouldSetEta) {
-        try {
-          await conn.query(
-            `UPDATE orders SET status = ?,
-               estimated_delivery_at = COALESCE(estimated_delivery_at, DATE_ADD(NOW(), INTERVAL ? DAY)),
-               updated_at = NOW()
-             WHERE id = ?`,
-            [status, deliveryOffsetDays(), orderId],
-          );
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (msg.includes('estimated_delivery_at') || msg.includes('Unknown column')) {
-            await conn.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [
-              status,
-              orderId,
-            ]);
-          } else {
-            throw e;
-          }
-        }
-      } else {
-        await conn.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [
+      await pool.query(
+        `UPDATE orders
+         SET status = ?,
+             actual_delivery_at = COALESCE(actual_delivery_at, NOW()),
+             updated_at = NOW()
+         WHERE id = ?`,
+        [status, orderId],
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('actual_delivery_at') || msg.includes('Unknown column')) {
+        await pool.query('UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?', [
           status,
           orderId,
         ]);
+      } else {
+        throw e;
       }
-
-      await deductMaterialsForOrder(conn, orderId);
-      await conn.commit();
-    } catch (txnErr) {
-      await conn.rollback();
-      throw txnErr;
-    } finally {
-      conn.release();
     }
   } else if (
-    status === 'cancelled' &&
     options?.cancellationComment != null &&
     options.cancellationComment.trim().length > 0
   ) {
@@ -1776,15 +2044,6 @@ export const updateOrderStatus = async (
     } catch (matErr) {
       console.error(`restoreMaterialsForOrder failed for ${orderId}:`, matErr);
     }
-  }
-
-  // Send email notification when order is confirmed
-  if (status === 'confirmed' && previousStatus !== 'confirmed') {
-    // Send email asynchronously (don't wait for it)
-    EmailService.sendOrderConfirmationEmail(userId, orderId, orderTotal).catch((error) => {
-      console.error('Failed to send confirmation email:', error);
-      // Don't throw - email failure shouldn't break order update
-    });
   }
 
   // Send email notification when order is marked as expired
@@ -1860,56 +2119,68 @@ export const uploadPaymentProof = async (
   proofUrl: string,
 ): Promise<void> => {
   const pool = getPool();
-  
-  // Verify order exists
+  await ensureOrderFulfillmentSchema(pool);
+
   const [orderRows] = await pool.query<OrderRow[]>(
     'SELECT * FROM orders WHERE id = ? LIMIT 1',
     [orderId],
   );
-  
+
   if (orderRows.length === 0) {
     throw new Error('Order not found');
   }
-  
-  // Check if order is already cancelled or confirmed
-  if (orderRows[0].status === 'cancelled') {
+
+  const order = orderRows[0];
+  const status = order.status?.toString().toLowerCase() ?? 'pending';
+  const remaining = Number(order.remaining_balance ?? order.total_amount);
+  const paymentStatus = order.payment_status?.toString().toLowerCase() ?? 'pending';
+
+  if (status === 'cancelled' || status === 'expired') {
     throw new Error('Cannot upload payment proof for a cancelled order');
   }
-  
-  if (orderRows[0].status === 'confirmed') {
+
+  if (status === 'confirmed' || status === 'shipped' || status === 'delivered') {
     throw new Error('Order is already confirmed');
   }
-  
-  // Update order with payment proof URL and set status to pending verification
-  // Try to update payment_proof_url column if it exists, otherwise just update status
+
+  if (paymentStatus === 'completed' || remaining <= 0.01) {
+    throw new Error('This order has no outstanding balance to pay');
+  }
+
+  const allowedUploadStatuses = new Set([
+    'pending',
+    'reserved',
+    'in_progress',
+    'pending_payment_verification',
+  ]);
+  if (!allowedUploadStatuses.has(status)) {
+    throw new Error('Payment proof cannot be uploaded for this order status');
+  }
+
   try {
-    // Attempt to update with payment_proof_url column (if migration has been run)
     await pool.query(
-      `UPDATE orders 
+      `UPDATE orders
        SET status = 'pending_payment_verification',
-           payment_status = 'pending',
            payment_proof_url = ?,
            updated_at = NOW()
        WHERE id = ?`,
       [proofUrl, orderId],
     );
   } catch (error) {
-    // If column doesn't exist, update without it
-    // This allows the system to work before running the migration
     await pool.query(
-      `UPDATE orders 
+      `UPDATE orders
        SET status = 'pending_payment_verification',
-           payment_status = 'pending',
            updated_at = NOW()
        WHERE id = ?`,
       [orderId],
     );
-    console.warn(`⚠️ payment_proof_url column not found. Run migration: app/sql/add_payment_proof_url_column.sql`);
+    console.warn(
+      `⚠️ payment_proof_url column not found. Run migration: app/sql/add_payment_proof_url_column.sql`,
+    );
   }
-  
+
   console.log(`📸 Payment proof uploaded for order ${orderId}: ${proofUrl}`);
 
-  const order = orderRows[0];
   notifyAdminsPaymentProofUploaded({
     orderId,
     userId: order.user_id,
@@ -1921,135 +2192,151 @@ export const uploadPaymentProof = async (
 /** Minimum first tranche for down-payment plans (₱3,000 policy). */
 const MIN_DOWN_PAYMENT_PESOS = 3000;
 
+export type ConfirmPaymentInput = {
+  readonly appliedAmount?: number;
+  readonly remainingBalance?: number;
+  readonly estimatedDeliveryAt?: string;
+};
+
 /**
- * Admin confirms payment proof and updates balances.
- * - Full payment: remaining_balance → 0, payment_status → completed.
- * - Down payment: requires ≥ ₱3,000 applied; remaining_balance = total − down payment.
- * - Follow-up balance payment: remaining_balance → 0, payment_status → completed.
+ * Admin confirms payment proof and updates balances incrementally.
+ * Calls evaluateOrderAfterPaymentApproval to apply plan-specific status + ETA rules.
  */
 export const confirmPayment = async (
   orderId: string,
   adminId: string,
-): Promise<void> => {
+  input?: ConfirmPaymentInput,
+): Promise<OrderRecord> => {
   const pool = getPool();
-  
-  // Get order details
+  await ensureOrderFulfillmentSchema(pool);
+
   const [orderRows] = await pool.query<OrderRow[]>(
     'SELECT * FROM orders WHERE id = ? LIMIT 1',
     [orderId],
   );
-  
+
   if (orderRows.length === 0) {
     throw new Error('Order not found');
   }
-  
+
   const order = orderRows[0];
   const paymentMethod = order.payment_method;
   const userId = order.user_id;
   const orderTotal = Number(order.total_amount);
   const paymentPlan = (order.payment_plan ?? 'full').toString().toLowerCase();
-  const downpaymentAmount = Number(order.downpayment_amount ?? 0);
-  const remainingBalance = Number(order.remaining_balance ?? orderTotal);
-  const currentPaymentStatus = order.payment_status?.toString().toLowerCase() ?? 'pending';
+  const currentDown = Number(order.downpayment_amount ?? 0);
+  const currentRem = Number(order.remaining_balance ?? orderTotal);
   const isDownPaymentPlan = paymentPlan === 'downpayment';
 
-  let paymentStatus: string;
-  let confirmedAmount = orderTotal;
+  let appliedAmount: number;
+  let newRemaining: number;
 
-  if (
-    isDownPaymentPlan &&
-    (currentPaymentStatus === 'downpayment_received' || currentPaymentStatus === 'downpayment_paid') &&
-    remainingBalance > 0.01
-  ) {
-    // Second (or final) tranche — clear outstanding balance.
-    paymentStatus = 'completed';
-    confirmedAmount = remainingBalance;
-    try {
-      await pool.query(
-        `UPDATE orders
-         SET payment_status = ?,
-             remaining_balance = 0,
-             status = 'pending',
-             updated_at = NOW()
-         WHERE id = ?`,
-        [paymentStatus, orderId],
-      );
-    } catch (e) {
-      throw e;
-    }
-  } else if (isDownPaymentPlan) {
+  if (!isDownPaymentPlan) {
+    appliedAmount = orderTotal;
+    newRemaining = 0;
+  } else if (input?.remainingBalance != null && Number.isFinite(input.remainingBalance)) {
+    newRemaining = Math.max(0, Number(input.remainingBalance.toFixed(2)));
+    appliedAmount = Math.max(0, Number((currentRem - newRemaining).toFixed(2)));
+  } else if (input?.appliedAmount != null && Number.isFinite(input.appliedAmount)) {
+    appliedAmount = Math.max(0, Number(input.appliedAmount.toFixed(2)));
+    newRemaining = Math.max(0, Number((currentRem - appliedAmount).toFixed(2)));
+  } else if (currentDown > 0.01 && currentRem > 0.01) {
+    appliedAmount = currentRem;
+    newRemaining = 0;
+  } else {
     const plannedDown = Number(order.planned_downpayment_amount ?? 0);
-    const applyAmount =
-      downpaymentAmount >= MIN_DOWN_PAYMENT_PESOS
-        ? downpaymentAmount
-        : plannedDown >= MIN_DOWN_PAYMENT_PESOS
-          ? plannedDown
-          : downpaymentAmount;
-    if (applyAmount < MIN_DOWN_PAYMENT_PESOS) {
-      throw new Error(
-        `Down payment must be at least ₱${MIN_DOWN_PAYMENT_PESOS.toLocaleString('en-PH')} before payment can be confirmed.`,
-      );
+    appliedAmount =
+      plannedDown >= MIN_DOWN_PAYMENT_PESOS
+        ? Math.min(plannedDown, orderTotal)
+        : Math.max(MIN_DOWN_PAYMENT_PESOS, Math.min(currentRem, orderTotal));
+    newRemaining = Math.max(0, Number((orderTotal - currentDown - appliedAmount).toFixed(2)));
+    if (currentDown < 0.01) {
+      newRemaining = Math.max(0, Number((orderTotal - appliedAmount).toFixed(2)));
     }
-    const appliedDown = Math.min(applyAmount, orderTotal);
-    const newRemaining = Math.max(0, Number((orderTotal - appliedDown).toFixed(2)));
-    paymentStatus = paymentMethod === 'cod' ? 'downpayment_paid' : 'downpayment_received';
-    confirmedAmount = appliedDown;
-    try {
+  }
+
+  if (appliedAmount < 0.01) {
+    throw new Error('Approved payment amount must be greater than zero');
+  }
+  if (currentDown + appliedAmount > orderTotal + 0.01) {
+    throw new Error('Approved payments cannot exceed the order total');
+  }
+  if (newRemaining < 0) {
+    throw new Error('Remaining balance cannot be negative');
+  }
+
+  const newDown = Number((currentDown + appliedAmount).toFixed(2));
+  const reconciledRemaining = Math.max(0, Number((orderTotal - newDown).toFixed(2)));
+  newRemaining = input?.remainingBalance != null ? newRemaining : reconciledRemaining;
+
+  if (isDownPaymentPlan && currentDown < 0.01 && appliedAmount < MIN_DOWN_PAYMENT_PESOS) {
+    throw new Error(
+      `Down payment must be at least ₱${MIN_DOWN_PAYMENT_PESOS.toLocaleString('en-PH')} before payment can be confirmed.`,
+    );
+  }
+
+  const paymentStatus =
+    newRemaining <= 0.01
+      ? 'completed'
+      : paymentMethod === 'cod'
+        ? 'downpayment_paid'
+        : 'downpayment_received';
+
+  const finalPaymentStatus = isDownPaymentPlan ? paymentStatus : 'completed';
+  const finalRemaining = isDownPaymentPlan ? newRemaining : 0;
+  const finalDown = isDownPaymentPlan ? newDown : orderTotal;
+
+  try {
+    await pool.query(
+      `UPDATE orders
+       SET payment_status = ?,
+           downpayment_amount = ?,
+           remaining_balance = ?,
+           payment_proof_url = NULL,
+           first_installment_paid_at = COALESCE(first_installment_paid_at, NOW()),
+           updated_at = NOW()
+       WHERE id = ?`,
+      [finalPaymentStatus, finalDown, finalRemaining, orderId],
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('first_installment_paid_at') || msg.includes('Unknown column')) {
       await pool.query(
         `UPDATE orders
          SET payment_status = ?,
              downpayment_amount = ?,
              remaining_balance = ?,
-             first_installment_paid_at = COALESCE(first_installment_paid_at, NOW()),
-             status = 'pending',
+             payment_proof_url = NULL,
              updated_at = NOW()
          WHERE id = ?`,
-        [paymentStatus, appliedDown, newRemaining, orderId],
+        [finalPaymentStatus, finalDown, finalRemaining, orderId],
       );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('first_installment_paid_at') || msg.includes('Unknown column')) {
-        await pool.query(
-          `UPDATE orders
-           SET payment_status = ?,
-               downpayment_amount = ?,
-               remaining_balance = ?,
-               status = 'pending',
-               updated_at = NOW()
-           WHERE id = ?`,
-          [paymentStatus, appliedDown, newRemaining, orderId],
-        );
-      } else {
-        throw e;
-      }
-    }
-  } else {
-    // Full payment — zero out customer balance immediately.
-    paymentStatus = 'completed';
-    try {
+    } else if (msg.includes('payment_proof_url') || msg.includes('Unknown column')) {
       await pool.query(
         `UPDATE orders
          SET payment_status = ?,
-             remaining_balance = 0,
              downpayment_amount = ?,
-             status = 'pending',
+             remaining_balance = ?,
              updated_at = NOW()
          WHERE id = ?`,
-        [paymentStatus, orderTotal, orderId],
+        [finalPaymentStatus, finalDown, finalRemaining, orderId],
       );
-    } catch (e) {
+    } else {
       throw e;
     }
   }
-  
-  console.log(`✅ Payment confirmed by admin ${adminId} for order ${orderId}`);
-  
-  // Send confirmation email to user
-  EmailService.sendPaymentConfirmationEmail(userId, orderId, confirmedAmount, paymentMethod).catch((error) => {
-    console.error('Failed to send payment confirmation email:', error);
-  });
 
-  if (paymentStatus === 'completed') {
+  await logAdminPaymentEvent(pool, orderId, appliedAmount, adminId);
+
+  console.log(`✅ Payment confirmed by admin ${adminId} for order ${orderId}`);
+
+  EmailService.sendPaymentConfirmationEmail(userId, orderId, appliedAmount, paymentMethod).catch(
+    (error) => {
+      console.error('Failed to send payment confirmation email:', error);
+    },
+  );
+
+  if (finalPaymentStatus === 'completed') {
     EmailService.sendAdminEventEmail({
       title: 'Order Fully Paid',
       message: `Order #${orderId.substring(0, 8).toUpperCase()} was fully paid and verified by admin.`,
@@ -2063,6 +2350,16 @@ export const confirmPayment = async (
       console.error('Failed to send admin full-payment alert email:', error);
     });
   }
+
+  await evaluateOrderAfterPaymentApproval(orderId, {
+    estimatedDeliveryAt: input?.estimatedDeliveryAt ?? null,
+  });
+
+  const updated = await getOrderById(orderId);
+  if (!updated) {
+    throw new Error('Order not found after payment confirmation');
+  }
+  return updated;
 };
 
 const parseEnvPositiveInt = (key: string, fallback: number): number => {

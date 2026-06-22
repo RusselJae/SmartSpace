@@ -897,13 +897,30 @@ class MySQLDatabaseService {
   }
 
   /// Admin confirms uploaded GCash/COD payment proof and updates balances.
-  Future<void> confirmOrderPayment(String orderId) async {
-    if (!_useApi) return;
-    await _sendRequest(
+  Future<OrderRecord> confirmOrderPayment(
+    String orderId, {
+    double? appliedAmount,
+    double? remainingBalance,
+    String? estimatedDeliveryAt,
+  }) async {
+    if (!_useApi) {
+      throw UnsupportedError('confirmOrderPayment requires API mode');
+    }
+    final body = <String, dynamic>{};
+    if (appliedAmount != null) body['appliedAmount'] = appliedAmount;
+    if (remainingBalance != null) body['remainingBalance'] = remainingBalance;
+    if (estimatedDeliveryAt != null && estimatedDeliveryAt.isNotEmpty) {
+      body['estimatedDeliveryAt'] = estimatedDeliveryAt;
+    }
+    final data = await _sendRequest(
       method: 'POST',
       path: '/orders/$orderId/confirm-payment',
-      body: {},
+      body: body,
     );
+    final envelope = _asMap(data, 'confirm-payment');
+    final orderPayload = envelope['order'];
+    final map = _asMap(orderPayload, 'order');
+    return OrderRecord.fromJson(map);
   }
 
   Future<OrderRecord> createOrder({

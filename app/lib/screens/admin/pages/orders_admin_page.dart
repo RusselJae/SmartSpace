@@ -12,6 +12,7 @@ import '../../../config/api_config.dart';
 import '../widgets/admin_toolbar.dart';
 import '../widgets/admin_anchored_popover.dart';
 import '../../../widgets/admin_console_surfaces.dart';
+import '../../../widgets/admin_compact_date_picker.dart';
 import '../../../widgets/toast.dart';
 import '../../../utils/order_payment_balance.dart';
 
@@ -28,7 +29,15 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
   final MySQLDatabaseService _db = MySQLDatabaseService();
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey _filterAnchorKey = GlobalKey();
-  final List<String> _statuses = const ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
+  final List<String> _statuses = const [
+    'pending',
+    'reserved',
+    'in_progress',
+    'confirmed',
+    'shipped',
+    'delivered',
+    'cancelled',
+  ];
   
   List<OrderRecord> _orders = [];
   Map<String, String> _productNames = {}; // Cache product names by ID
@@ -1576,50 +1585,211 @@ class _OrdersAdminPageState extends State<OrdersAdminPage> {
     return order.status == 'pending_payment_verification' || _isLikelyImageUrl(proof);
   }
 
-  /// Admin verifies payment proof — applies down-payment or full-pay balance rules.
+  bool _isMtoOrder(OrderRecord order) {
+    for (final id in order.productIds) {
+      final name = _productNames[id] ?? '';
+      if (name.startsWith('Made-to-Order [')) return true;
+    }
+    return false;
+  }
+
+  double _defaultAppliedAmount(OrderRecord order) {
+    final plan = order.shippingAddress['paymentPlan']?.toString() ?? 'full';
+    final rem = parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? order.totalAmount;
+    if (plan != 'downpayment') return order.totalAmount;
+    final down = parseShippingDouble(order.shippingAddress, 'downpayment') ?? 0;
+    if (down > 0.01 && rem > 0.01) return rem;
+    final planned = parseShippingDouble(order.shippingAddress, 'plannedDownPayment') ?? 0;
+    if (planned > 0.01) return planned.clamp(0, rem);
+    return rem > 3000 ? 3000 : rem;
+  }
+
+  bool _willTriggerConfirmation({
+    required OrderRecord order,
+    required double newRemaining,
+  }) {
+    final plan = order.shippingAddress['paymentPlan']?.toString() ?? 'full';
+    final total = order.totalAmount;
+    final totalPaid = total - newRemaining;
+    if (plan == 'full') return newRemaining <= 0.01;
+    final option = order.shippingAddress['orderOption']?.toString() ?? '';
+    if (option == 'hulugan') return totalPaid >= total * 0.40 - 0.01;
+    if (option == 'layaway' || _isMtoOrder(order)) return newRemaining <= 0.01;
+    return newRemaining <= 0.01;
+  }
+
+  DateTime _defaultEstimatedDelivery(OrderRecord order, double newRemaining) {
+    final now = DateTime.now();
+    if (!_willTriggerConfirmation(order: order, newRemaining: newRemaining)) {
+      return now.add(const Duration(days: 11));
+    }
+    if (_isMtoOrder(order)) return now.add(const Duration(days: 42));
+    return now.add(Duration(days: 10 + math.Random().nextInt(3)));
+  }
+
+  /// Admin verifies payment proof — applies balances and plan-specific status rules.
   Future<void> _confirmPayment(OrderRecord order) async {
     final plan = order.shippingAddress['paymentPlan']?.toString() ?? 'full';
     final isDown = plan == 'downpayment';
+    final currentRem =
+        parseShippingDouble(order.shippingAddress, 'remainingBalance') ?? order.totalAmount;
+    final defaultApplied = _defaultAppliedAmount(order);
+    final appliedCtrl = TextEditingController(text: defaultApplied.toStringAsFixed(2));
+    final remainingCtrl = TextEditingController(
+      text: math.max(0, currentRem - defaultApplied).toStringAsFixed(2),
+    );
+    DateTime? deliveryDate = _defaultEstimatedDelivery(
+      order,
+      math.max(0, currentRem - defaultApplied),
+    );
+
+    void syncRemainingFromApplied() {
+      final applied = double.tryParse(appliedCtrl.text.trim()) ?? 0;
+      final rem = math.max(0, currentRem - applied);
+      remainingCtrl.text = rem.toStringAsFixed(2);
+    }
+
+    appliedCtrl.addListener(syncRemainingFromApplied);
+
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Confirm payment',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
-        content: Text(
-          isDown
-              ? 'This will apply the down payment (minimum ₱3,000) and update the customer\'s remaining balance. Continue?'
-              : 'This will mark the order as fully paid and reset the customer\'s balance to ₱0. Continue?',
-          style: GoogleFonts.poppins(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final newRem = double.tryParse(remainingCtrl.text.trim()) ?? currentRem;
+          final showDelivery = _willTriggerConfirmation(order: order, newRemaining: newRem);
+          if (showDelivery && deliveryDate == null) {
+            deliveryDate = _defaultEstimatedDelivery(order, newRem);
+          }
+          return AlertDialog(
+            title: Text(
               'Confirm payment',
-              style: GoogleFonts.poppins(
-                color: CupertinoColors.systemBlue,
-                fontWeight: FontWeight.w600,
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isDown
+                          ? 'Approve this screenshot and update the customer balance. Partial lay-away / MTO payments are supported.'
+                          : 'Approve full payment and zero out the customer balance.',
+                      style: GoogleFonts.poppins(fontSize: 13),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: appliedCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: 'Amount approved (this screenshot)',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: remainingCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setDialogState(() {
+                        final rem = double.tryParse(remainingCtrl.text.trim()) ?? currentRem;
+                        deliveryDate = _defaultEstimatedDelivery(order, rem);
+                      }),
+                      decoration: InputDecoration(
+                        labelText: 'Remaining balance after approval',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                    if (showDelivery) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        'Estimated delivery date',
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await AdminCompactDatePicker.pick(
+                            context: context,
+                            helpText: 'Select estimated delivery date',
+                            initialDate: deliveryDate,
+                          );
+                          if (picked != null) {
+                            setDialogState(() => deliveryDate = picked);
+                          }
+                        },
+                        icon: const Icon(Icons.calendar_today_outlined, size: 18),
+                        label: Text(
+                          deliveryDate != null
+                              ? AdminCompactDatePicker.formatButtonDate(deliveryDate!)
+                              : 'Pick date',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text('Cancel', style: GoogleFonts.poppins()),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text('Confirm payment', style: GoogleFonts.poppins()),
+              ),
+            ],
+          );
+        },
       ),
     );
-    if (confirmed != true) return;
+
+    if (confirmed != true) {
+      appliedCtrl.dispose();
+      remainingCtrl.dispose();
+      return;
+    }
+
+    final applied = double.tryParse(appliedCtrl.text.trim());
+    final remaining = double.tryParse(remainingCtrl.text.trim());
+    if (applied == null || applied <= 0) {
+      appliedCtrl.dispose();
+      remainingCtrl.dispose();
+      if (!mounted) return;
+      Toast.warning(context, 'Enter a valid approved amount');
+      return;
+    }
+    if (remaining == null || remaining < 0) {
+      appliedCtrl.dispose();
+      remainingCtrl.dispose();
+      if (!mounted) return;
+      Toast.warning(context, 'Enter a valid remaining balance');
+      return;
+    }
+    appliedCtrl.dispose();
+    remainingCtrl.dispose();
 
     try {
-      await _db.confirmOrderPayment(order.id);
+      final newRem = remaining;
+      final showDelivery = _willTriggerConfirmation(order: order, newRemaining: newRem);
+      await _db.confirmOrderPayment(
+        order.id,
+        appliedAmount: applied,
+        remainingBalance: remaining,
+        estimatedDeliveryAt: showDelivery && deliveryDate != null
+            ? deliveryDate!.toUtc().toIso8601String()
+            : null,
+      );
       if (!mounted) return;
       if (Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
       }
-      Toast.success(context, 'Payment confirmed — balances updated');
+      Toast.success(context, 'Payment confirmed — balances and status updated');
       await _loadOrders();
     } catch (e) {
       if (!mounted) return;
@@ -2419,9 +2589,17 @@ class _OrderDetailsDialog extends StatelessWidget {
       if (order.shippingAddress['estimatedDeliveryAt'] != null &&
           order.shippingAddress['estimatedDeliveryAt'].toString().isNotEmpty)
         AdminProfileStyleDetailRow(dense: true, showDivider: false,
-          label: 'Est. delivery (from confirm +10–12d)',
+          label: 'Est. delivery',
           value: _formatAdminDeliveryDate(
             order.shippingAddress['estimatedDeliveryAt'].toString(),
+          ),
+        ),
+      if (order.shippingAddress['actualDeliveryAt'] != null &&
+          order.shippingAddress['actualDeliveryAt'].toString().isNotEmpty)
+        AdminProfileStyleDetailRow(dense: true, showDivider: false,
+          label: 'Actual delivery',
+          value: _formatAdminDeliveryDate(
+            order.shippingAddress['actualDeliveryAt'].toString(),
           ),
         ),
       if (parseShippingDouble(order.shippingAddress, 'downpayment') != null)

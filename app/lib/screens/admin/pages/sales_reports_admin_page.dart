@@ -4,6 +4,7 @@ import 'package:excel/excel.dart' as excel;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
+import '../../widgets/admin_compact_date_picker.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -162,46 +163,35 @@ class _SalesReportsAdminPageState extends State<SalesReportsAdminPage> {
 
   /// Opens a compact modal so the admin can pick the range **start** date.
   Future<void> _pickRangeFrom() async {
-    final now = DateTime.now();
     setState(() => _activeRangeField = _SalesRangeField.from);
-    final picked = await showDatePicker(
+    final picked = await AdminCompactDatePicker.pick(
       context: context,
-      initialDate: _rangeFrom ?? _rangeTo ?? now,
-      firstDate: DateTime(now.year - 5, 1, 1),
-      lastDate: DateTime(now.year + 1, 12, 31),
       helpText: 'Select range start date',
-      builder: _salesReportDatePickerBuilder,
+      initialDate: _rangeFrom ?? _rangeTo,
     );
     if (!mounted) return;
     setState(() => _activeRangeField = _SalesRangeField.none);
     if (picked == null) return;
     setState(() {
-      _rangeFrom = DateTime(picked.year, picked.month, picked.day);
-      // Keep the window valid when the user adjusts the start after picking an end.
+      _rangeFrom = picked;
       if (_rangeTo != null && _rangeTo!.isBefore(_rangeFrom!)) {
         _rangeTo = _rangeFrom;
       }
     });
   }
 
-  /// Opens a compact modal so the admin can pick the range **end** date.
   Future<void> _pickRangeTo() async {
-    final now = DateTime.now();
     setState(() => _activeRangeField = _SalesRangeField.to);
-    final picked = await showDatePicker(
+    final picked = await AdminCompactDatePicker.pick(
       context: context,
-      initialDate: _rangeTo ?? _rangeFrom ?? now,
-      firstDate: DateTime(now.year - 5, 1, 1),
-      lastDate: DateTime(now.year + 1, 12, 31),
       helpText: 'Select range end date',
-      builder: _salesReportDatePickerBuilder,
+      initialDate: _rangeTo ?? _rangeFrom,
     );
     if (!mounted) return;
     setState(() => _activeRangeField = _SalesRangeField.none);
     if (picked == null) return;
     setState(() {
-      _rangeTo = DateTime(picked.year, picked.month, picked.day);
-      // Keep the window valid when the user adjusts the end before picking a start.
+      _rangeTo = picked;
       if (_rangeFrom != null && _rangeFrom!.isAfter(_rangeTo!)) {
         _rangeFrom = _rangeTo;
       }

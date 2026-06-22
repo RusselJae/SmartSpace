@@ -76,15 +76,48 @@ bool canOpenPaymentProofScreen(OrderRecord order) {
   final status = order.status.toLowerCase();
   if (status == 'cancelled' || status == 'expired') return false;
   if (status == 'pending_payment_verification') return false;
+  if (status == 'confirmed' || status == 'shipped' || status == 'delivered') return false;
 
   final ps = order.shippingAddress['paymentStatus']?.toString().toLowerCase() ?? 'pending';
   if (ps == 'completed') return false;
+
+  if (status == 'reserved' || status == 'in_progress') {
+    return outstandingBalanceAmount(order) > 0.01;
+  }
 
   if (ps == 'downpayment_received' || ps == 'downpayment_paid') {
     return outstandingBalanceAmount(order) > 0.01;
   }
 
   return ps == 'pending' || ps == 'failed' || amountDueNow(order) > 0.01;
+}
+
+/// Customer-facing status label including plan-specific mid-payment states.
+String customerOrderStatusLabel(OrderRecord order) {
+  final status = order.status.toLowerCase();
+  switch (status) {
+    case 'reserved':
+      return 'Reserved (Lay-away)';
+    case 'in_progress':
+      return 'In Progress (Made to Order)';
+    case 'pending_payment_verification':
+      return 'Payment verification';
+    case 'pending':
+      return 'Pending payment';
+    case 'confirmed':
+      return 'Confirmed';
+    case 'shipped':
+      return 'Shipped';
+    case 'delivered':
+      return 'Delivered';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'expired':
+      return 'Expired';
+    default:
+      if (status.isEmpty) return 'Pending';
+      return status[0].toUpperCase() + status.substring(1);
+  }
 }
 
 /// PayMongo installment plan with a down payment + remaining balance.
